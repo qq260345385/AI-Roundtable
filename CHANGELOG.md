@@ -1,0 +1,173 @@
+# Changelog
+
+## v0.3.21 internal alpha
+
+- Added Tavily-backed Web Evidence Pack search through `POST /api/evidence/search`.
+- Added homepage UI for searching web evidence and merging results into the shared Evidence Pack.
+- Kept web search server-side so Tavily API keys are never exposed to the browser or participant models.
+
+## v0.3.20 internal alpha
+
+- Added a live meeting endpoint that streams meeting progress as NDJSON events.
+- Switched the start flow to enter the meeting room immediately after submission.
+- Added participant live statuses and stage updates so completed turns appear during the meeting instead of only after the full result is ready.
+
+## v0.3.19 internal alpha
+
+- Replaced provider/model-name capability guessing with configurable provider capability declarations.
+- Added `.env.local` support for document, image, and native-file capability metadata.
+- Updated participant capability warnings so unknown capability is not shown as unsupported.
+
+## v0.3.18 internal alpha
+
+- Corrected DeepSeek V4 capability detection.
+- DeepSeek V4 models are now marked as supporting document recognition while still showing no image recognition support.
+- Added tests for provider/model-specific capability inference.
+
+## v0.3.17 internal alpha
+
+- Added model capability reminders beside participant names.
+- Marked current generic OpenAI-compatible providers as not supporting native document or image recognition.
+- Added reusable capability warning labels in Chinese and English.
+
+## v0.3.16 internal alpha
+
+- Added Evidence Pack delivery planning for native attachment intent versus text-pack fallback.
+- Added provider capability metadata for native evidence attachments.
+- Added UI and meeting result notices showing the actual evidence delivery mode.
+
+## v0.3.15 internal alpha
+
+- Added document input strategy metadata for Evidence Pack meetings.
+- Added UI choices for native attachment intent, long text pack fallback, and auto mode.
+- Increased local document text budgets so uploaded documents are no longer reduced to an 800-character evidence snippet by default.
+
+## v0.3.14 internal alpha
+
+- Added a dedicated meeting room view after a meeting starts.
+- Added a council-member sidebar and stage-by-stage meeting content display.
+- Added fixed stage switching controls with lightweight interaction animations.
+
+## v0.3.13 internal alpha
+
+- Added optional brief meeting mode for shorter participant turns.
+- Passed brief mode through `/api/meeting` into provider prompts.
+- Added brief mock responses and UI copy for the meeting form.
+
+## v0.3.12 internal alpha
+
+- Added app-level language settings for Chinese and English.
+- Persisted the selected UI language in local browser storage.
+- Hid the Next.js development tools indicator for a cleaner local UI.
+
+## v0.3.11 internal alpha
+
+- Added Evidence Pack preview before meetings.
+- Added evidence quality metadata including text length, truncation status, and warnings.
+- Added UI and Markdown output for evidence parsing/truncation warnings.
+
+## v0.3.10 internal alpha
+
+- Added local document evidence parsing for `.pdf`, `.docx`, `.xlsx`, and `.pptx` files.
+- Added `POST /api/evidence/parse` for extracting document text into Evidence Pack drafts.
+- Updated the Evidence Pack upload UI to parse selected documents before meetings.
+
+## v0.3.9 internal alpha
+
+- Replaced manual Evidence Pack field entry with local text file selection.
+- Added local text import normalization and secret redaction tests.
+- Kept Evidence Pack processing browser-local; no file storage, upload service, or search API was added.
+
+## v0.3.8 internal alpha
+
+- Added Evidence Citation Guard for `S1`-style citations.
+- Added server-side citation checks to meeting results.
+- Added Markdown and UI citation check output for invalid evidence ids.
+
+## v0.3.7 internal alpha
+
+- Added manual Evidence Pack input for shared meeting context.
+- Added server-side evidence normalization and regenerated `S1`-style evidence ids.
+- Injected evidence citation rules into model prompts.
+- Added evidence source output to Markdown exports.
+
+## v0.3.6 internal alpha
+
+- Added time-sensitive topic detection for current/latest/ranking/price/version-style questions.
+- Added fact hygiene prompts so models must mark uncertain current facts as unverified.
+- Added UI and Markdown fact-check notices for time-sensitive meetings.
+
+## v0.3.5 internal alpha
+
+- Added real provider smoke test result notes with sensitive fields omitted.
+- Kept the project in internal alpha / pre-release status.
+
+## v0.3.4 internal
+
+- Updated real-mode smoke test documentation and frontend manual checklist.
+- Updated example notes for partial provider failure records.
+
+## v0.3.3 internal
+
+- Polished the meeting room interaction states.
+- Added selectable participant models in the UI.
+- Added lightweight hover and active-state interactions.
+- Added `docs/frontend-manual-checklist.md`.
+
+## v0.3.2 internal
+
+- Improved partial failure display with Chinese stage names.
+- Added short user-facing troubleshooting suggestions.
+- Included failure suggestions in Markdown export.
+
+## v0.3.1 internal
+
+- Added meeting fault tolerance for partial provider failures.
+- Preserved successful provider responses when another provider fails.
+- Added `failures` and `hasPartialFailures` to meeting results.
+
+## v0.3.0 internal
+
+- Clarified mock and real provider status semantics.
+- Added generic OpenAI-compatible provider configuration through `AI_ROUNDTABLE_PROVIDER_IDS`.
+- Added provider `/models` detection, timeout handling, and sanitized detection errors.
+
+## v0.2.5 alpha
+
+- Added MIT `LICENSE`.
+- Added `.env.example` for mock and real provider configuration.
+- Added README sections for Quick Start, environment variables, provider configuration, and license.
+
+## v0.2.4
+
+- Prepared open source release materials.
+- Added `CONTRIBUTING.md`.
+- Added `SECURITY.md`.
+- Added `docs/assets/README.md`.
+
+## v0.2.3
+
+- Added meeting result Markdown export.
+- Added mock and real meeting example files.
+- Added evaluation notes for meeting quality review.
+
+## v0.2.2
+
+- Added provider availability handling.
+- Displayed unavailable real-mode providers.
+- Added real model smoke test documentation.
+
+## v0.2.1
+
+- Connected the frontend meeting flow to backend API routes.
+
+## v0.2
+
+- Added real model integration layer.
+- Added OpenAI-compatible provider support.
+
+## v0.1
+
+- Built the initial frontend meeting room.
+- Added mock models.
+- Added the three-phase meeting flow.

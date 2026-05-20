@@ -1,0 +1,453 @@
+export type Locale = "zh" | "en";
+
+const SUPPORTED_LOCALES: Locale[] = ["zh", "en"];
+
+export function isLocale(value: unknown): value is Locale {
+  return typeof value === "string" && SUPPORTED_LOCALES.includes(value as Locale);
+}
+
+export function getUiText(locale: Locale) {
+  return UI_TEXT[locale];
+}
+
+export const UI_TEXT = {
+  zh: {
+    settings: {
+      title: "设置",
+      open: "设置",
+      close: "关闭",
+      language: "语言",
+      languageDescription: "选择界面显示语言。",
+      chinese: "中文",
+      english: "English",
+    },
+    header: {
+      appName: "多模型圆桌会议系统",
+      topicPrefix: "当前议题：",
+      currentMode: "当前模式：",
+      participantCount: "参会模型",
+      phaseCount: "会议阶段",
+      loadingMode: "加载中",
+      realDescription:
+        "Real 模式需要在 .env.local 中配置 OpenAI-compatible provider。",
+      mockDescription:
+        "Mock 模式使用模拟模型，不需要 API key，不代表真实 API 已配置。",
+      loadingDescription: "正在读取 provider 配置。",
+    },
+    participants: {
+      title: "参会模型",
+      description: "勾选本次圆桌会议要使用的模型。",
+      selected: "已选",
+      loading: "正在加载参会模型。",
+      realEmpty:
+        "当前 real 模式下没有可用于会议的模型，请检查 provider 配置。",
+      empty: "当前没有可用于会议的模型。",
+      modelLabel: "model",
+      status: {
+        mock: "Mock / 无需 API",
+        available: "已连接",
+        detected: "已检测",
+        unconfigured: "未配置",
+        model_not_found: "模型未找到",
+        configured_unverified: "检测失败 / 未验证",
+      },
+      capabilityWarnings: {
+        noDocumentRecognition: "不支持文档识别",
+        noImageRecognition: "不支持图片识别",
+        noDocumentOrImageRecognition: "不支持文档/图片识别",
+        unknownDocumentRecognition: "文档能力未声明",
+        unknownImageRecognition: "图片能力未声明",
+        unknownDocumentOrImageRecognition: "文档/图片能力未声明",
+      },
+    },
+    providerNotice: {
+      loading: "正在读取 provider 配置和模型状态。",
+      error: "模型列表加载失败，请稍后重试或检查 /api/models。",
+      mock: "当前是 Mock 模式，使用模拟模型，不需要 API key，也不代表真实 API 已配置。",
+      realEmpty:
+        "当前 real 模式下没有可用模型，请检查 .env.local 中的 provider 配置。",
+      real: "当前是 Real 模式，需要在 .env.local 中配置 OpenAI-compatible provider。已连接或配置完整但未验证的 provider 可能参与会议。",
+      unknown: "正在读取 provider 配置。",
+    },
+    unavailable: {
+      title: "未启用的模型",
+      detectedModels: "检测到的模型：",
+      suggestion: "建议：",
+      suggestions: {
+        detected: "从检测到的模型中选择一个，填写到对应的 MODEL。",
+        modelNotFound: "检查 MODEL 是否拼写正确，或改用检测到的模型。",
+        configuredUnverified:
+          "检查 base URL、网络或 provider 的 /models 兼容性。",
+        default: "检查 .env.local 中的 API key、base URL 和 MODEL。",
+      },
+    },
+    diagram: {
+      title: "圆桌席位",
+      seat: "席位",
+    },
+    meetingForm: {
+      title: "开始圆桌会议",
+      placeholder: "请输入你想交给多个模型共同讨论的问题",
+      defaultTopic: "请输入问题，开始一次多模型圆桌会议。",
+      factNoticeTitle: "事实核验提示：",
+      briefMode: "启用简要会议模式",
+      briefModeDescription:
+        "开启后，各模型发言和自由回应会尽量控制在 150 字左右，只保留关键观点。",
+      evidenceWarning:
+        "部分资料存在解析或截断提示，建议检查资料预览后再开始会议。",
+      start: "开始圆桌会议",
+      meetingLoading: "会议进行中...",
+      evidenceLoading: "资料解析中...",
+      modelsLoading: "模型加载中...",
+      modelsError: "模型加载失败",
+      noModels: "暂无可用模型",
+      selectModel: "请选择模型",
+      selectEvidence: "请选择资料文件",
+      messages: {
+        modelsLoadFailed: "模型列表加载失败：",
+        questionRequired: "请输入一个问题后再开始圆桌会议。",
+        realNoModels:
+          "当前 real 模式下没有可用模型，请检查 .env.local 中的 provider 配置。",
+        selectParticipant: "请至少选择一个参会模型。",
+        evidenceRequired:
+          "启用资料包时，请先选择至少一个可解析出文本内容的本地文件。",
+        meetingLoading: "圆桌会议进行中...",
+        meetingDone: "圆桌会议已完成。",
+        meetingFailed: "会议创建失败",
+        unknownError: "发生未知错误",
+      },
+    },
+    evidence: {
+      enable: "启用资料文件",
+      description:
+        "选择本地文档生成资料包；文件只发送到本地解析接口提取文本，不保存原文件。",
+      add: "添加资料文件",
+      parsing: "正在解析...",
+      support:
+        "支持 .txt、.md、.csv、.json、.pdf、.docx、.xlsx、.pptx，最多 10 个。默认会尽量保留更长文本；扫描版 PDF、图片和旧版 Office 格式暂不解析。",
+      strategyTitle: "文档输入方式",
+      strategyTextPack: "长文本资料包",
+      strategyTextPackDescription:
+        "把本地解析后的文档文本放入统一资料包，兼容所有 OpenAI-compatible provider。",
+      strategyNativeFile: "优先原生附件",
+      strategyNativeFileDescription:
+        "表达“希望以附件方式使用文档”；当前通用 provider 未声明附件能力时会自动回退为长文本资料包。",
+      strategyAuto: "自动选择",
+      strategyAutoDescription:
+        "保留原生附件扩展入口；现阶段会使用长文本资料包兜底。",
+      deliveryTitle: "实际投递方式",
+      deliveryNative: "原生文件附件",
+      deliveryTextPack: "长文本资料包",
+      deliveryTextPackReason:
+        "当前会把解析后的文档文本随 prompt 发送给所有参会模型。",
+      deliveryFallbackReason:
+        "所选参会模型未全部声明支持原生附件，本次会自动回退为长文本资料包。",
+      deliveryNativeReason:
+        "所选参会模型都声明支持原生附件。",
+      empty:
+        "启用资料文件后，请先选择至少一个可解析出文本的本地文档。模型会基于同一份资料讨论，最终编号以服务端归一化后的 S1-S10 为准。",
+      imported: "已导入",
+      importedSuffix: "个资料文件。",
+      maxReached: "已达到 10 个资料上限，超出的文件未导入。",
+      failedPrefix: "未导入",
+      failedSuffix: "个无法解析或无文本内容的文件：",
+      noContent: "没有可导入的文本内容。",
+      maxFiles: "资料包最多保留 10 个文件。",
+      parsingMessage: "正在解析资料文件...",
+      itemPrefix: "资料",
+      untitled: "未命名文件",
+      localFile: "本地文件",
+      remove: "移除",
+      characters: "字符数：",
+      truncated: "状态：内容已截断",
+      warning: "提示：",
+      numberingNote:
+        "前端编号仅作预览；提交会议后，服务端会重新归一化为 S1-S10。",
+      parseFailed: "资料文件解析失败",
+      webSearchTitle: "启用联网搜索",
+      webSearchDescription:
+        "勾选后，开始会议前会用当前会议议题调用 Tavily 搜索，扩大候选池后优先选取质量最高的资料提供给所有模型。",
+      webSearching: "正在搜索联网资料...",
+      webSearchImported: "已导入联网资料",
+      webSearchFailed: "联网资料搜索失败",
+    },
+    save: {
+      title: "保存会议示例",
+      description: "可复制为 Markdown，脱敏后放入 examples。",
+      copy: "复制 Markdown",
+      copied: "Markdown 已复制。",
+      failed: "复制失败，请检查浏览器剪贴板权限。",
+    },
+    meetingBoard: {
+      contentTitle: "会议内容",
+      empty:
+        "当前还没有会议结果。输入问题并点击开始后，页面会显示独立观点、自由回应和共识整理。",
+      transcriptTitle: "会议流程",
+      speech: "发言",
+      modelLabel: "模型：",
+      summaryTitle: "第三阶段：共识整理",
+      consensus: "共识",
+      confirmableFacts: "可确认事实",
+      initialHypotheses: "初步推测",
+      communityViews: "社区观点",
+      insufficientlyConfirmed: "不足以确认",
+      differences: "主要分歧",
+      minorityViews: "有价值的少数派观点",
+      risks: "风险",
+      nextSteps: "下一步",
+      citationTitle: "引用检查",
+      citationInvalid: "检测到模型引用了资料包中不存在的编号：",
+      citationPassed: "引用检查通过：未发现不存在的资料编号。",
+      factTitle: "事实核验提示",
+      failureTitle: "部分模型调用失败",
+      failureDescription:
+        "会议已保留其他模型的成功发言，下面只列出需要检查的调用。",
+      suggestion: "建议：",
+    },
+    meetingRoom: {
+      title: "圆桌会议室",
+      subtitle: "按阶段查看参会议员发言与共识整理。",
+      councilMembers: "参会议员",
+      currentStage: "当前阶段",
+      stageSwitcher: "会议阶段",
+      backToSetup: "返回编辑",
+      copyMarkdown: "复制 Markdown",
+      copyAfterDone: "会议结束后可复制",
+      liveInProgress: "实时会议进行中，模型发言会陆续出现",
+      seat: "席位",
+      noTurns: "该阶段没有可展示的发言。",
+      summaryEmpty: "该小节暂无内容。",
+      alerts: "会议提示",
+      partialFailureKept: "部分模型调用失败，已保留其他模型的成功发言。",
+      participantStatus: {
+        waiting: "等待中",
+        speaking: "发言中",
+        completed: "已完成",
+        failed: "调用失败",
+      },
+    },
+  },
+  en: {
+    settings: {
+      title: "Settings",
+      open: "Settings",
+      close: "Close",
+      language: "Language",
+      languageDescription: "Choose the interface language.",
+      chinese: "中文",
+      english: "English",
+    },
+    header: {
+      appName: "Multi-Model Roundtable Meeting System",
+      topicPrefix: "Current topic: ",
+      currentMode: "Current mode: ",
+      participantCount: "Participants",
+      phaseCount: "Phases",
+      loadingMode: "Loading",
+      realDescription:
+        "Real mode requires an OpenAI-compatible provider in .env.local.",
+      mockDescription:
+        "Mock mode uses simulated models. It does not need an API key and does not mean a real API is configured.",
+      loadingDescription: "Reading provider configuration.",
+    },
+    participants: {
+      title: "Participants",
+      description: "Select the models to join this roundtable.",
+      selected: "Selected",
+      loading: "Loading participant models.",
+      realEmpty:
+        "No models are available for meetings in real mode. Check provider configuration.",
+      empty: "No models are available for meetings.",
+      modelLabel: "model",
+      status: {
+        mock: "Mock / No API",
+        available: "Connected",
+        detected: "Detected",
+        unconfigured: "Not configured",
+        model_not_found: "Model not found",
+        configured_unverified: "Detection failed / Unverified",
+      },
+      capabilityWarnings: {
+        noDocumentRecognition: "no document recognition",
+        noImageRecognition: "no image recognition",
+        noDocumentOrImageRecognition: "no document/image recognition",
+        unknownDocumentRecognition: "document capability not declared",
+        unknownImageRecognition: "image capability not declared",
+        unknownDocumentOrImageRecognition:
+          "document/image capability not declared",
+      },
+    },
+    providerNotice: {
+      loading: "Reading provider configuration and model status.",
+      error: "Failed to load models. Try again later or check /api/models.",
+      mock:
+        "Current mode is Mock. It uses simulated models, does not need an API key, and does not mean a real API is configured.",
+      realEmpty:
+        "No models are available in real mode. Check provider configuration in .env.local.",
+      real: "Current mode is Real. Configure OpenAI-compatible providers in .env.local. Connected or fully configured but unverified providers may join meetings.",
+      unknown: "Reading provider configuration.",
+    },
+    unavailable: {
+      title: "Unavailable Models",
+      detectedModels: "Detected models: ",
+      suggestion: "Suggestion: ",
+      suggestions: {
+        detected: "Choose one detected model and put it in the matching MODEL field.",
+        modelNotFound:
+          "Check whether MODEL is spelled correctly, or use one of the detected models.",
+        configuredUnverified:
+          "Check the base URL, network, or the provider's /models compatibility.",
+        default: "Check API key, base URL, and MODEL in .env.local.",
+      },
+    },
+    diagram: {
+      title: "Roundtable Seats",
+      seat: "Seat",
+    },
+    meetingForm: {
+      title: "Start Roundtable",
+      placeholder: "Enter a question for multiple models to discuss together",
+      defaultTopic: "Enter a question to start a multi-model roundtable.",
+      factNoticeTitle: "Fact-check note: ",
+      briefMode: "Enable brief meeting mode",
+      briefModeDescription:
+        "When enabled, model turns and responses stay around 150 Chinese characters and focus on key points.",
+      evidenceWarning:
+        "Some evidence has parsing or truncation warnings. Review the preview before starting.",
+      start: "Start Roundtable",
+      meetingLoading: "Meeting in progress...",
+      evidenceLoading: "Parsing evidence...",
+      modelsLoading: "Loading models...",
+      modelsError: "Model loading failed",
+      noModels: "No available models",
+      selectModel: "Select a model",
+      selectEvidence: "Add evidence files",
+      messages: {
+        modelsLoadFailed: "Failed to load models: ",
+        questionRequired: "Enter a question before starting the roundtable.",
+        realNoModels:
+          "No models are available in real mode. Check provider configuration in .env.local.",
+        selectParticipant: "Select at least one participant model.",
+        evidenceRequired:
+          "When evidence is enabled, select at least one local file with extractable text.",
+        meetingLoading: "Roundtable meeting in progress...",
+        meetingDone: "Roundtable meeting completed.",
+        meetingFailed: "Failed to create meeting",
+        unknownError: "Unknown error",
+      },
+    },
+    evidence: {
+      enable: "Enable Evidence Files",
+      description:
+        "Select local documents to build an evidence pack. Files are sent only to the local parser to extract text; originals are not stored.",
+      add: "Add Evidence Files",
+      parsing: "Parsing...",
+      support:
+        "Supports .txt, .md, .csv, .json, .pdf, .docx, .xlsx, .pptx, up to 10 files. Longer extracted text is kept by default; scanned PDFs, images, and legacy Office formats are not parsed yet.",
+      strategyTitle: "Document input mode",
+      strategyTextPack: "Long text pack",
+      strategyTextPackDescription:
+        "Put locally extracted document text into one shared evidence pack. Works with all OpenAI-compatible providers.",
+      strategyNativeFile: "Native attachment first",
+      strategyNativeFileDescription:
+        "Expresses the intent to use documents as attachments; when a generic provider does not expose attachment support, the system falls back to a long text pack.",
+      strategyAuto: "Auto",
+      strategyAutoDescription:
+        "Keeps the native attachment extension point; this version falls back to the long text pack.",
+      deliveryTitle: "Actual delivery mode",
+      deliveryNative: "Native file attachment",
+      deliveryTextPack: "Long text pack",
+      deliveryTextPackReason:
+        "The parsed document text will be sent with the prompt to every participant model.",
+      deliveryFallbackReason:
+        "Not every selected participant declares native attachment support, so this meeting falls back to the long text pack.",
+      deliveryNativeReason:
+        "Every selected participant declares native attachment support.",
+      empty:
+        "After enabling evidence files, choose at least one local document with extractable text. Models will discuss the same evidence pack, and final IDs are normalized server-side as S1-S10.",
+      imported: "Imported",
+      importedSuffix: "evidence file(s).",
+      maxReached: "The 10-file evidence limit has been reached. Extra files were skipped.",
+      failedPrefix: "Skipped",
+      failedSuffix: "file(s) that could not be parsed or had no text: ",
+      noContent: "No importable text was found.",
+      maxFiles: "Evidence pack can keep at most 10 files.",
+      parsingMessage: "Parsing evidence files...",
+      itemPrefix: "Evidence",
+      untitled: "Untitled file",
+      localFile: "Local file",
+      remove: "Remove",
+      characters: "Characters: ",
+      truncated: "Status: content was truncated",
+      warning: "Note: ",
+      numberingNote:
+        "Frontend IDs are only a preview; after submission the server normalizes them as S1-S10.",
+      parseFailed: "Failed to parse evidence file",
+      webSearchTitle: "Enable Web Search",
+      webSearchDescription:
+        "When enabled, starting the meeting automatically searches Tavily with the current meeting topic, expands the candidate pool, and gives all models the highest-quality selected evidence.",
+      webSearching: "Searching web evidence...",
+      webSearchImported: "Imported web evidence",
+      webSearchFailed: "Failed to search web evidence",
+    },
+    save: {
+      title: "Save Meeting Example",
+      description: "Copy as Markdown, then redact it before putting it in examples.",
+      copy: "Copy Markdown",
+      copied: "Markdown copied.",
+      failed: "Copy failed. Check browser clipboard permission.",
+    },
+    meetingBoard: {
+      contentTitle: "Meeting Content",
+      empty:
+        "No meeting result yet. Enter a question and start the meeting to show independent views, free responses, and consensus.",
+      transcriptTitle: "Meeting Flow",
+      speech: "Turn",
+      modelLabel: "Model: ",
+      summaryTitle: "Stage 3: Consensus Summary",
+      consensus: "Consensus",
+      confirmableFacts: "Confirmable Facts",
+      initialHypotheses: "Initial Hypotheses",
+      communityViews: "Community Views",
+      insufficientlyConfirmed: "Insufficiently Confirmed",
+      differences: "Main Differences",
+      minorityViews: "Valuable Minority Views",
+      risks: "Risks",
+      nextSteps: "Next Steps",
+      citationTitle: "Citation Check",
+      citationInvalid:
+        "Detected citation IDs that do not exist in the evidence pack: ",
+      citationPassed: "Citation check passed: no missing evidence IDs found.",
+      factTitle: "Fact-check Note",
+      failureTitle: "Some model calls failed",
+      failureDescription:
+        "The meeting kept successful responses from other models. Calls needing attention are listed below.",
+      suggestion: "Suggestion: ",
+    },
+    meetingRoom: {
+      title: "Roundtable Room",
+      subtitle: "Review council members, stage turns, and consensus separately.",
+      councilMembers: "Council Members",
+      currentStage: "Current Stage",
+      stageSwitcher: "Meeting Stages",
+      backToSetup: "Back to Setup",
+      copyMarkdown: "Copy Markdown",
+      copyAfterDone: "Available after meeting",
+      liveInProgress: "Live meeting in progress. Model turns will appear as they finish.",
+      seat: "Seat",
+      noTurns: "No turns are available for this stage.",
+      summaryEmpty: "No content in this section yet.",
+      alerts: "Meeting Notes",
+      partialFailureKept:
+        "Some model calls failed. Successful turns from other models were kept.",
+      participantStatus: {
+        waiting: "Waiting",
+        speaking: "Speaking",
+        completed: "Completed",
+        failed: "Failed",
+      },
+    },
+  },
+} as const;
+
+export type UiText = (typeof UI_TEXT)[Locale];
