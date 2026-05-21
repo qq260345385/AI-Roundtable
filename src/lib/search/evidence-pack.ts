@@ -42,12 +42,20 @@ export type EvidenceQuality = {
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
   score: number;
+  relevanceScore?: number;
+  authorityScore?: number;
+  freshnessScore?: number;
+  contentScore?: number;
+  diversityScore?: number;
 };
 
 export type EvidencePack = {
   enabled: boolean;
   strategy?: DocumentInputStrategy;
   delivery?: EvidenceDeliveryInfo;
+  evidenceStatus?: EvidenceStatus;
+  evidenceWarnings?: string[];
+  searchQueries?: string[];
   items: SearchEvidence[];
 };
 
@@ -62,6 +70,7 @@ export type EvidenceSourceType =
   | "unknown";
 
 export type EvidenceReliability = "high" | "medium" | "low" | "very_low";
+export type EvidenceStatus = "high" | "medium" | "low" | "none";
 
 export type EvidenceQualityOverview = {
   officialCount: number;
@@ -82,6 +91,7 @@ const SHORT_SNIPPET_WARNING_LENGTH = 20;
 
 type NormalizeEvidencePackOptions = {
   allowLowReliabilityFallback?: boolean;
+  topic?: string;
 };
 
 export function normalizeEvidencePack(
@@ -89,15 +99,15 @@ export function normalizeEvidencePack(
   options: NormalizeEvidencePackOptions = {},
 ): EvidencePack {
   if (!isObject(input) || input.enabled !== true) {
-    return createDisabledEvidencePack();
+    return createDisabledEvidencePack(input);
   }
 
   if (!Array.isArray(input.items)) {
-    return createDisabledEvidencePack();
+    return createDisabledEvidencePack(input);
   }
 
   const normalizedItems = input.items
-    .map(normalizeEvidenceItem)
+    .map((item) => normalizeEvidenceItem(item, options.topic))
     .filter((item): item is Omit<SearchEvidence, "id"> => item !== null)
     .sort(compareEvidenceQuality);
   const usableItems = normalizedItems.filter(isUsableEvidenceItem);
@@ -111,14 +121,25 @@ export function normalizeEvidencePack(
       ...item,
       id: `S${index + 1}`,
     }));
+  const evidenceStatus =
+    normalizeEvidenceStatus(input.evidenceStatus) ?? getEvidenceStatus(items);
+  const evidenceWarnings = normalizeStringArray(input.evidenceWarnings);
+  const searchQueries = normalizeStringArray(input.searchQueries);
 
   if (items.length === 0) {
-    return createDisabledEvidencePack();
+    return createDisabledEvidencePack({
+      evidenceStatus,
+      evidenceWarnings,
+      searchQueries,
+    });
   }
 
   return {
     enabled: true,
     strategy: normalizeDocumentInputStrategy(input.strategy),
+    evidenceStatus,
+    ...(evidenceWarnings.length > 0 ? { evidenceWarnings } : {}),
+    ...(searchQueries.length > 0 ? { searchQueries } : {}),
     items,
   };
 }
@@ -127,8 +148,11 @@ export function formatEvidencePackForPrompt(
   evidencePack: EvidencePack | undefined,
 ): string {
   if (!evidencePack?.enabled || evidencePack.items.length === 0) {
+    const statusLines = formatEvidenceStatusForPrompt(evidencePack);
+
     return [
       "本轮会议未启用外部资料包。",
+      ...statusLines,
       "涉及当前、最新、排名、价格、政策、版本、新闻等实时信息时，不要给出未经验证的确定结论，应标注为待核验。",
     ].join("\n");
   }
@@ -136,6 +160,7 @@ export function formatEvidencePackForPrompt(
   return [
     "本轮会议提供了统一的外部资料候选。",
     "这些资料是检索资料候选，不代表已经完成事实核验。",
+    ...formatEvidenceStatusForPrompt(evidencePack),
     formatDocumentInputStrategyForPrompt(evidencePack.strategy),
     formatEvidenceDeliveryForPrompt(evidencePack.delivery),
     "你在引用资料包中的事实时，必须使用资料编号，例如 [S1]、[S2]。",
@@ -229,32 +254,27 @@ export function scoreEvidence(input: {
   title?: string;
   url?: string;
   source?: string;
+  publishedAt?: string;
   snippet: string;
+  topic?: string;
   wasTruncated?: boolean;
 }): EvidenceQuality {
   const warnings: string[] = [];
   const title = input.title?.trim() ?? "";
   const snippet = input.snippet.trim();
   const sourceType = detectEvidenceSourceType(input.url, input.source);
-  let score = 50;
-
-  if (sourceType === "official") {
-    score += 40;
-  } else if (sourceType === "benchmark") {
-    score += 30;
-  } else if (sourceType === "media") {
-    score += 10;
-  } else if (sourceType === "blog") {
-    score -= 10;
-  } else if (sourceType === "community") {
-    score -= 20;
-  } else if (sourceType === "social") {
-    score -= 30;
-  } else if (sourceType === "video") {
-    score -= 25;
-  } else {
-    score -= 10;
-  }
+  const relevanceScore = getRelevanceScore(input.topic, title, snippet);
+  const authorityScore = getAuthorityScore(sourceType);
+  const freshnessScore = getFreshnessScore(input.publishedAt);
+  const contentScore = getContentScore(snippet);
+  const diversityScore = 60;
+  let score = Math.round(
+    authorityScore * 0.35 +
+      relevanceScore * 0.25 +
+      freshnessScore * 0.15 +
+      contentScore * 0.15 +
+      diversityScore * 0.1,
+  );
 
   if (snippet.length < 300) {
     score -= 25;
@@ -276,6 +296,8 @@ export function scoreEvidence(input: {
     warnings.push("标题存在夸张或标题党风险");
   }
 
+  score += getSourceRiskAdjustment(sourceType);
+
   const clampedScore = Math.min(Math.max(score, 0), 100);
 
   return {
@@ -285,6 +307,11 @@ export function scoreEvidence(input: {
     sourceType,
     reliability: getReliability(clampedScore),
     score: clampedScore,
+    relevanceScore,
+    authorityScore,
+    freshnessScore,
+    contentScore,
+    diversityScore,
   };
 }
 
@@ -382,6 +409,7 @@ function formatEvidenceDeliveryForPrompt(
 
 function normalizeEvidenceItem(
   input: unknown,
+  topic?: string,
 ): Omit<SearchEvidence, "id"> | null {
   if (!isObject(input)) {
     return null;
@@ -408,6 +436,8 @@ function normalizeEvidenceItem(
     title,
     source,
     url,
+    publishedAt,
+    topic,
     titleWasEmpty: !rawTitle,
   });
 
@@ -441,9 +471,21 @@ function formatEvidenceItemForPrompt(item: SearchEvidence): string {
     .join("\n");
 }
 
-function createDisabledEvidencePack(): EvidencePack {
+function createDisabledEvidencePack(input?: unknown): EvidencePack {
+  const evidenceStatus =
+    isObject(input) && normalizeEvidenceStatus(input.evidenceStatus)
+      ? normalizeEvidenceStatus(input.evidenceStatus)
+      : "none";
+  const evidenceWarnings =
+    isObject(input) ? normalizeStringArray(input.evidenceWarnings) : [];
+  const searchQueries =
+    isObject(input) ? normalizeStringArray(input.searchQueries) : [];
+
   return {
     enabled: false,
+    evidenceStatus,
+    ...(evidenceWarnings.length > 0 ? { evidenceWarnings } : {}),
+    ...(searchQueries.length > 0 ? { searchQueries } : {}),
     items: [],
   };
 }
@@ -495,6 +537,8 @@ function createEvidenceQuality(options: {
   title: string;
   source?: string;
   url?: string;
+  publishedAt?: string;
+  topic?: string;
   titleWasEmpty: boolean;
 }): EvidenceQuality {
   const sanitizedRawSnippet = sanitizeEvidenceText(options.rawSnippet);
@@ -503,6 +547,8 @@ function createEvidenceQuality(options: {
     title: options.titleWasEmpty ? "" : options.title,
     source: options.source,
     url: options.url,
+    publishedAt: options.publishedAt,
+    topic: options.topic,
     snippet: options.snippet,
     wasTruncated,
   });
@@ -547,7 +593,15 @@ function detectEvidenceSourceType(
   }
 
   if (
-    ["lmarena.ai", "artificialanalysis.ai", "swebench.com", "paperswithcode.com", "arxiv.org"].some(
+    [
+      "lmarena.ai",
+      "artificialanalysis.ai",
+      "swebench.com",
+      "paperswithcode.com",
+      "arxiv.org",
+      "huggingface.co",
+      "github.com",
+    ].some(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
@@ -598,6 +652,176 @@ function detectEvidenceSourceType(
   return "unknown";
 }
 
+function formatEvidenceStatusForPrompt(
+  evidencePack: EvidencePack | undefined,
+): string[] {
+  const status = evidencePack?.evidenceStatus;
+
+  if (!status) {
+    return [];
+  }
+
+  const warnings = evidencePack?.evidenceWarnings ?? [];
+  const lines = [
+    `证据状态：${status}`,
+    ...warnings.map((warning) => `证据提示：${warning}`),
+  ];
+
+  if (status === "low" || status === "none") {
+    lines.push(
+      "低证据模式规则：不得声称掌握最新事实；不得把低质量资料当作确定依据；涉及排名、价格、发布时间、跑分、最新发布等内容时必须提醒用户请人工核验；可以基于已有知识进行分析，但必须标注不确定性。",
+    );
+  }
+
+  return lines;
+}
+
+function getEvidenceStatus(items: SearchEvidence[]): EvidenceStatus {
+  if (items.length === 0) {
+    return "none";
+  }
+
+  const highCount = items.filter(
+    (item) => item.quality?.reliability === "high",
+  ).length;
+  const mediumCount = items.filter(
+    (item) => item.quality?.reliability === "medium",
+  ).length;
+
+  if (highCount >= 2 || (highCount >= 1 && mediumCount >= 1)) {
+    return "high";
+  }
+
+  if (highCount > 0 || mediumCount > 0) {
+    return "medium";
+  }
+
+  return "low";
+}
+
+function normalizeEvidenceStatus(value: unknown): EvidenceStatus | undefined {
+  if (
+    value === "high" ||
+    value === "medium" ||
+    value === "low" ||
+    value === "none"
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => sanitizeEvidenceText(item.trim()).slice(0, 240))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function getAuthorityScore(sourceType: EvidenceSourceType): number {
+  return {
+    official: 100,
+    benchmark: 95,
+    media: 65,
+    blog: 40,
+    community: 25,
+    video: 25,
+    social: 15,
+    unknown: 30,
+  }[sourceType];
+}
+
+function getSourceRiskAdjustment(sourceType: EvidenceSourceType): number {
+  return {
+    official: 0,
+    benchmark: 0,
+    media: 0,
+    blog: -10,
+    community: -25,
+    video: -25,
+    social: -30,
+    unknown: -10,
+  }[sourceType];
+}
+
+function getContentScore(snippet: string): number {
+  if (snippet.length >= 1000) {
+    return 90;
+  }
+
+  if (snippet.length >= 300) {
+    return 75;
+  }
+
+  if (snippet.length >= 120) {
+    return 45;
+  }
+
+  return 20;
+}
+
+function getFreshnessScore(publishedAt: string | undefined): number {
+  if (!publishedAt) {
+    return 65;
+  }
+
+  const timestamp = Date.parse(publishedAt);
+
+  if (!Number.isFinite(timestamp)) {
+    return 50;
+  }
+
+  const ageDays = (Date.now() - timestamp) / 86_400_000;
+
+  if (ageDays <= 365) {
+    return 90;
+  }
+
+  if (ageDays <= 365 * 3) {
+    return 70;
+  }
+
+  return 45;
+}
+
+function getRelevanceScore(
+  topic: string | undefined,
+  title: string,
+  snippet: string,
+): number {
+  if (!topic?.trim()) {
+    return 80;
+  }
+
+  const topicTokens = getSearchTokens(topic);
+  const evidenceText = `${title} ${snippet}`.toLowerCase();
+
+  if (topicTokens.length === 0) {
+    return 60;
+  }
+
+  const hitCount = topicTokens.filter((token) =>
+    evidenceText.includes(token.toLowerCase()),
+  ).length;
+
+  return Math.min(100, Math.round((hitCount / topicTokens.length) * 100));
+}
+
+function getSearchTokens(value: string): string[] {
+  const englishTokens = value
+    .toLowerCase()
+    .match(/[a-z0-9][a-z0-9.-]{1,}/g) ?? [];
+  const cjkTokens = value.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+
+  return Array.from(new Set([...englishTokens, ...cjkTokens])).slice(0, 12);
+}
+
 function getHostname(url: string | undefined): string {
   if (!url) {
     return "";
@@ -625,7 +849,7 @@ function getReliability(score: number): EvidenceReliability {
     return "medium";
   }
 
-  if (score >= 35) {
+  if (score >= 25) {
     return "low";
   }
 
@@ -649,7 +873,8 @@ function compareEvidenceQuality(
 function isUsableEvidenceItem(item: Omit<SearchEvidence, "id">): boolean {
   return (
     item.quality?.reliability === "high" ||
-    item.quality?.reliability === "medium"
+    item.quality?.reliability === "medium" ||
+    item.quality?.reliability === "low"
   );
 }
 

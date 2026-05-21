@@ -148,6 +148,10 @@ export type LiveParticipantStatuses = Record<string, LiveParticipantStatus>;
 
 export type ModelProvider = {
   name: string;
+  generateSearchQueries?(
+    participant: ModelParticipant,
+    topic: string,
+  ): Promise<string[]>;
   generateIndependentView(
     participant: ModelParticipant,
     topic: string,

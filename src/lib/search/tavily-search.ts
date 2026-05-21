@@ -112,6 +112,26 @@ export function normalizeTavilySearchResponse(
     .slice(0, DEFAULT_MAX_RESULTS);
 }
 
+export function buildTavilySearchQueries(topic: string): string[] {
+  const normalizedTopic = topic.trim();
+
+  if (!normalizedTopic) {
+    return [];
+  }
+
+  const englishTopic = normalizedTopic.replace(/[^\p{L}\p{N}\s.-]/gu, " ");
+  const queries = [
+    `${englishTopic} official report`,
+    `${englishTopic} benchmark`,
+    `${englishTopic} latest analysis`,
+    `${englishTopic} comparison`,
+    normalizedTopic,
+  ];
+
+  return Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean)))
+    .slice(0, 6);
+}
+
 function getEnvMaxResults() {
   const value = Number(process.env.TAVILY_MAX_RESULTS);
 

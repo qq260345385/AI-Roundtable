@@ -57,11 +57,6 @@ type EvidenceParseApiResponse = {
   error?: string;
 };
 
-type EvidenceSearchApiResponse = {
-  drafts?: EvidenceDraft[];
-  error?: string;
-};
-
 export default function Home() {
   const [mode, setMode] = useState<RoundtableMode | null>(null);
   const [modelLoadStatus, setModelLoadStatus] =
@@ -92,7 +87,6 @@ export default function Home() {
   const [evidenceImportMessage, setEvidenceImportMessage] = useState("");
   const [isEvidenceImporting, setIsEvidenceImporting] = useState(false);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
-  const [isEvidenceSearching, setIsEvidenceSearching] = useState(false);
   const [isBriefMode, setIsBriefMode] = useState(false);
   const [locale, setLocale] = useState<Locale>(() => {
     if (typeof window === "undefined") {
@@ -187,49 +181,7 @@ export default function Home() {
       return;
     }
 
-    let meetingEvidenceDrafts = isEvidencePackEnabled ? evidenceDrafts : [];
-
-    if (isWebSearchEnabled) {
-      setStatus("loading");
-      setMessage(uiText.evidence.webSearching);
-      setIsEvidenceSearching(true);
-      setEvidenceImportMessage(uiText.evidence.webSearching);
-
-      try {
-        const remainingSlots = MAX_EVIDENCE_DRAFTS - meetingEvidenceDrafts.length;
-        const webDrafts =
-          remainingSlots > 0
-            ? (await searchEvidence(
-                trimmedQuestion,
-                uiText.evidence.webSearchFailed,
-              )).slice(0, remainingSlots)
-            : [];
-
-        if (webDrafts.length === 0 && meetingEvidenceDrafts.length === 0) {
-          setStatus("error");
-          setMessage(uiText.evidence.noContent);
-          setIsEvidenceSearching(false);
-          setEvidenceImportMessage(uiText.evidence.noContent);
-          return;
-        }
-
-        meetingEvidenceDrafts = mergeEvidenceDrafts(
-          meetingEvidenceDrafts,
-          webDrafts,
-        );
-        setEvidenceDrafts(meetingEvidenceDrafts);
-        setEvidenceImportMessage(
-          `${uiText.evidence.webSearchImported} ${webDrafts.length} ${uiText.evidence.importedSuffix}`,
-        );
-      } catch (error) {
-        setStatus("error");
-        setMessage(getErrorMessage(error, uiText));
-        setIsEvidenceSearching(false);
-        return;
-      } finally {
-        setIsEvidenceSearching(false);
-      }
-    }
+    const meetingEvidenceDrafts = isEvidencePackEnabled ? evidenceDrafts : [];
 
     const initialMeeting = createInitialLiveMeeting(
       trimmedQuestion,
@@ -237,7 +189,11 @@ export default function Home() {
     );
 
     setStatus("loading");
-    setMessage(uiText.meetingForm.messages.meetingLoading);
+    setMessage(
+      isWebSearchEnabled
+        ? uiText.evidence.webSearching
+        : uiText.meetingForm.messages.meetingLoading,
+    );
     setCopyMessage("");
     setMeeting(initialMeeting);
     setMeetingParticipants(selectedParticipants);
@@ -255,13 +211,14 @@ export default function Home() {
         },
         body: JSON.stringify({
           evidencePack: buildEvidencePackRequest(
-            isEvidencePackEnabled || isWebSearchEnabled,
+            isEvidencePackEnabled,
             meetingEvidenceDrafts,
             documentInputStrategy,
           ),
           isBriefMode,
           participantIds: selectedParticipantIds,
           question: trimmedQuestion,
+          webSearchEnabled: isWebSearchEnabled,
         }),
       });
 
@@ -390,7 +347,6 @@ export default function Home() {
   const isStartDisabled =
     status === "loading" ||
     isEvidenceImporting ||
-    isEvidenceSearching ||
     modelLoadStatus !== "success" ||
     (mode === "real" && participants.length === 0) ||
     selectedParticipants.length === 0 ||
@@ -398,7 +354,6 @@ export default function Home() {
   const startButtonText = getStartButtonText({
     hasInvalidEvidencePack,
     isEvidenceImporting,
-    isEvidenceSearching,
     meetingStatus: status,
     modelLoadStatus,
     mode,
@@ -861,7 +816,6 @@ function ProviderModeNotice({
 type StartButtonTextOptions = {
   hasInvalidEvidencePack: boolean;
   isEvidenceImporting: boolean;
-  isEvidenceSearching: boolean;
   meetingStatus: MeetingStatus;
   modelLoadStatus: ModelLoadStatus;
   mode: RoundtableMode | null;
@@ -873,10 +827,6 @@ type StartButtonTextOptions = {
 function getStartButtonText(options: StartButtonTextOptions): string {
   if (options.isEvidenceImporting) {
     return options.text.meetingForm.evidenceLoading;
-  }
-
-  if (options.isEvidenceSearching) {
-    return options.text.evidence.webSearching;
   }
 
   if (options.meetingStatus === "loading") {
@@ -918,7 +868,7 @@ function buildEvidencePackRequest(
   drafts: EvidenceDraft[],
   strategy: DocumentInputStrategy,
 ) {
-  if (!enabled) {
+  if (!enabled || drafts.length === 0) {
     return {
       enabled: false,
       items: [],
@@ -936,13 +886,6 @@ function buildEvidencePackRequest(
       snippet: draft.snippet,
     })),
   };
-}
-
-function mergeEvidenceDrafts(
-  currentDrafts: EvidenceDraft[],
-  incomingDrafts: EvidenceDraft[],
-): EvidenceDraft[] {
-  return [...currentDrafts, ...incomingDrafts].slice(0, MAX_EVIDENCE_DRAFTS);
 }
 
 function getDocumentInputStrategyOptions(text: ReturnType<typeof getUiText>) {
@@ -1018,26 +961,6 @@ async function parseEvidenceFile(
   }
 
   return data.draft;
-}
-
-async function searchEvidence(
-  query: string,
-  fallbackError: string,
-): Promise<EvidenceDraft[]> {
-  const response = await fetch("/api/evidence/search", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query }),
-  });
-  const data = (await response.json()) as EvidenceSearchApiResponse;
-
-  if (!response.ok) {
-    throw new Error(data.error || fallbackError);
-  }
-
-  return data.drafts ?? [];
 }
 
 async function readLiveMeetingEvents(

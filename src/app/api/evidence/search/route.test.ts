@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+﻿import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
 
 const originalApiKey = process.env.TAVILY_API_KEY;
@@ -45,7 +45,7 @@ describe("POST /api/evidence/search", () => {
 
   test("returns normalized evidence drafts from Tavily results", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
       Response.json({
         results: [
           {
@@ -84,7 +84,7 @@ describe("POST /api/evidence/search", () => {
 
   test("returns only the best ten high or medium quality drafts when search returns many mixed candidates", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
       Response.json({
         results: [
           ...Array.from({ length: 12 }, (_, index) => ({
@@ -122,9 +122,9 @@ describe("POST /api/evidence/search", () => {
     expect(JSON.stringify(body)).not.toContain("Reddit rumor");
   });
 
-  test("returns 422 instead of sending low quality search results to models", async () => {
+  test("returns low evidence status instead of failing when only low quality results exist", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
       Response.json({
         results: [
           {
@@ -149,15 +149,93 @@ describe("POST /api/evidence/search", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(422);
-    expect(body.error).toBe(
-      "no high or medium quality web search results were found",
+    expect(response.status).toBe(200);
+    expect(body.evidencePack.evidenceStatus).toBe("low");
+    expect(body.evidencePack.evidenceWarnings).toEqual(
+      expect.arrayContaining([
+        "未找到高质量联网资料，已切换为低证据会议模式。本次会议仍会继续，但涉及实时事实的结论请人工核验。",
+      ]),
     );
+    expect(body.drafts).toHaveLength(2);
+  });
+
+  test("returns none evidence status instead of failing when search results are empty", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
+      Response.json({
+        results: [],
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "unknown topic" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.drafts).toEqual([]);
+    expect(body.evidencePack).toEqual(
+      expect.objectContaining({
+        enabled: false,
+        evidenceStatus: "none",
+      }),
+    );
+    expect(body.evidencePack.evidenceWarnings).toEqual(
+      expect.arrayContaining([
+        "未找到可用联网资料，本次会议将主要基于模型已有知识和推理，涉及实时事实请人工核验。",
+      ]),
+    );
+  });
+
+  test("expands a Chinese time-sensitive model-ranking topic without provider-specific templates", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
+      Response.json({
+        results: [
+          {
+            title: "DeepSeek V3 benchmark",
+            url: "https://artificialanalysis.ai/models/deepseek-v3",
+            content: `DeepSeek benchmark result. ${"A".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({
+          query: "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+        }),
+      }),
+    );
+    const body = await response.json();
+    const queries = fetchMock.mock.calls.map((call) =>
+      JSON.parse(String(call[1]?.body)).query,
+    );
+
+    expect(response.status).toBe(200);
+    expect(queries.length).toBeGreaterThan(1);
+    expect(queries).toEqual(
+      expect.arrayContaining([
+        "目前 DeepSeek 在全球 AI 大模型里面是什么实力 official report",
+        "目前 DeepSeek 在全球 AI 大模型里面是什么实力 benchmark",
+        "目前 DeepSeek 在全球 AI 大模型里面是什么实力 latest analysis",
+        "目前 DeepSeek 在全球 AI 大模型里面是什么实力 comparison",
+        "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+      ]),
+    );
+    expect(queries).not.toContain("DeepSeek V3 benchmark Artificial Analysis");
+    expect(queries).not.toContain("DeepSeek R1 LMSYS Chatbot Arena ranking");
+    expect(body.evidencePack.searchQueries).toEqual(queries);
   });
 
   test("does not leak Tavily error bodies or bearer tokens", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
       Response.json(
         {
           detail: "Authorization failed for Bearer secret-openai-key",
@@ -181,3 +259,4 @@ describe("POST /api/evidence/search", () => {
     expect(bodyText).not.toContain("secret-openai-key");
   });
 });
+

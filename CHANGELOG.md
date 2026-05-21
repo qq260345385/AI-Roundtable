@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4 internal alpha
+
+- Switched web search to a model-driven flow: participants propose search directions before the server runs Tavily.
+- Lowered the evidence quality gate so low-reliability but non-empty sources can be used in low-evidence mode, while very low-quality sources are still filtered.
+- Kept low-evidence warnings in prompts and Markdown so real-time claims remain marked for manual verification.
+
 ## v0.3.21 internal alpha
 
 - Added Tavily-backed Web Evidence Pack search through `POST /api/evidence/search`.

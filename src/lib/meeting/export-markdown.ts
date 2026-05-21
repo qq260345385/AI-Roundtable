@@ -23,6 +23,7 @@ export function exportMeetingToMarkdown(
     lines.push("");
   }
 
+  appendEvidenceStatus(lines, meeting);
   appendEvidencePack(lines, meeting);
   appendCitationCheck(lines, meeting);
 
@@ -177,6 +178,42 @@ function appendEvidencePack(lines: string[], meeting: MeetingResult) {
   }
 
   lines.push("");
+}
+
+function appendEvidenceStatus(lines: string[], meeting: MeetingResult) {
+  const status = meeting.evidencePack?.evidenceStatus;
+
+  if (!status) {
+    return;
+  }
+
+  lines.push("## 事实核验状态");
+  lines.push("");
+  lines.push(formatEvidenceStatusMessage(status));
+
+  const warnings = meeting.evidencePack?.evidenceWarnings ?? [];
+
+  for (const warning of warnings) {
+    lines.push(`- 提示：${sanitizeMarkdownText(warning)}`);
+  }
+
+  lines.push("");
+}
+
+function formatEvidenceStatusMessage(status: string): string {
+  if (status === "high") {
+    return "本次会议参考了较可靠的联网资料。";
+  }
+
+  if (status === "medium") {
+    return "本次会议参考了部分联网资料，但质量一般。";
+  }
+
+  if (status === "low") {
+    return "本次会议未找到高质量资料，结论仅供参考。";
+  }
+
+  return "本次会议没有可用联网资料，主要基于模型已有知识和推理。";
 }
 
 function appendEvidenceQualityOverview(lines: string[], meeting: MeetingResult) {

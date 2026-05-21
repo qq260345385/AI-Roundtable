@@ -56,6 +56,34 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.fetcher = options.fetcher ?? fetch;
   }
 
+  async generateSearchQueries(
+    participant: ModelParticipant,
+    topic: string,
+  ): Promise<string[]> {
+    const content = await this.callChat([
+      {
+        role: "system",
+        content: [
+          "You are a web search planner for AI Roundtable.",
+          "Return JSON only: an array of 3 to 5 concise web search queries.",
+          "Prefer English queries for current facts, rankings, releases, benchmarks, prices, and policies.",
+          "Keep one Chinese query when the topic is Chinese or China-specific.",
+          "Do not include explanations, markdown, or citations.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `Participant: ${participant.provider} / ${participant.model}`,
+          `Meeting topic: ${topic}`,
+          "Create search queries that would help this participant verify current facts before speaking.",
+        ].join("\n"),
+      },
+    ]);
+
+    return parseSearchQueries(content, topic);
+  }
+
   async generateIndependentView(
     participant: ModelParticipant,
     topic: string,
@@ -296,4 +324,27 @@ function readStringList(value: unknown): string[] {
   }
 
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function parseSearchQueries(content: string, topic: string): string[] {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+
+    if (Array.isArray(parsed)) {
+      const queries = parsed
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      return Array.from(new Set(queries)).slice(0, 5);
+    }
+  } catch {
+    // Fall through to a safe plain-text fallback.
+  }
+
+  return [
+    `${topic} official report`,
+    `${topic} benchmark`,
+    `${topic} latest analysis`,
+  ];
 }

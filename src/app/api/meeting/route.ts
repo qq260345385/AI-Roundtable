@@ -4,7 +4,9 @@ import {
   runMeeting,
 } from "../../../lib/meeting/engine";
 import { createProviderRegistry } from "../../../lib/providers/provider-registry";
+import { buildModelDrivenWebEvidencePack } from "../../../lib/search/model-driven-web-search";
 import { normalizeEvidencePack } from "../../../lib/search/evidence-pack";
+import { TavilySearchError } from "../../../lib/search/tavily-search";
 import type { ModelParticipant } from "../../../lib/types";
 
 type MeetingRequestBody = {
@@ -12,6 +14,7 @@ type MeetingRequestBody = {
   isBriefMode?: unknown;
   participantIds?: unknown;
   question?: unknown;
+  webSearchEnabled?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -20,7 +23,7 @@ export async function POST(request: Request) {
     const question = getQuestion(body);
     const isBriefMode = body.isBriefMode === true;
     const participantIds = getParticipantIds(body);
-    const evidencePack = normalizeEvidencePack(body.evidencePack);
+    let evidencePack = normalizeEvidencePack(body.evidencePack);
 
     if (!question) {
       return NextResponse.json(
@@ -44,6 +47,15 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (body.webSearchEnabled === true) {
+      evidencePack = await buildModelDrivenWebEvidencePack({
+        baseEvidencePack: evidencePack,
+        participants,
+        provider: registry.provider,
+        topic: question,
+      });
     }
 
     const meeting = await runMeeting(
@@ -152,6 +164,10 @@ function getErrorStatus(error: unknown): number {
   }
 
   if (error instanceof AllProvidersFailedError) {
+    return error.status;
+  }
+
+  if (error instanceof TavilySearchError) {
     return error.status;
   }
 

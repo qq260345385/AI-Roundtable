@@ -10,6 +10,7 @@ describe("normalizeEvidencePack", () => {
   test("returns a disabled empty pack when input is missing or disabled", () => {
     expect(normalizeEvidencePack(undefined)).toEqual({
       enabled: false,
+      evidenceStatus: "none",
       items: [],
     });
     expect(
@@ -19,6 +20,7 @@ describe("normalizeEvidencePack", () => {
       }),
     ).toEqual({
       enabled: false,
+      evidenceStatus: "none",
       items: [],
     });
   });
@@ -73,7 +75,7 @@ describe("normalizeEvidencePack", () => {
     ]);
   });
 
-  test("filters low quality evidence when high or medium candidates exist", () => {
+  test("keeps low reliability evidence when high or medium candidates exist", () => {
     const pack = normalizeEvidencePack({
       enabled: true,
       items: [
@@ -103,12 +105,15 @@ describe("normalizeEvidencePack", () => {
     expect(pack.items.map((item) => item.title)).toEqual([
       "Official announcement",
       "Benchmark result",
+      "Reddit rumor",
+      "YouTube reaction",
     ]);
     expect(
       pack.items.every(
         (item) =>
           item.quality?.reliability === "high" ||
-          item.quality?.reliability === "medium",
+          item.quality?.reliability === "medium" ||
+          item.quality?.reliability === "low",
       ),
     ).toBe(true);
   });
@@ -180,8 +185,33 @@ describe("normalizeEvidencePack", () => {
         score: expect.any(Number),
         sourceType: expect.any(String),
         reliability: expect.any(String),
+        relevanceScore: expect.any(Number),
+        authorityScore: expect.any(Number),
+        freshnessScore: expect.any(Number),
+        contentScore: expect.any(Number),
+        diversityScore: expect.any(Number),
       }),
     );
+  });
+
+  test("keeps evidence status, warnings, and search queries on normalized packs", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      evidenceStatus: "low",
+      evidenceWarnings: ["低证据提示"],
+      searchQueries: ["DeepSeek benchmark"],
+      items: [
+        {
+          title: "Reddit rumor",
+          url: "https://reddit.com/r/test",
+          snippet: "A".repeat(500),
+        },
+      ],
+    });
+
+    expect(pack.evidenceStatus).toBe("low");
+    expect(pack.evidenceWarnings).toEqual(["低证据提示"]);
+    expect(pack.searchQueries).toEqual(["DeepSeek benchmark"]);
   });
 
   test("scores official evidence as high reliability", () => {
@@ -206,7 +236,7 @@ describe("normalizeEvidencePack", () => {
     ).toEqual(
       expect.objectContaining({
         sourceType: "community",
-        reliability: "very_low",
+        reliability: "low",
       }),
     );
     expect(
@@ -218,7 +248,7 @@ describe("normalizeEvidencePack", () => {
     ).toEqual(
       expect.objectContaining({
         sourceType: "video",
-        reliability: "very_low",
+        reliability: "low",
       }),
     );
     expect(
@@ -277,8 +307,9 @@ describe("normalizeEvidencePack", () => {
     expect(pack.items.map((item) => item.title)).toEqual([
       "Official announcement",
       "Benchmark result",
+      "Reddit rumor",
     ]);
-    expect(pack.items.map((item) => item.id)).toEqual(["S1", "S2"]);
+    expect(pack.items.map((item) => item.id)).toEqual(["S1", "S2", "S3"]);
   });
 
   test("keeps a normalized document input strategy", () => {
@@ -294,6 +325,37 @@ describe("normalizeEvidencePack", () => {
     });
 
     expect(pack.strategy).toBe("native_file");
+  });
+
+  test("keeps low reliability evidence but filters very low reliability evidence", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      items: [
+        {
+          title: "Official report",
+          url: "https://openai.com/research/report",
+          snippet: `Official evidence. ${"A".repeat(500)}`,
+        },
+        {
+          title: "Community discussion with enough context",
+          url: "https://reddit.com/r/artificial/comments/test",
+          snippet: `Community discussion with enough details. ${"B".repeat(500)}`,
+        },
+        {
+          title: "Short social post",
+          url: "https://x.com/example/status/1",
+          snippet: "too short",
+        },
+      ],
+    });
+
+    expect(pack.items.map((item) => item.title)).toEqual([
+      "Official report",
+      "Community discussion with enough context",
+    ]);
+    expect(
+      pack.items.map((item) => item.quality?.reliability),
+    ).toEqual(["high", "low"]);
   });
 
   test("falls back to text_pack strategy for invalid strategy values", () => {
@@ -359,6 +421,27 @@ describe("normalizeEvidencePack", () => {
     expect(enabledPrompt).toContain("不要编造资料编号");
     expect(disabledPrompt).toContain("本轮会议未启用外部资料包");
     expect(disabledPrompt).toContain("待核验");
+  });
+
+  test("formats low evidence status for prompts with uncertainty rules", () => {
+    const prompt = formatEvidencePackForPrompt(
+      normalizeEvidencePack({
+        enabled: true,
+        evidenceStatus: "low",
+        evidenceWarnings: ["未找到高质量联网资料"],
+        items: [
+          {
+            title: "社区资料",
+            url: "https://reddit.com/r/test",
+            snippet: "A".repeat(500),
+          },
+        ],
+      }),
+    );
+
+    expect(prompt).toContain("证据状态：low");
+    expect(prompt).toContain("不得声称掌握最新事实");
+    expect(prompt).toContain("请人工核验");
   });
 
   test("formats native file intent with a text fallback note", () => {

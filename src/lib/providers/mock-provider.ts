@@ -10,6 +10,17 @@ import type {
 export const mockProvider: ModelProvider = {
   name: "MockProvider",
 
+  async generateSearchQueries(
+    _participant: ModelParticipant,
+    topic: string,
+  ): Promise<string[]> {
+    return [
+      `${topic} official report`,
+      `${topic} benchmark`,
+      `${topic} latest analysis`,
+    ];
+  },
+
   async generateIndependentView(
     participant: ModelParticipant,
     topic: string,

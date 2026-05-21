@@ -312,6 +312,7 @@ type MeetingAlertsProps = {
 function MeetingAlerts({ meeting, text }: MeetingAlertsProps) {
   const hasAlerts =
     meeting.isTimeSensitive ||
+    Boolean(meeting.evidencePack?.evidenceStatus) ||
     Boolean(meeting.evidencePack?.delivery) ||
     meeting.hasPartialFailures ||
     meeting.citationCheck?.hasInvalidCitations;
@@ -326,6 +327,12 @@ function MeetingAlerts({ meeting, text }: MeetingAlertsProps) {
       <div className="mt-2 space-y-2">
         {meeting.isTimeSensitive && meeting.factCheckNotice ? (
           <p>{meeting.factCheckNotice}</p>
+        ) : null}
+        {meeting.evidencePack?.evidenceStatus ? (
+          <p>
+            {text.meetingBoard.evidenceStatusTitle}：
+            {text.meetingBoard.evidenceStatus[meeting.evidencePack.evidenceStatus]}
+          </p>
         ) : null}
         {meeting.evidencePack?.delivery ? (
           <p>

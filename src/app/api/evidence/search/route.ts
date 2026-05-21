@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { normalizeEvidencePack } from "../../../../lib/search/evidence-pack";
 import {
   TavilySearchError,
+  buildTavilySearchQueries,
   searchTavilyEvidence,
 } from "../../../../lib/search/tavily-search";
 
@@ -20,30 +21,48 @@ export async function POST(request: Request) {
       throw new SearchRequestError("query cannot be empty", 400);
     }
 
-    const drafts = await searchTavilyEvidence(query);
-    const evidencePack = normalizeEvidencePack(
+    const searchQueries = buildTavilySearchQueries(query);
+    const drafts = dedupeEvidenceDrafts(
+      (
+        await Promise.all(
+          searchQueries.map((searchQuery) =>
+            searchTavilyEvidence(searchQuery, { maxResults: 5 }),
+          ),
+        )
+      ).flat(),
+    );
+    const preflightPack = normalizeEvidencePack(
       {
         enabled: true,
         items: drafts,
       },
       {
-        allowLowReliabilityFallback: false,
+        topic: query,
       },
     );
-
-    if (!evidencePack.enabled || evidencePack.items.length === 0) {
-      throw new SearchRequestError(
-        "no high or medium quality web search results were found",
-        422,
-      );
-    }
+    const evidenceStatus =
+      preflightPack.evidenceStatus ?? (preflightPack.items.length > 0 ? "low" : "none");
+    const evidenceWarnings = getEvidenceWarnings(evidenceStatus);
+    const evidencePack = normalizeEvidencePack(
+      {
+        enabled: preflightPack.items.length > 0,
+        evidenceStatus,
+        evidenceWarnings,
+        items: preflightPack.items,
+        searchQueries,
+      },
+      {
+        topic: query,
+      },
+    );
 
     return NextResponse.json({
       drafts: evidencePack.items,
       evidencePack,
-      warnings: evidencePack.items.flatMap(
-        (item) => item.quality?.warnings ?? [],
-      ),
+      warnings: [
+        ...(evidencePack.evidenceWarnings ?? []),
+        ...evidencePack.items.flatMap((item) => item.quality?.warnings ?? []),
+      ],
     });
   } catch (error) {
     return NextResponse.json(
@@ -108,4 +127,37 @@ class SearchRequestError extends Error {
   ) {
     super(message);
   }
+}
+
+function dedupeEvidenceDrafts<T extends { title: string; url?: string }>(
+  drafts: T[],
+): T[] {
+  const seen = new Set<string>();
+
+  return drafts.filter((draft) => {
+    const key = (draft.url || draft.title).toLowerCase();
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getEvidenceWarnings(status: string): string[] {
+  if (status === "low") {
+    return [
+      "未找到高质量联网资料，已切换为低证据会议模式。本次会议仍会继续，但涉及实时事实的结论请人工核验。",
+    ];
+  }
+
+  if (status === "none") {
+    return [
+      "未找到可用联网资料，本次会议将主要基于模型已有知识和推理，涉及实时事实请人工核验。",
+    ];
+  }
+
+  return [];
 }

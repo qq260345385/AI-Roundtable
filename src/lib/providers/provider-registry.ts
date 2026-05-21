@@ -83,6 +83,20 @@ function createProviderRouter(providers: ModelProvider[]): ModelProvider {
   return {
     name: "ProviderRouter",
 
+    async generateSearchQueries(participant, topic) {
+      const provider = findProvider(providers, participant);
+
+      if (provider.generateSearchQueries) {
+        return provider.generateSearchQueries(participant, topic);
+      }
+
+      return [
+        `${topic} official report`,
+        `${topic} benchmark`,
+        `${topic} latest analysis`,
+      ];
+    },
+
     async generateIndependentView(participant, topic, evidencePack, options) {
       return findProvider(providers, participant).generateIndependentView(
         participant,

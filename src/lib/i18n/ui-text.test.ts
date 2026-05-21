@@ -38,10 +38,22 @@ describe("ui text", () => {
   test("returns automatic web evidence search labels", () => {
     expect(getUiText("zh").evidence.webSearchTitle).toBe("启用联网搜索");
     expect(getUiText("zh").evidence.webSearchDescription).toContain(
-      "当前会议议题",
+      "参会模型先提出搜索方向",
     );
     expect(getUiText("en").evidence.webSearchDescription).toContain(
-      "meeting topic",
+      "participants first plan",
+    );
+  });
+
+  test("returns low evidence warning labels", () => {
+    expect(getUiText("zh").evidence.lowEvidenceNotice).toContain(
+      "未找到高质量联网资料",
+    );
+    expect(getUiText("zh").meetingBoard.evidenceStatusTitle).toBe(
+      "事实核验状态",
+    );
+    expect(getUiText("en").evidence.lowEvidenceNotice).toContain(
+      "low-evidence meeting mode",
     );
   });
 

@@ -4,7 +4,9 @@ import {
 } from "../../../../lib/meeting/engine";
 import { runLiveMeeting } from "../../../../lib/meeting/live-engine";
 import { createProviderRegistry } from "../../../../lib/providers/provider-registry";
+import { buildModelDrivenWebEvidencePack } from "../../../../lib/search/model-driven-web-search";
 import { normalizeEvidencePack } from "../../../../lib/search/evidence-pack";
+import { TavilySearchError } from "../../../../lib/search/tavily-search";
 import type {
   LiveMeetingEvent,
   ModelParticipant,
@@ -15,6 +17,7 @@ type MeetingRequestBody = {
   isBriefMode?: unknown;
   participantIds?: unknown;
   question?: unknown;
+  webSearchEnabled?: unknown;
 };
 
 const encoder = new TextEncoder();
@@ -25,7 +28,7 @@ export async function POST(request: Request) {
     const question = getQuestion(body);
     const isBriefMode = body.isBriefMode === true;
     const participantIds = getParticipantIds(body);
-    const evidencePack = normalizeEvidencePack(body.evidencePack);
+    let evidencePack = normalizeEvidencePack(body.evidencePack);
 
     if (!question) {
       return NextResponse.json(
@@ -49,6 +52,15 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (body.webSearchEnabled === true) {
+      evidencePack = await buildModelDrivenWebEvidencePack({
+        baseEvidencePack: evidencePack,
+        participants,
+        provider: registry.provider,
+        topic: question,
+      });
     }
 
     const stream = new ReadableStream<Uint8Array>({
@@ -178,6 +190,10 @@ function getErrorStatus(error: unknown): number {
   }
 
   if (error instanceof AllProvidersFailedError) {
+    return error.status;
+  }
+
+  if (error instanceof TavilySearchError) {
     return error.status;
   }
 

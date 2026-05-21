@@ -236,6 +236,50 @@ describe("POST /api/meeting", () => {
     );
   });
 
+  test("builds model-driven web evidence when web search is enabled", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        results: [
+          {
+            title: "Official source",
+            url: "https://openai.com/research/test",
+            content: `Official search result. ${"A".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.meeting.evidencePack).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        searchQueries: expect.arrayContaining([
+          "目前 DeepSeek 在全球 AI 大模型里面是什么实力 official report",
+        ]),
+      }),
+    );
+    expect(body.meeting.evidencePack.items[0]).toEqual(
+      expect.objectContaining({
+        id: "S1",
+        source: "openai.com",
+      }),
+    );
+  });
+
   test("returns an error when selected participant is not available", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
     const request = new Request("http://localhost/api/meeting", {

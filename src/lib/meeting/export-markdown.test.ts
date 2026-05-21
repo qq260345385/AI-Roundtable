@@ -119,6 +119,61 @@ describe("exportMeetingToMarkdown", () => {
     );
   });
 
+  test("exports fact verification status for low evidence meetings", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        evidencePack: {
+          enabled: true,
+          evidenceStatus: "low",
+          evidenceWarnings: ["未找到高质量联网资料"],
+          items: [
+            {
+              id: "S1",
+              title: "社区资料",
+              source: "Reddit",
+              url: "https://reddit.com/r/test",
+              snippet: "A".repeat(500),
+              quality: {
+                textLength: 500,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "community",
+                reliability: "low",
+                score: 40,
+              },
+            },
+          ],
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("## 事实核验状态");
+    expect(markdown).toContain("本次会议未找到高质量资料，结论仅供参考。");
+    expect(markdown).toContain("- 提示：未找到高质量联网资料");
+  });
+
+  test("exports fact verification status for no web evidence meetings", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        evidencePack: {
+          enabled: false,
+          evidenceStatus: "none",
+          evidenceWarnings: ["未找到可用联网资料"],
+          items: [],
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("## 事实核验状态");
+    expect(markdown).toContain(
+      "本次会议没有可用联网资料，主要基于模型已有知识和推理。",
+    );
+  });
+
   test("exports evidence quality overview before evidence candidates", () => {
     const markdown = exportMeetingToMarkdown(
       {

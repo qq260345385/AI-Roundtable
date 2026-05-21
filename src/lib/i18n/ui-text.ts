@@ -166,10 +166,14 @@ export const UI_TEXT = {
       parseFailed: "资料文件解析失败",
       webSearchTitle: "启用联网搜索",
       webSearchDescription:
-        "勾选后，开始会议前会用当前会议议题调用 Tavily 搜索，扩大候选池后优先选取质量最高的资料提供给所有模型。",
+        "勾选后，系统会让参会模型先提出搜索方向，再联网检索资料并提供给所有模型。",
       webSearching: "正在搜索联网资料...",
       webSearchImported: "已导入联网资料",
       webSearchFailed: "联网资料搜索失败",
+      lowEvidenceNotice:
+        "未找到高质量联网资料，已切换为低证据会议模式。本次会议仍会继续，但涉及实时事实的结论请人工核验。",
+      noEvidenceNotice:
+        "未找到可用联网资料，本次会议将主要基于模型已有知识和推理，涉及实时事实请人工核验。",
     },
     save: {
       title: "保存会议示例",
@@ -199,6 +203,13 @@ export const UI_TEXT = {
       citationInvalid: "检测到模型引用了资料包中不存在的编号：",
       citationPassed: "引用检查通过：未发现不存在的资料编号。",
       factTitle: "事实核验提示",
+      evidenceStatusTitle: "事实核验状态",
+      evidenceStatus: {
+        high: "本次会议参考了较可靠的联网资料。",
+        medium: "本次会议参考了部分联网资料，但质量一般。",
+        low: "未找到高质量联网资料，已切换为低证据会议模式。本次会议仍会继续，但涉及实时事实的结论请人工核验。",
+        none: "本次会议没有可用联网资料，主要基于模型已有知识和推理。",
+      },
       failureTitle: "部分模型调用失败",
       failureDescription:
         "会议已保留其他模型的成功发言，下面只列出需要检查的调用。",
@@ -383,12 +394,16 @@ export const UI_TEXT = {
       numberingNote:
         "Frontend IDs are only a preview; after submission the server normalizes them as S1-S10.",
       parseFailed: "Failed to parse evidence file",
-      webSearchTitle: "Enable Web Search",
+      webSearchTitle: "Enable web search",
       webSearchDescription:
-        "When enabled, starting the meeting automatically searches Tavily with the current meeting topic, expands the candidate pool, and gives all models the highest-quality selected evidence.",
+        "When enabled, participants first plan useful search queries, then the server searches the web and shares selected evidence with all models.",
       webSearching: "Searching web evidence...",
       webSearchImported: "Imported web evidence",
       webSearchFailed: "Failed to search web evidence",
+      lowEvidenceNotice:
+        "No high-quality web evidence was found. Switched to low-evidence meeting mode; real-time factual claims need manual verification.",
+      noEvidenceNotice:
+        "No usable web evidence was found. The meeting will rely mainly on model knowledge and reasoning; real-time factual claims need manual verification.",
     },
     save: {
       title: "Save Meeting Example",
@@ -419,6 +434,13 @@ export const UI_TEXT = {
         "Detected citation IDs that do not exist in the evidence pack: ",
       citationPassed: "Citation check passed: no missing evidence IDs found.",
       factTitle: "Fact-check Note",
+      evidenceStatusTitle: "Fact Verification Status",
+      evidenceStatus: {
+        high: "This meeting used relatively reliable web evidence.",
+        medium: "This meeting used some web evidence, but its quality is moderate.",
+        low: "No high-quality web evidence was found. Switched to low-evidence meeting mode; real-time factual claims need manual verification.",
+        none: "No usable web evidence was available. The meeting relies mainly on model knowledge and reasoning.",
+      },
       failureTitle: "Some model calls failed",
       failureDescription:
         "The meeting kept successful responses from other models. Calls needing attention are listed below.",

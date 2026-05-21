@@ -373,4 +373,53 @@ describe("OpenAICompatibleProvider", () => {
     expect(prompts[2]).toContain("简要会议模式");
     expect(prompts[2]).toContain("每个字段最多 3 条");
   });
+  test("asks the model to plan web search queries", async () => {
+    let requestBody = "";
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBody = String(init?.body);
+
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  '["DeepSeek V3 benchmark Artificial Analysis","DeepSeek official technical report","DeepSeek 全球大模型排名"]',
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    const queries = await provider.generateSearchQueries?.(
+      {
+        id: "deepseek-flash",
+        name: "DeepSeek Flash",
+        provider: "DeepSeek",
+        model: "deepseek-v4-flash",
+        status: "available",
+        statusLabel: "available",
+      },
+      "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+    );
+
+    const body = JSON.parse(requestBody) as {
+      messages: { content: string }[];
+    };
+    const promptText = body.messages.map((message) => message.content).join("\n");
+
+    expect(queries).toEqual([
+      "DeepSeek V3 benchmark Artificial Analysis",
+      "DeepSeek official technical report",
+      "DeepSeek 全球大模型排名",
+    ]);
+    expect(promptText).toContain("Return JSON only");
+    expect(promptText).toContain("search queries");
+    expect(promptText).toContain("目前 DeepSeek 在全球 AI 大模型里面是什么实力");
+  });
 });

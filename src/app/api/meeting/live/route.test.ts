@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
 
 const originalEnv = { ...process.env };
+const originalFetch = global.fetch;
 
 describe("POST /api/meeting/live", () => {
   afterEach(() => {
     process.env = { ...originalEnv };
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   test("streams live meeting events as newline-delimited JSON", async () => {
@@ -44,6 +47,48 @@ describe("POST /api/meeting/live", () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toBe("question cannot be empty");
+  });
+
+  test("streams model-driven web evidence when web search is enabled", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        results: [
+          {
+            title: "Official source",
+            url: "https://openai.com/research/test",
+            content: `Official search result. ${"A".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+    const request = new Request("http://localhost/api/meeting/live", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const events = await readNdjsonEvents(response);
+    const started = events.find((event) => event.type === "meeting_started");
+    const completed = events.find((event) => event.type === "meeting_completed");
+
+    expect(response.status).toBe(200);
+    expect(started.evidencePack.searchQueries).toEqual(
+      expect.arrayContaining([
+        "目前 DeepSeek 在全球 AI 大模型里面是什么实力 official report",
+      ]),
+    );
+    expect(completed.meeting.evidencePack.items[0]).toEqual(
+      expect.objectContaining({
+        id: "S1",
+        source: "openai.com",
+      }),
+    );
   });
 });
 

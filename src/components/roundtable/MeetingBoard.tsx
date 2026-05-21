@@ -15,6 +15,9 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
       {meeting.isTimeSensitive && meeting.factCheckNotice ? (
         <FactHygienePanel notice={meeting.factCheckNotice} text={text} />
       ) : null}
+      {meeting.evidencePack?.evidenceStatus ? (
+        <EvidenceStatusPanel meeting={meeting} text={text} />
+      ) : null}
       {meeting.evidencePack?.delivery ? (
         <EvidenceDeliveryPanel meeting={meeting} text={text} />
       ) : null}
@@ -27,6 +30,46 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
       <TranscriptPanel phases={meeting.phases} text={text} />
       <SummaryPanel summary={meeting.summary} text={text} />
     </div>
+  );
+}
+
+type EvidenceStatusPanelProps = {
+  meeting: MeetingResult;
+  text: UiText;
+};
+
+function EvidenceStatusPanel({ meeting, text }: EvidenceStatusPanelProps) {
+  const status = meeting.evidencePack?.evidenceStatus;
+
+  if (!status) {
+    return null;
+  }
+
+  const isLowEvidence = status === "low" || status === "none";
+
+  return (
+    <section
+      className={`border p-5 ${
+        isLowEvidence
+          ? "border-amber-200 bg-amber-50"
+          : "border-emerald-200 bg-emerald-50"
+      }`}
+    >
+      <h2
+        className={`text-lg font-semibold ${
+          isLowEvidence ? "text-amber-950" : "text-emerald-950"
+        }`}
+      >
+        {text.meetingBoard.evidenceStatusTitle}
+      </h2>
+      <p
+        className={`mt-1 text-sm leading-6 ${
+          isLowEvidence ? "text-amber-900" : "text-emerald-900"
+        }`}
+      >
+        {text.meetingBoard.evidenceStatus[status]}
+      </p>
+    </section>
   );
 }
 
