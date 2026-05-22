@@ -47,7 +47,6 @@ describe("MeetingBoard", () => {
               wasTruncated: false,
               sourceType: "community",
               reliability: "low",
-              score: 35,
             },
           },
         ],
@@ -73,6 +72,8 @@ describe("MeetingBoard", () => {
     expect(html).not.toContain("Filtered evidence");
     expect(html).not.toContain("very_low_quality");
     expect(html).not.toContain("score");
+    expect(html).not.toContain("citationLevel");
+    expect(html).not.toContain("citationGuidance");
   });
 
   test("renders full web search diagnostics when the API returns debugSearchProcess", () => {

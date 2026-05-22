@@ -1,4 +1,5 @@
 import type { LiveMeetingEvent, MeetingResult } from "../types";
+import type { CitationCheckResult } from "./evidence-citations";
 import type {
   EvidencePack,
   EvidenceQuality,
@@ -19,6 +20,9 @@ export function prepareMeetingForClient(
   return {
     ...safeMeeting,
     evidencePack: sanitizeEvidencePackForClient(meeting.evidencePack),
+    ...(meeting.citationCheck
+      ? { citationCheck: sanitizeCitationCheckForClient(meeting.citationCheck) }
+      : {}),
     searchSummary: createSearchSummary(
       meeting.evidencePack,
       meeting.isTimeSensitive === true,
@@ -209,6 +213,17 @@ function sanitizeEvidenceQualityForClient(
     wasTruncated: quality.wasTruncated,
     sourceType: quality.sourceType,
     reliability: quality.reliability,
-    score: quality.score,
+  };
+}
+
+function sanitizeCitationCheckForClient(
+  citationCheck: CitationCheckResult,
+): CitationCheckResult {
+  return {
+    validCitationIds: citationCheck.validCitationIds,
+    usedCitationIds: citationCheck.usedCitationIds,
+    missingCitationIds: citationCheck.missingCitationIds,
+    invalidCitationIds: citationCheck.invalidCitationIds,
+    hasInvalidCitations: citationCheck.hasInvalidCitations,
   };
 }

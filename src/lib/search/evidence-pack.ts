@@ -42,7 +42,9 @@ export type EvidenceQuality = {
   wasTruncated: boolean;
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
-  score: number;
+  score?: number;
+  citationLevel?: EvidenceCitationLevel;
+  citationGuidance?: string;
   relevanceScore?: number;
   authorityScore?: number;
   freshnessScore?: number;
@@ -129,6 +131,8 @@ export type SearchProcessResult = {
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
   score: number;
+  citationLevel: EvidenceCitationLevel;
+  citationGuidance: string;
   qualityWarnings: string[];
   includedInEvidencePack: boolean;
   filtered: boolean;
@@ -186,6 +190,11 @@ export type EvidenceSourceType =
   | "unknown";
 
 export type EvidenceReliability = "high" | "medium" | "low" | "very_low";
+export type EvidenceCitationLevel =
+  | "fact"
+  | "qualified_fact"
+  | "context_only"
+  | "not_citable";
 export type EvidenceStatus = "high" | "medium" | "low" | "none";
 
 export type EvidenceQualityOverview = {
@@ -456,13 +465,18 @@ export function scoreEvidence(input: {
     clampedScore = Math.max(clampedScore, 25);
   }
 
+  const reliability = getReliability(clampedScore);
+  const citationPolicy = getCitationPolicy(reliability);
+
   return {
     warnings,
     textLength: snippet.length,
     wasTruncated: input.wasTruncated === true,
     sourceType,
-    reliability: getReliability(clampedScore),
+    reliability,
     score: clampedScore,
+    citationLevel: citationPolicy.level,
+    citationGuidance: citationPolicy.guidance,
     relevanceScore,
     authorityScore,
     freshnessScore,
@@ -682,6 +696,10 @@ function createSearchProcess(input: {
       sourceType: quality?.sourceType ?? "unknown",
       reliability: quality?.reliability ?? "very_low",
       score: quality?.score ?? 0,
+      citationLevel: quality?.citationLevel ?? "not_citable",
+      citationGuidance:
+        quality?.citationGuidance ??
+        "Do not cite this result as evidence for factual claims.",
       qualityWarnings: quality?.warnings ?? [],
       includedInEvidencePack: !filteredReason,
       filtered: Boolean(filteredReason),
@@ -1358,6 +1376,39 @@ function getReliability(score: number): EvidenceReliability {
   }
 
   return "very_low";
+}
+
+function getCitationPolicy(reliability: EvidenceReliability): {
+  level: EvidenceCitationLevel;
+  guidance: string;
+} {
+  if (reliability === "high") {
+    return {
+      level: "fact",
+      guidance: "Can support factual claims when the cited text is directly relevant.",
+    };
+  }
+
+  if (reliability === "medium") {
+    return {
+      level: "qualified_fact",
+      guidance:
+        "Can support cautious factual claims with qualification and cross-checking.",
+    };
+  }
+
+  if (reliability === "low") {
+    return {
+      level: "context_only",
+      guidance:
+        "Use only as context, community signal, or a lead; do not use as standalone factual proof.",
+    };
+  }
+
+  return {
+    level: "not_citable",
+    guidance: "Do not cite this result as evidence for factual claims.",
+  };
 }
 
 function compareEvidenceQuality(

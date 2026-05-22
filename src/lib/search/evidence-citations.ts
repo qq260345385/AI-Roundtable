@@ -5,7 +5,10 @@ export type CitationCheckResult = {
   usedCitationIds: string[];
   missingCitationIds: string[];
   invalidCitationIds: string[];
+  weakCitationIds?: string[];
+  citationWarnings?: string[];
   hasInvalidCitations: boolean;
+  hasWeakCitations?: boolean;
 };
 
 const CITATION_PATTERN = /\[(S\d+)\]/gi;
@@ -43,12 +46,38 @@ export function checkEvidenceCitations(
   const missingCitationIds = validCitationIds.filter(
     (id) => !usedCitationIdSet.has(id),
   );
+  const weakCitationIds =
+    evidencePack?.enabled && evidencePack.items.length > 0
+      ? usedCitationIds.filter((id) => {
+          const item = evidencePack.items.find((candidate) => candidate.id === id);
+
+          return item ? isWeakEvidenceCitation(item) : false;
+        })
+      : [];
+  const citationWarnings = weakCitationIds.map(
+    (id) =>
+      `${id} is context-only evidence and should not support factual claims.`,
+  );
 
   return {
     validCitationIds,
     usedCitationIds,
     missingCitationIds,
     invalidCitationIds,
+    weakCitationIds,
+    citationWarnings,
     hasInvalidCitations: invalidCitationIds.length > 0,
+    hasWeakCitations: weakCitationIds.length > 0,
   };
+}
+
+function isWeakEvidenceCitation(
+  item: EvidencePack["items"][number],
+): boolean {
+  return (
+    item.quality?.citationLevel === "context_only" ||
+    item.quality?.citationLevel === "not_citable" ||
+    item.quality?.reliability === "low" ||
+    item.quality?.reliability === "very_low"
+  );
 }

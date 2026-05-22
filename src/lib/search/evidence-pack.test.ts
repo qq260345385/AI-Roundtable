@@ -223,7 +223,49 @@ describe("normalizeEvidencePack", () => {
 
     expect(quality.sourceType).toBe("official");
     expect(quality.reliability).toBe("high");
+    expect(quality.citationLevel).toBe("fact");
     expect(quality.score).toBeGreaterThanOrEqual(80);
+  });
+
+  test("assigns internal citation levels from evidence reliability", () => {
+    expect(
+      scoreEvidence({
+        title: "Official model release",
+        url: "https://openai.com/index/model-release",
+        snippet: "Official release notes. ".repeat(40),
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        reliability: "high",
+        citationLevel: "fact",
+        citationGuidance: expect.stringContaining("factual"),
+      }),
+    );
+    expect(
+      scoreEvidence({
+        title: "Reddit discussion",
+        url: "https://reddit.com/r/artificial/comments/test",
+        snippet: "Community discussion. ".repeat(40),
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        reliability: "low",
+        citationLevel: "context_only",
+        citationGuidance: expect.stringContaining("context"),
+      }),
+    );
+    expect(
+      scoreEvidence({
+        title: "Short social post",
+        url: "https://x.com/example/status/1",
+        snippet: "too short",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        reliability: "very_low",
+        citationLevel: "not_citable",
+      }),
+    );
   });
 
   test("scores community, video, and social sources lower", () => {
@@ -430,6 +472,7 @@ describe("normalizeEvidencePack", () => {
         expect.objectContaining({
           title: "Short social post",
           reliability: "very_low",
+          citationLevel: "not_citable",
           includedInEvidencePack: false,
           filtered: true,
           filteredReason: "very_low_quality",

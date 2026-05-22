@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.3 internal alpha
+
+- Added internal citation levels for web evidence so high/medium sources can support factual claims while low sources remain context-only.
+- Strengthened citation checks and summary quality gates so low-evidence citations are not kept as confirmable facts.
+- Kept scoring, citation levels, and filter diagnostics out of default API/UI responses while preserving full details in server debug mode.
+
 ## v0.4.2.3 internal alpha
 
 - Added compact `searchSummary` responses for web search status, evidence counts, and user-facing verification warnings.

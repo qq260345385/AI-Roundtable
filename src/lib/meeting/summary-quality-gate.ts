@@ -1,5 +1,6 @@
 import type { MeetingSummary } from "../types";
 import type { EvidencePack } from "../search/evidence-pack";
+import { extractCitationIds } from "../search/evidence-citations";
 
 export function applyEvidenceQualityGateToSummary(
   summary: MeetingSummary,
@@ -15,7 +16,7 @@ export function applyEvidenceQualityGateToSummary(
   );
 
   if (hasUsableEvidence) {
-    return summary;
+    return downgradeWeakConfirmableFacts(summary, evidencePack);
   }
 
   const downgradedFacts = [
@@ -35,6 +36,60 @@ export function applyEvidenceQualityGateToSummary(
       ...(summary.insufficientlyConfirmed ?? []),
       ...downgradedFacts.map(markAsInsufficientlyConfirmed),
     ],
+  };
+}
+
+function downgradeWeakConfirmableFacts(
+  summary: MeetingSummary,
+  evidencePack: EvidencePack,
+): MeetingSummary {
+  const facts = summary.confirmableFacts ?? [];
+
+  if (facts.length === 0) {
+    return summary;
+  }
+
+  const weakCitationIds = new Set(
+    evidencePack.items
+      .filter(
+        (item) =>
+          item.quality?.citationLevel === "context_only" ||
+          item.quality?.citationLevel === "not_citable" ||
+          item.quality?.reliability === "low" ||
+          item.quality?.reliability === "very_low",
+      )
+      .map((item) => item.id),
+  );
+
+  if (weakCitationIds.size === 0) {
+    return summary;
+  }
+
+  const confirmableFacts: string[] = [];
+  const insufficientlyConfirmed: string[] = [
+    ...(summary.insufficientlyConfirmed ?? []),
+  ];
+
+  for (const fact of facts) {
+    const citesWeakEvidence = extractCitationIds(fact).some((id) =>
+      weakCitationIds.has(id),
+    );
+
+    if (citesWeakEvidence) {
+      insufficientlyConfirmed.push(markAsInsufficientlyConfirmed(fact));
+    } else {
+      confirmableFacts.push(fact);
+    }
+  }
+
+  if (confirmableFacts.length === facts.length) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    confirmableFacts,
+    insufficientlyConfirmed,
   };
 }
 

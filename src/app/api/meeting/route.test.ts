@@ -294,6 +294,12 @@ describe("POST /api/meeting", () => {
     expect(JSON.stringify(body.meeting)).not.toContain("queryPlans");
     expect(JSON.stringify(body.meeting)).not.toContain("searchIntents");
     expect(JSON.stringify(body.meeting)).not.toContain("executedQueries");
+    expect(JSON.stringify(body.meeting)).not.toContain('"score"');
+    expect(JSON.stringify(body.meeting)).not.toContain("citationLevel");
+    expect(JSON.stringify(body.meeting)).not.toContain("citationGuidance");
+    expect(JSON.stringify(body.meeting)).not.toContain("weakCitationIds");
+    expect(JSON.stringify(body.meeting)).not.toContain("citationWarnings");
+    expect(JSON.stringify(body.meeting)).not.toContain("filteredReason");
     expect(JSON.stringify(body.meeting)).not.toContain("relevanceScore");
     expect(JSON.stringify(body.meeting)).not.toContain("authorityScore");
   });
@@ -361,6 +367,12 @@ describe("POST /api/meeting", () => {
           expect.any(Object),
           expect.any(Object),
         ],
+      }),
+    );
+    expect(body.meeting.debugSearchProcess.results[0]).toEqual(
+      expect.objectContaining({
+        score: expect.any(Number),
+        citationLevel: "qualified_fact",
       }),
     );
   });
