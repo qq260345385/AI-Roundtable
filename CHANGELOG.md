@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.1 internal alpha
+
+- Simplified participant model cards so the default UI shows the actual model id directly without extra display-name prefixes or duplicate model metadata.
+
 ## v0.5.0 internal alpha
 
 - Added a pluggable `SearchProvider` interface and registry, with Tavily as the default built-in provider.

@@ -110,16 +110,13 @@ function ParticipantCard({
             type="checkbox"
           />
           <span className="min-w-0">
-            <span className="block font-medium text-zinc-950">
-              {participant.name}
+            <span className="block break-words font-medium text-zinc-950">
+              {participant.model}
               {capabilityNotes.length > 0 ? (
                 <span className="ml-1 whitespace-nowrap text-xs font-normal leading-5 text-amber-700">
                   （{capabilityNotes.join("、")}）
                 </span>
               ) : null}
-            </span>
-            <span className="mt-1 block text-sm text-zinc-600">
-              {participant.provider}
             </span>
           </span>
         </label>
@@ -129,9 +126,6 @@ function ParticipantCard({
           {getStatusLabel(participant, text)}
         </span>
       </div>
-      <p className="mt-3 text-sm text-zinc-500">
-        {text.participants.modelLabel}：{participant.model}
-      </p>
     </article>
   );
 }
