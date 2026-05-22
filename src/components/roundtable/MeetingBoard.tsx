@@ -1,5 +1,6 @@
 import type { MeetingResult } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
+import type { ReactNode } from "react";
 import { formatFailureForDisplay } from "@/lib/meeting/failure-format";
 import { SummaryPanel } from "./SummaryPanel";
 import { TranscriptPanel } from "./TranscriptPanel";
@@ -18,6 +19,9 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
       {meeting.evidencePack?.evidenceStatus ? (
         <EvidenceStatusPanel meeting={meeting} text={text} />
       ) : null}
+      {meeting.searchSummary?.enabled ? (
+        <WebSearchProcessPanel meeting={meeting} text={text} />
+      ) : null}
       {meeting.evidencePack?.delivery ? (
         <EvidenceDeliveryPanel meeting={meeting} text={text} />
       ) : null}
@@ -29,6 +33,300 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
       ) : null}
       <TranscriptPanel phases={meeting.phases} text={text} />
       <SummaryPanel summary={meeting.summary} text={text} />
+    </div>
+  );
+}
+
+type WebSearchProcessPanelProps = {
+  meeting: MeetingResult;
+  text: UiText;
+};
+
+export function WebSearchProcessPanel({
+  meeting,
+  text,
+}: WebSearchProcessPanelProps) {
+  const searchSummary = meeting.searchSummary;
+
+  if (!searchSummary?.enabled) {
+    return null;
+  }
+
+  const labels = text.meetingBoard.searchProcess;
+  const copy = getSearchStatusCopy(meeting);
+
+  return (
+    <section className="border border-sky-100 bg-sky-50/45 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-sky-950">
+            {labels.title}
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-sky-900">{copy.status}</p>
+          <p className="mt-1 text-sm leading-6 text-sky-800">{copy.summary}</p>
+          {copy.note ? (
+            <p className="mt-1 text-sm leading-6 text-amber-800">
+              {copy.note}
+            </p>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-3 border border-sky-100 bg-white/70 text-center text-xs text-sky-900 md:min-w-72">
+          <Metric label="Reliable" value={copy.reliableCount} />
+          <Metric label="General" value={copy.generalCount} />
+          <Metric label="Weaker" value={copy.weakerCount} />
+        </div>
+      </div>
+
+      {meeting.debugSearchProcess ? (
+        <DeveloperSearchDetails meeting={meeting} text={text} />
+      ) : null}
+    </section>
+  );
+}
+
+function DeveloperSearchDetails({
+  meeting,
+  text,
+}: WebSearchProcessPanelProps) {
+  const process = meeting.debugSearchProcess;
+
+  if (!process) {
+    return null;
+  }
+
+  const labels = text.meetingBoard.searchProcess;
+  const reliabilitySummary = Object.entries(
+    process.qualityOverview.byReliability,
+  )
+    .filter(([, count]) => count > 0)
+    .map(([quality, count]) => `${quality}: ${count}`)
+    .join(" / ");
+  const filteredReasonSummary =
+    process.filteredReasons.length > 0
+      ? process.filteredReasons
+          .map(
+            (item) =>
+              `${
+                labels.reasonLabels[
+                  item.reason as keyof typeof labels.reasonLabels
+                ] ?? item.reason
+              } (${item.reason}): ${item.count}`,
+          )
+          .join(" / ")
+      : labels.noFiltered;
+
+  return (
+    <details className="mt-4 border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
+      <summary className="cursor-pointer font-medium text-sky-950">
+        Developer search details
+      </summary>
+      <div className="mt-3 grid items-start gap-3 md:grid-cols-2">
+        <ProcessBlock title={labels.intentTitle}>
+          {process.searchIntents.length > 0 ? (
+            <ul className="space-y-2">
+              {process.searchIntents.map((intent, recordIndex) => (
+                <li key={intent.participantId}>
+                  <details
+                    open={recordIndex === 0 || process.searchIntents.length <= 3}
+                  >
+                    <summary className="cursor-pointer font-medium text-sky-950">
+                      {intent.participantName}
+                      <span className="font-normal text-zinc-500">
+                        {" "}
+                        / {intent.provider}
+                      </span>
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {intent.intents.map((searchIntent, index) => (
+                        <div
+                          className="border-l-2 border-sky-200 bg-sky-50/50 px-3 py-2"
+                          key={`${intent.participantId}-${index}`}
+                        >
+                          <p className="font-medium text-zinc-800">
+                            {searchIntent.question}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-600">
+                            freshness: {searchIntent.freshness} / source:{" "}
+                            {searchIntent.sourcePreference}
+                          </p>
+                          {searchIntent.mustInclude.length > 0 ? (
+                            <p className="mt-1 text-xs text-zinc-600">
+                              must: {searchIntent.mustInclude.join(", ")}
+                            </p>
+                          ) : null}
+                          {searchIntent.shouldInclude.length > 0 ? (
+                            <p className="mt-1 text-xs text-zinc-600">
+                              should: {searchIntent.shouldInclude.join(", ")}
+                            </p>
+                          ) : null}
+                          {searchIntent.exclude.length > 0 ? (
+                            <p className="mt-1 text-xs text-zinc-600">
+                              exclude: {searchIntent.exclude.join(", ")}
+                            </p>
+                          ) : null}
+                          {searchIntent.rationale ? (
+                            <p className="mt-1 text-zinc-700">
+                              {searchIntent.rationale}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>{labels.empty}</p>
+          )}
+        </ProcessBlock>
+
+        <ProcessBlock title={labels.queryTitle}>
+          {process.executedQueries.length > 0 ? (
+            <div className="space-y-2">
+              <p>{process.executedQueries.join(" / ")}</p>
+              {process.queryPlans.length > 0 ? (
+                <details>
+                  <summary className="cursor-pointer text-xs font-medium text-sky-900">
+                    Query generation
+                  </summary>
+                  <ul className="mt-2 space-y-2">
+                    {process.queryPlans.map((plan) => (
+                      <li
+                        className="border-l-2 border-sky-200 pl-3"
+                        key={plan.query}
+                      >
+                        <p className="font-medium text-zinc-800">
+                          {plan.query}
+                        </p>
+                        <p className="text-xs text-zinc-600">
+                          {plan.reason}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </div>
+          ) : (
+            <p>{labels.empty}</p>
+          )}
+        </ProcessBlock>
+
+        <ProcessBlock title={labels.qualityTitle}>
+          <p>{reliabilitySummary || labels.empty}</p>
+          {process.qualityOverview.lowEvidenceCount > 0 ? (
+            <p className="mt-1 text-amber-800">
+              {labels.lowEvidenceCount}: {process.qualityOverview.lowEvidenceCount}
+            </p>
+          ) : null}
+        </ProcessBlock>
+
+        <ProcessBlock title={labels.filteredTitle}>
+          <p>{filteredReasonSummary}</p>
+          {process.intentDecisions.length > 0 ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs font-medium text-sky-900">
+                Merged / dropped search intents
+              </summary>
+              <ul className="mt-2 space-y-1">
+                {process.intentDecisions
+                  .filter((decision) => decision.action !== "used")
+                  .map((decision, index) => (
+                    <li
+                      className="border-l-2 border-sky-200 pl-3"
+                      key={`${decision.question}-${index}`}
+                    >
+                      <span className="font-medium">{decision.action}</span>
+                      <span className="text-zinc-500">
+                        {" "}
+                        / {decision.reason}
+                      </span>
+                      <p>{decision.question}</p>
+                      {decision.mergedInto ? (
+                        <p className="text-xs text-zinc-600">
+                          merged into: {decision.mergedInto}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+              </ul>
+            </details>
+          ) : null}
+        </ProcessBlock>
+
+        <ProcessBlock title="Raw searchProcess">
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs leading-5">
+            {JSON.stringify(process, null, 2)}
+          </pre>
+        </ProcessBlock>
+      </div>
+    </details>
+  );
+}
+
+function getSearchStatusCopy(meeting: MeetingResult) {
+  const searchSummary = meeting.searchSummary;
+
+  if (!searchSummary) {
+    return {
+      generalCount: 0,
+      reliableCount: 0,
+      status: "",
+      summary: "",
+      weakerCount: 0,
+      note: "",
+    };
+  }
+
+  if (searchSummary.status === "failed") {
+    return {
+      reliableCount: searchSummary.strongCount,
+      generalCount: searchSummary.mediumCount,
+      weakerCount: searchSummary.weakCount,
+      status:
+        "Web search failed. This round mainly uses model knowledge and reasoning.",
+      summary: searchSummary.userMessage,
+      note: searchSummary.hasRealtimeWarning
+        ? "Real-time claims should be manually verified."
+        : "",
+    };
+  }
+
+  return {
+    reliableCount: searchSummary.strongCount,
+    generalCount: searchSummary.mediumCount,
+    weakerCount: searchSummary.weakCount,
+    status: "Web search completed.",
+    summary: searchSummary.userMessage,
+    note:
+      searchSummary.hasRealtimeWarning &&
+      !searchSummary.userMessage.includes("manual verification")
+        ? "Some real-time information may still need manual verification."
+        : "",
+  };
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="min-w-20 border-r border-sky-100 px-3 py-2 last:border-r-0">
+      <p className="text-lg font-semibold text-sky-950">{value}</p>
+      <p className="mt-1 whitespace-nowrap">{label}</p>
+    </div>
+  );
+}
+
+function ProcessBlock({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <div className="border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
+      <h3 className="font-medium text-sky-950">{title}</h3>
+      <div className="mt-2">{children}</div>
     </div>
   );
 }

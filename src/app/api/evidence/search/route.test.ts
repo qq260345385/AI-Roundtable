@@ -1,15 +1,11 @@
 ﻿import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
 
-const originalApiKey = process.env.TAVILY_API_KEY;
+const originalEnv = { ...process.env };
 
 describe("POST /api/evidence/search", () => {
   afterEach(() => {
-    if (originalApiKey === undefined) {
-      delete process.env.TAVILY_API_KEY;
-    } else {
-      process.env.TAVILY_API_KEY = originalApiKey;
-    }
+    process.env = { ...originalEnv };
     vi.restoreAllMocks();
   });
 
@@ -40,7 +36,19 @@ describe("POST /api/evidence/search", () => {
     const body = await response.json();
 
     expect(response.status).toBe(503);
-    expect(body.error).toBe("Tavily search is not configured");
+    expect(body.error).toBe("Tavily search failed: missing_api_key");
+    expect(body.failureReason).toBeUndefined();
+    expect(body.searchProcess).toBeUndefined();
+    expect(body.debugSearchProcess).toBeUndefined();
+    expect(body.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        status: "failed",
+        evidenceMode: "search_failed",
+        totalReferences: 0,
+      }),
+    );
+    expect(body.searchSummary.userMessage).toContain("Missing API key");
   });
 
   test("returns normalized evidence drafts from Tavily results", async () => {
@@ -84,6 +92,7 @@ describe("POST /api/evidence/search", () => {
 
   test("returns only the best ten high or medium quality drafts when search returns many mixed candidates", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
       Response.json({
         results: [
@@ -119,7 +128,17 @@ describe("POST /api/evidence/search", () => {
           item.quality?.reliability === "medium",
       ),
     ).toBe(true);
-    expect(JSON.stringify(body)).not.toContain("Reddit rumor");
+    expect(JSON.stringify(body.drafts)).not.toContain("Reddit rumor");
+    expect(JSON.stringify(body.evidencePack.items)).not.toContain("Reddit rumor");
+    expect(body.evidencePack.searchProcess).toBeUndefined();
+    expect(body.debugSearchProcess.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Reddit rumor",
+          filtered: true,
+        }),
+      ]),
+    );
   });
 
   test("returns low evidence status instead of failing when only low quality results exist", async () => {
@@ -230,7 +249,13 @@ describe("POST /api/evidence/search", () => {
     );
     expect(queries).not.toContain("DeepSeek V3 benchmark Artificial Analysis");
     expect(queries).not.toContain("DeepSeek R1 LMSYS Chatbot Arena ranking");
-    expect(body.evidencePack.searchQueries).toEqual(queries);
+    expect(body.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        totalReferences: body.evidencePack.items.length,
+      }),
+    );
+    expect(body.evidencePack.searchQueries).toBeUndefined();
   });
 
   test("does not leak Tavily error bodies or bearer tokens", async () => {
@@ -253,10 +278,76 @@ describe("POST /api/evidence/search", () => {
     const bodyText = JSON.stringify(await response.json());
 
     expect(response.status).toBe(502);
-    expect(bodyText).toContain("Tavily search failed with HTTP 401");
+    expect(bodyText).toContain("unauthorized");
     expect(bodyText).not.toContain("Authorization");
     expect(bodyText).not.toContain("Bearer");
     expect(bodyText).not.toContain("secret-openai-key");
+  });
+
+  test("returns safe diagnostic reason for rate limited Tavily responses", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        {
+          detail: "rate limit for Bearer secret-openai-key",
+        },
+        { status: 429 },
+      ),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "AI news" }),
+      }),
+    );
+    const body = await response.json();
+    const bodyText = JSON.stringify(body);
+
+    expect(response.status).toBe(502);
+    expect(body.failureReason).toBeUndefined();
+    expect(body.searchProcess).toBeUndefined();
+    expect(body.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        status: "failed",
+        evidenceMode: "search_failed",
+      }),
+    );
+    expect(body.searchSummary.userMessage).toContain("Rate limited");
+    expect(bodyText).not.toContain("Bearer");
+    expect(bodyText).not.toContain("secret-openai-key");
+  });
+
+  test("returns search process details in debug mode when Tavily search fails", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("network secret-openai-key failure");
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "AI news" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.searchProcess).toBeUndefined();
+    expect(body.debugSearchProcess).toEqual(
+      expect.objectContaining({
+        evidenceMode: "search_failed",
+        failureReason: "network_error",
+        executedQueries: expect.arrayContaining(["AI news official report"]),
+        qualityOverview: expect.objectContaining({
+          includedCount: 0,
+          filteredCount: 0,
+        }),
+      }),
+    );
+    expect(JSON.stringify(body)).not.toContain("secret-openai-key");
   });
 });
 

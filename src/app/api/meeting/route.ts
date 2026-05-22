@@ -6,6 +6,7 @@ import {
 import { createProviderRegistry } from "../../../lib/providers/provider-registry";
 import { buildModelDrivenWebEvidencePack } from "../../../lib/search/model-driven-web-search";
 import { normalizeEvidencePack } from "../../../lib/search/evidence-pack";
+import { prepareMeetingForClient } from "../../../lib/search/search-response";
 import { TavilySearchError } from "../../../lib/search/tavily-search";
 import type { ModelParticipant } from "../../../lib/types";
 
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       mode: registry.mode,
-      meeting,
+      meeting: prepareMeetingForClient(meeting),
     });
   } catch (error) {
     return NextResponse.json(

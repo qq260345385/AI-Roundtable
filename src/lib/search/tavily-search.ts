@@ -24,6 +24,13 @@ type TavilySearchResponse = {
 };
 
 export type TavilyEvidenceDraft = Omit<SearchEvidence, "id" | "quality">;
+export type TavilyFailureReason =
+  | "missing_api_key"
+  | "unauthorized"
+  | "rate_limited"
+  | "network_error"
+  | "invalid_response"
+  | "unknown_error";
 
 const DEFAULT_TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const DEFAULT_MAX_RESULTS = 20;
@@ -31,11 +38,45 @@ const DEFAULT_TIMEOUT_MS = 10000;
 
 export class TavilySearchError extends Error {
   constructor(
-    message: string,
-    public status = 502,
+    messageOrReason: string,
+    options: number | { reason: TavilyFailureReason; status?: number } = 502,
   ) {
-    super(message);
+    const reason =
+      typeof options === "number"
+        ? getReasonFromLegacyMessage(messageOrReason)
+        : options.reason;
+
+    super(`Tavily search failed: ${reason}`);
+    this.reason = reason;
+    this.status = typeof options === "number" ? options : options.status ?? 502;
   }
+
+  reason: TavilyFailureReason;
+  status: number;
+}
+
+export function getTavilyFailureReason(error: unknown): TavilyFailureReason {
+  if (error instanceof TavilySearchError) {
+    return error.reason;
+  }
+
+  return "unknown_error";
+}
+
+export function getSafeTavilyErrorMessage(error: unknown): string {
+  return `Tavily search failed: ${getTavilyFailureReason(error)}`;
+}
+
+function getReasonFromLegacyMessage(message: string): TavilyFailureReason {
+  if (message.includes("not configured")) {
+    return "missing_api_key";
+  }
+
+  if (message.includes("timed out") || message.includes("failed")) {
+    return "network_error";
+  }
+
+  return "unknown_error";
 }
 
 export async function searchTavilyEvidence(
@@ -45,7 +86,10 @@ export async function searchTavilyEvidence(
   const apiKey = options.apiKey ?? process.env.TAVILY_API_KEY;
 
   if (!apiKey) {
-    throw new TavilySearchError("Tavily search is not configured", 503);
+    throw new TavilySearchError("missing_api_key", {
+      reason: "missing_api_key",
+      status: 503,
+    });
   }
 
   const controller = new AbortController();
@@ -77,26 +121,60 @@ export async function searchTavilyEvidence(
     );
 
     if (!response.ok) {
-      throw new TavilySearchError(
-        `Tavily search failed with HTTP ${response.status}`,
-        502,
-      );
+      throw new TavilySearchError(getHttpFailureReason(response.status), {
+        reason: getHttpFailureReason(response.status),
+        status: 502,
+      });
     }
 
-    return normalizeTavilySearchResponse(await response.json());
+    let data: unknown;
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new TavilySearchError("invalid_response", {
+        reason: "invalid_response",
+      });
+    }
+
+    if (!isObject(data) || !Array.isArray(data.results)) {
+      throw new TavilySearchError("invalid_response", {
+        reason: "invalid_response",
+      });
+    }
+
+    return normalizeTavilySearchResponse(data);
   } catch (error) {
     if (error instanceof TavilySearchError) {
       throw error;
     }
 
     if (error instanceof Error && error.name === "AbortError") {
-      throw new TavilySearchError("Tavily search timed out", 504);
+      throw new TavilySearchError("network_error", {
+        reason: "network_error",
+        status: 504,
+      });
     }
 
-    throw new TavilySearchError("Tavily search failed", 502);
+    throw new TavilySearchError("network_error", {
+      reason: "network_error",
+      status: 502,
+    });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function getHttpFailureReason(status: number): TavilyFailureReason {
+  if (status === 401 || status === 403) {
+    return "unauthorized";
+  }
+
+  if (status === 429) {
+    return "rate_limited";
+  }
+
+  return "unknown_error";
 }
 
 export function normalizeTavilySearchResponse(

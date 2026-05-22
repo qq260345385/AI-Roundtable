@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useMemo } from "react";
 import type {
@@ -9,11 +9,13 @@ import type {
   ModelParticipant,
 } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
+import { APP_VERSION } from "@/lib/version";
 import {
   buildMeetingStageViews,
   type MeetingStageView,
 } from "@/lib/meeting/meeting-room";
 import { formatFailureForDisplay } from "@/lib/meeting/failure-format";
+import { WebSearchProcessPanel } from "./MeetingBoard";
 
 type MeetingRoomProps = {
   activeStageId: string;
@@ -56,7 +58,7 @@ export function MeetingRoom({
         <header className="flex flex-col gap-4 border-b border-emerald-900/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-sm font-medium text-emerald-700">
-              AI Roundtable · v0.3.21
+              AI Roundtable · {APP_VERSION}
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal text-zinc-950 md:text-5xl">
               {text.meetingRoom.title}
@@ -172,6 +174,12 @@ export function MeetingRoom({
                 {activeStage.index}/{stageViews.length}
               </span>
             </div>
+
+            {meeting.searchSummary?.enabled ? (
+              <div className="mb-5">
+                <WebSearchProcessPanel meeting={meeting} text={text} />
+              </div>
+            ) : null}
 
             <StageContent stage={activeStage} text={text} />
           </section>

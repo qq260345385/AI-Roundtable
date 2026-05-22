@@ -1,6 +1,9 @@
 import type {
   EvidenceAttachmentCapabilities,
   EvidencePack,
+  SearchIntent,
+  SearchProcess,
+  SearchSummary,
 } from "./search/evidence-pack";
 import type { CitationCheckResult } from "./search/evidence-citations";
 
@@ -86,6 +89,8 @@ export type MeetingResult = {
   phases: MeetingPhase[];
   summary: MeetingSummary;
   evidencePack?: EvidencePack;
+  searchSummary?: SearchSummary;
+  debugSearchProcess?: SearchProcess;
   citationCheck?: CitationCheckResult;
   failures?: MeetingProviderFailure[];
   hasPartialFailures?: boolean;
@@ -103,6 +108,8 @@ export type LiveMeetingEvent =
       isTimeSensitive: boolean;
       factCheckNotice?: string;
       evidencePack?: EvidencePack;
+      searchSummary?: SearchSummary;
+      debugSearchProcess?: SearchProcess;
     }
   | {
       type: "phase_started";
@@ -148,6 +155,10 @@ export type LiveParticipantStatuses = Record<string, LiveParticipantStatus>;
 
 export type ModelProvider = {
   name: string;
+  generateSearchIntents?(
+    participant: ModelParticipant,
+    topic: string,
+  ): Promise<SearchIntent[]>;
   generateSearchQueries?(
     participant: ModelParticipant,
     topic: string,

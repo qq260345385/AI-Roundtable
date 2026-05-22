@@ -1,10 +1,20 @@
 import type {
   EvidencePack,
   SearchEvidence,
+  SearchFreshness,
+  SearchIntent,
+  SearchIntentDecision,
+  SearchIntentRecord,
+  SearchQueryPlan,
+  SearchSourcePreference,
 } from "./evidence-pack";
-import { normalizeEvidencePack } from "./evidence-pack";
+import {
+  createSearchFailureProcess,
+  normalizeEvidencePack,
+} from "./evidence-pack";
 import {
   buildTavilySearchQueries,
+  getTavilyFailureReason,
   searchTavilyEvidence,
   type TavilyEvidenceDraft,
 } from "./tavily-search";
@@ -15,6 +25,25 @@ import type {
 
 const MAX_MODEL_DRIVEN_QUERIES = 8;
 const WEB_SEARCH_RESULTS_PER_QUERY = 5;
+const MAX_TAVILY_QUERY_LENGTH = 160;
+const VAGUE_TERMS = new Set([
+  "impact",
+  "future",
+  "analysis",
+  "overview",
+  "trend",
+  "trends",
+  "news",
+]);
+const MARKETING_TERMS = new Set([
+  "best",
+  "ultimate",
+  "game changer",
+  "revolutionary",
+  "amazing",
+  "powerful",
+  "leading",
+]);
 
 type Searcher = (
   query: string,
@@ -36,21 +65,55 @@ export async function buildModelDrivenWebEvidencePack({
   searcher = searchTavilyEvidence,
   topic,
 }: BuildModelDrivenWebEvidencePackOptions): Promise<EvidencePack> {
-  const searchQueries = await buildParticipantSearchQueries(
+  const searchPlan = await buildParticipantSearchQueries(
     topic,
     participants,
     provider,
   );
-  const webDrafts = dedupeEvidenceDrafts(
-    (
-      await Promise.all(
-        searchQueries.map((query) =>
-          searcher(query, { maxResults: WEB_SEARCH_RESULTS_PER_QUERY }),
-        ),
-      )
-    ).flat(),
-  );
+  const searchQueries = searchPlan.queries;
   const baseItems = baseEvidencePack?.enabled ? baseEvidencePack.items : [];
+  let webDrafts: TavilyEvidenceDraft[];
+
+  try {
+    webDrafts = dedupeEvidenceDrafts(
+      (
+        await Promise.all(
+          searchQueries.map((query) =>
+            searcher(query, { maxResults: WEB_SEARCH_RESULTS_PER_QUERY }).then(
+              (drafts) => drafts.map((draft) => ({ ...draft, query })),
+            ),
+          ),
+        )
+      ).flat(),
+    );
+  } catch (error) {
+    const failureReason = getTavilyFailureReason(error);
+
+    return normalizeEvidencePack(
+      {
+        enabled: true,
+        evidenceStatus: "none",
+        evidenceWarnings: [
+          ...(baseEvidencePack?.evidenceWarnings ?? []),
+          "Tavily search failed; the meeting should treat real-time facts as manually unverified.",
+        ],
+        items: baseItems,
+        searchProcess: createSearchFailureProcess({
+          executedQueries: searchQueries,
+          failureReason,
+          searchIntents: searchPlan.searchIntents,
+          queryPlans: searchPlan.queryPlans,
+          intentDecisions: searchPlan.intentDecisions,
+          warnings: [failureReason],
+        }),
+        searchQueries,
+        strategy: baseEvidencePack?.strategy ?? "text_pack",
+      },
+      {
+        topic,
+      },
+    );
+  }
   const preflightPack = normalizeEvidencePack(
     {
       enabled: baseItems.length > 0 || webDrafts.length > 0,
@@ -70,10 +133,16 @@ export async function buildModelDrivenWebEvidencePack({
 
   return normalizeEvidencePack(
     {
-      enabled: preflightPack.items.length > 0,
+      enabled: true,
       evidenceStatus,
       evidenceWarnings,
-      items: preflightPack.items,
+      items: [...baseItems, ...webDrafts],
+      searchProcess: {
+        executedQueries: searchQueries,
+        searchIntents: searchPlan.searchIntents,
+        queryPlans: searchPlan.queryPlans,
+        intentDecisions: searchPlan.intentDecisions,
+      },
       searchQueries,
       strategy: baseEvidencePack?.strategy ?? "text_pack",
     },
@@ -87,31 +156,394 @@ async function buildParticipantSearchQueries(
   topic: string,
   participants: ModelParticipant[],
   provider: ModelProvider,
-): Promise<string[]> {
-  const plannedQueries = (
-    await Promise.all(
-      participants.map(async (participant) => {
-        if (!provider.generateSearchQueries) {
-          return [];
+): Promise<{
+  queries: string[];
+  searchIntents: SearchIntentRecord[];
+  queryPlans: SearchQueryPlan[];
+  intentDecisions: SearchIntentDecision[];
+}> {
+  const participantPlans = await Promise.all(
+    participants.map(async (participant) => {
+      try {
+        if (provider.generateSearchIntents) {
+          return {
+            participant,
+            intents: await provider.generateSearchIntents(participant, topic),
+          };
         }
 
-        try {
-          return provider.generateSearchQueries(participant, topic);
-        } catch {
-          return [];
+        if (provider.generateSearchQueries) {
+          const queries = await provider.generateSearchQueries(participant, topic);
+
+          return {
+            participant,
+            intents: queries.map(createLegacySearchIntent),
+          };
         }
-      }),
-    )
-  ).flat();
-  const queries = Array.from(
-    new Set(plannedQueries.map((query) => query.trim()).filter(Boolean)),
+
+        return {
+          participant,
+          intents: [] as SearchIntent[],
+        };
+      } catch {
+        return {
+          participant,
+          intents: [] as SearchIntent[],
+        };
+      }
+    }),
   );
+  const searchIntents = participantPlans.map(({ participant, intents }) => ({
+    participantId: participant.id,
+    participantName: participant.name,
+    provider: participant.provider,
+    model: participant.model,
+    intents: intents.map(normalizeSearchIntent).filter((intent) => intent.question),
+  }));
+  const plan = buildTavilySearchPlanFromIntents(topic, searchIntents);
 
-  if (queries.length > 0) {
-    return queries.slice(0, MAX_MODEL_DRIVEN_QUERIES);
+  if (plan.queries.length > 0) {
+    return {
+      queries: plan.queries.slice(0, MAX_MODEL_DRIVEN_QUERIES),
+      searchIntents,
+      queryPlans: plan.queryPlans.slice(0, MAX_MODEL_DRIVEN_QUERIES),
+      intentDecisions: plan.intentDecisions,
+    };
   }
 
-  return buildTavilySearchQueries(topic).slice(0, MAX_MODEL_DRIVEN_QUERIES);
+  const fallbackQueries = buildTavilySearchQueries(topic).slice(
+    0,
+    MAX_MODEL_DRIVEN_QUERIES,
+  );
+
+  return {
+    queries: fallbackQueries,
+    searchIntents: searchIntents.map((intent) => ({
+      ...intent,
+      intents:
+        intent.intents.length > 0
+          ? intent.intents
+          : fallbackQueries.map(createLegacySearchIntent),
+    })),
+    queryPlans: fallbackQueries.map((query) => ({
+      query,
+      reason: "Fallback query generated from the meeting topic.",
+      participantIds: participants.map((participant) => participant.id),
+      sourcePreference: "mixed" as const,
+      freshness: "any" as const,
+    })),
+    intentDecisions: [
+      ...plan.intentDecisions,
+      ...fallbackQueries.map((query) => ({
+        question: query,
+        action: "used" as const,
+        reason: "fallback_topic_query",
+        query,
+      })),
+    ],
+  };
+}
+
+export function buildTavilySearchPlanFromIntents(
+  topic: string,
+  searchIntents: SearchIntentRecord[],
+  options: { currentYear?: number } = {},
+): {
+  queries: string[];
+  queryPlans: SearchQueryPlan[];
+  intentDecisions: SearchIntentDecision[];
+} {
+  const currentYear = options.currentYear ?? new Date().getFullYear();
+  const seenQueries = new Map<string, string>();
+  const queries: string[] = [];
+  const queryPlans: SearchQueryPlan[] = [];
+  const intentDecisions: SearchIntentDecision[] = [];
+
+  for (const record of searchIntents) {
+    for (const intent of record.intents) {
+      const normalizedIntent = normalizeSearchIntent(intent);
+      const question = normalizedIntent.question;
+
+      if (isVagueIntent(normalizedIntent)) {
+        intentDecisions.push({
+          participantId: record.participantId,
+          participantName: record.participantName,
+          question,
+          action: "discarded",
+          reason: "vague_intent",
+        });
+        continue;
+      }
+
+      const query = buildQueryFromIntent(topic, normalizedIntent, currentYear);
+
+      if (!query) {
+        intentDecisions.push({
+          participantId: record.participantId,
+          participantName: record.participantName,
+          question,
+          action: "discarded",
+          reason: "empty_query",
+        });
+        continue;
+      }
+
+      const dedupeKey = getQueryDedupeKey(query);
+      const existingQuery = seenQueries.get(dedupeKey);
+
+      if (existingQuery) {
+        intentDecisions.push({
+          participantId: record.participantId,
+          participantName: record.participantName,
+          question,
+          action: "merged",
+          reason: "duplicate_query",
+          mergedInto: existingQuery,
+        });
+        continue;
+      }
+
+      seenQueries.set(dedupeKey, query);
+      queries.push(query);
+      queryPlans.push({
+        query,
+        reason: getQueryGenerationReason(topic, normalizedIntent),
+        participantIds: [record.participantId],
+        sourcePreference: normalizedIntent.sourcePreference,
+        freshness: normalizedIntent.freshness,
+      });
+      intentDecisions.push({
+        participantId: record.participantId,
+        participantName: record.participantName,
+        question,
+        action: "used",
+        reason: "usable_query",
+        query,
+      });
+
+      if (queries.length >= MAX_MODEL_DRIVEN_QUERIES) {
+        return { queries, queryPlans, intentDecisions };
+      }
+    }
+  }
+
+  return { queries, queryPlans, intentDecisions };
+}
+
+function buildQueryFromIntent(
+  topic: string,
+  intent: SearchIntent,
+  currentYear: number,
+): string {
+  const terms = [
+    intent.question,
+    ...intent.mustInclude,
+    ...intent.shouldInclude,
+    ...getSourcePreferenceTerms(intent.sourcePreference),
+    ...getFreshnessTerms(topic, intent, currentYear),
+    ...intent.exclude.map((term) => `-${term}`),
+  ].flatMap(splitSearchPhrases);
+  const compactTerms = Array.from(new Set(terms)).filter(
+    (term) => !isLowValueSearchTerm(term),
+  );
+  const query = trimQueryToLength(compactTerms.join(" "));
+
+  return getMeaningfulTokenCount(query) >= 2 ? query : "";
+}
+
+function normalizeSearchIntent(intent: SearchIntent): SearchIntent {
+  return {
+    question: normalizeSearchText(intent.question, 180),
+    mustInclude: intent.mustInclude
+      .map((item) => normalizeSearchText(item, 80))
+      .filter(Boolean),
+    shouldInclude: intent.shouldInclude
+      .map((item) => normalizeSearchText(item, 80))
+      .filter(Boolean),
+    exclude: intent.exclude
+      .map((item) => normalizeSearchText(item, 80))
+      .filter(Boolean),
+    freshness: normalizeFreshness(intent.freshness),
+    sourcePreference: normalizeSourcePreference(intent.sourcePreference),
+    rationale: normalizeSearchText(intent.rationale, 240),
+  };
+}
+
+function createLegacySearchIntent(query: string): SearchIntent {
+  return {
+    question: query,
+    mustInclude: [],
+    shouldInclude: [],
+    exclude: [],
+    freshness: "any",
+    sourcePreference: "mixed",
+    rationale: "Legacy plain-text search query.",
+  };
+}
+
+function isVagueIntent(intent: SearchIntent): boolean {
+  const searchableTerms = [
+    intent.question,
+    ...intent.mustInclude,
+    ...intent.shouldInclude,
+  ].flatMap(splitSearchPhrases);
+  const meaningfulTerms = searchableTerms.filter(
+    (term) => !isLowValueSearchTerm(term),
+  );
+
+  return (
+    meaningfulTerms.length === 0 ||
+    getMeaningfulTokenCount(meaningfulTerms.join(" ")) < 2
+  );
+}
+
+function splitSearchPhrases(value: string): string[] {
+  return value
+    .split(/\s+/)
+    .map((term) => normalizeSearchText(term, 80))
+    .filter(Boolean);
+}
+
+function isLowValueSearchTerm(term: string): boolean {
+  const normalized = term.toLowerCase();
+
+  return VAGUE_TERMS.has(normalized) || MARKETING_TERMS.has(normalized);
+}
+
+function getSourcePreferenceTerms(
+  sourcePreference: SearchSourcePreference,
+): string[] {
+  if (sourcePreference === "official") {
+    return ["official", "release"];
+  }
+
+  if (sourcePreference === "benchmark") {
+    return ["benchmark", "leaderboard", "eval", "official"];
+  }
+
+  if (sourcePreference === "media") {
+    return ["Reuters", "Bloomberg"];
+  }
+
+  if (sourcePreference === "community") {
+    return ["community", "discussion"];
+  }
+
+  return [];
+}
+
+function getFreshnessTerms(
+  topic: string,
+  intent: SearchIntent,
+  currentYear: number,
+): string[] {
+  if (intent.freshness === "latest") {
+    return [`${currentYear}`, "latest"];
+  }
+
+  if (intent.freshness === "recent") {
+    return [`${currentYear}`, "recent"];
+  }
+
+  if (isRealtimeTopic(topic)) {
+    return [`${currentYear}`, "latest", "official"];
+  }
+
+  return [];
+}
+
+function getQueryGenerationReason(topic: string, intent: SearchIntent): string {
+  const reasons = [
+    `sourcePreference=${intent.sourcePreference}`,
+    `freshness=${intent.freshness}`,
+  ];
+
+  if (isRealtimeTopic(topic)) {
+    reasons.push("topic appears time-sensitive");
+  }
+
+  if (isBenchmarkTopic(topic) || intent.sourcePreference === "benchmark") {
+    reasons.push("benchmark terms added");
+  }
+
+  return reasons.join("; ");
+}
+
+function isRealtimeTopic(topic: string): boolean {
+  return /latest|current|today|now|ranking|release|price|policy|news|最新|现在|目前|排名|发布|价格|政策/.test(
+    topic.toLowerCase(),
+  );
+}
+
+function isBenchmarkTopic(topic: string): boolean {
+  return /benchmark|leaderboard|eval|ranking|model|llm|ai|评测|榜单|排名|模型/.test(
+    topic.toLowerCase(),
+  );
+}
+
+function trimQueryToLength(query: string): string {
+  const compact = query.replace(/\s+/g, " ").trim();
+
+  if (compact.length <= MAX_TAVILY_QUERY_LENGTH) {
+    return compact;
+  }
+
+  const words = compact.split(" ");
+  const kept: string[] = [];
+  let length = 0;
+
+  for (const word of words) {
+    const nextLength = length + word.length + (kept.length > 0 ? 1 : 0);
+
+    if (nextLength > MAX_TAVILY_QUERY_LENGTH) {
+      break;
+    }
+
+    kept.push(word);
+    length = nextLength;
+  }
+
+  return kept.join(" ");
+}
+
+function getMeaningfulTokenCount(query: string): number {
+  return query.match(/[\p{L}\p{N}][\p{L}\p{N}.-]*/gu)?.length ?? 0;
+}
+
+function getQueryDedupeKey(query: string): string {
+  return query
+    .toLowerCase()
+    .replace(/["'“”‘’]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSearchText(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+
+  return compact.slice(0, maxLength).replace(/\s+\S*$/, "").trim();
+}
+
+function normalizeFreshness(value: SearchFreshness): SearchFreshness {
+  return value === "latest" || value === "recent" || value === "any"
+    ? value
+    : "any";
+}
+
+function normalizeSourcePreference(
+  value: SearchSourcePreference,
+): SearchSourcePreference {
+  return value === "official" ||
+    value === "benchmark" ||
+    value === "media" ||
+    value === "community" ||
+    value === "mixed"
+    ? value
+    : "mixed";
 }
 
 function dedupeEvidenceDrafts<T extends Pick<SearchEvidence, "title" | "url">>(

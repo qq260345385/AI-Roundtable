@@ -358,6 +358,86 @@ describe("normalizeEvidencePack", () => {
     ).toEqual(["high", "low"]);
   });
 
+  test("marks low reliability web evidence as low evidence in the search process", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      searchProcess: {
+        executedQueries: ["community model benchmark"],
+        searchIntents: [
+          {
+            participantId: "gpt-mock",
+            participantName: "GPT Mock",
+            provider: "OpenAI",
+            model: "gpt-mock",
+            intents: ["community model benchmark"],
+          },
+        ],
+      },
+      items: [
+        {
+          title: "Community discussion",
+          url: "https://reddit.com/r/artificial/comments/test",
+          snippet: `Community discussion with enough details. ${"B".repeat(500)}`,
+        },
+      ],
+    });
+
+    expect(pack.items).toHaveLength(1);
+    expect(pack.items[0].quality?.reliability).toBe("low");
+    expect(pack.items[0].quality?.warnings).toContain("低证据资料：只能作为观点线索，不能单独支撑事实结论");
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        evidenceMode: "low_evidence",
+        qualityOverview: expect.objectContaining({
+          includedCount: 1,
+          lowEvidenceCount: 1,
+          filteredCount: 0,
+        }),
+      }),
+    );
+  });
+
+  test("filters very low reliability web evidence and records the filter reason", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      searchProcess: {
+        executedQueries: ["mixed model benchmark"],
+      },
+      items: [
+        {
+          title: "Official report",
+          url: "https://openai.com/research/report",
+          snippet: `Official evidence. ${"A".repeat(500)}`,
+        },
+        {
+          title: "Short social post",
+          url: "https://x.com/example/status/1",
+          snippet: "too short",
+        },
+      ],
+    });
+
+    expect(pack.items.map((item) => item.title)).toEqual(["Official report"]);
+    expect(pack.searchProcess?.qualityOverview.filteredCount).toBe(1);
+    expect(pack.searchProcess?.filteredReasons).toEqual([
+      {
+        reason: "very_low_quality",
+        count: 1,
+      },
+    ]);
+    expect(pack.searchProcess?.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Short social post",
+          reliability: "very_low",
+          includedInEvidencePack: false,
+          filtered: true,
+          filteredReason: "very_low_quality",
+        }),
+      ]),
+    );
+  });
+
   test("falls back to text_pack strategy for invalid strategy values", () => {
     const pack = normalizeEvidencePack({
       enabled: true,

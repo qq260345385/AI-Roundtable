@@ -264,20 +264,147 @@ describe("POST /api/meeting", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(body.meeting.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        status: "completed",
+        evidenceMode: "normal",
+        totalReferences: 1,
+      }),
+    );
+    expect(
+      body.meeting.searchSummary.strongCount +
+        body.meeting.searchSummary.mediumCount +
+        body.meeting.searchSummary.weakCount,
+    ).toBe(1);
     expect(body.meeting.evidencePack).toEqual(
       expect.objectContaining({
         enabled: true,
-        searchQueries: expect.arrayContaining([
-          "目前 DeepSeek 在全球 AI 大模型里面是什么实力 official report",
-        ]),
       }),
     );
+    expect(body.meeting.evidencePack.searchProcess).toBeUndefined();
+    expect(body.meeting.evidencePack.searchQueries).toBeUndefined();
+    expect(body.meeting.debugSearchProcess).toBeUndefined();
     expect(body.meeting.evidencePack.items[0]).toEqual(
       expect.objectContaining({
         id: "S1",
         source: "openai.com",
       }),
     );
+    expect(JSON.stringify(body.meeting)).not.toContain("queryPlans");
+    expect(JSON.stringify(body.meeting)).not.toContain("searchIntents");
+    expect(JSON.stringify(body.meeting)).not.toContain("executedQueries");
+    expect(JSON.stringify(body.meeting)).not.toContain("relevanceScore");
+    expect(JSON.stringify(body.meeting)).not.toContain("authorityScore");
+  });
+
+  test("returns debugSearchProcess only in non-production server debug mode", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        results: [
+          {
+            title: "Official source",
+            url: "https://openai.com/research/test",
+            content: `Official search result. ${"A".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.meeting.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        status: "completed",
+      }),
+    );
+    expect(body.meeting.evidencePack.searchProcess).toBeUndefined();
+    expect(body.meeting.debugSearchProcess).toEqual(
+      expect.objectContaining({
+        evidenceMode: "normal",
+        executedQueries: expect.arrayContaining([
+          expect.stringContaining("official release or report"),
+        ]),
+        searchIntents: [
+          expect.objectContaining({
+            participantId: "gpt-mock",
+            participantName: "GPT Mock",
+            intents: [
+              expect.objectContaining({
+                sourcePreference: "official",
+              }),
+              expect.any(Object),
+              expect.any(Object),
+            ],
+          }),
+        ],
+        queryPlans: [
+          expect.objectContaining({
+            query: expect.stringContaining("official release or report"),
+            sourcePreference: "official",
+          }),
+          expect.any(Object),
+          expect.any(Object),
+        ],
+      }),
+    );
+  });
+
+  test("does not return debugSearchProcess in production even when search debug is enabled", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.NODE_ENV = "production";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        results: [
+          {
+            title: "Official source",
+            url: "https://openai.com/research/test",
+            content: `Official search result. ${"A".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.meeting.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        status: "completed",
+      }),
+    );
+    expect(body.meeting.debugSearchProcess).toBeUndefined();
+    expect(body.meeting.evidencePack.searchProcess).toBeUndefined();
+    expect(JSON.stringify(body.meeting)).not.toContain("queryPlans");
+    expect(JSON.stringify(body.meeting)).not.toContain("searchIntents");
   });
 
   test("returns an error when selected participant is not available", async () => {

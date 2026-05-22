@@ -6,6 +6,7 @@ import { runLiveMeeting } from "../../../../lib/meeting/live-engine";
 import { createProviderRegistry } from "../../../../lib/providers/provider-registry";
 import { buildModelDrivenWebEvidencePack } from "../../../../lib/search/model-driven-web-search";
 import { normalizeEvidencePack } from "../../../../lib/search/evidence-pack";
+import { prepareLiveMeetingEventForClient } from "../../../../lib/search/search-response";
 import { TavilySearchError } from "../../../../lib/search/tavily-search";
 import type {
   LiveMeetingEvent,
@@ -66,7 +67,11 @@ export async function POST(request: Request) {
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         async function emit(event: LiveMeetingEvent) {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          controller.enqueue(
+            encoder.encode(
+              `${JSON.stringify(prepareLiveMeetingEventForClient(event))}\n`,
+            ),
+          );
         }
 
         try {

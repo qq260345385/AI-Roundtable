@@ -9,6 +9,7 @@ import { getFactHygienePrompt } from "../meeting/fact-hygiene";
 import {
   formatEvidencePackForPrompt,
   type EvidencePack,
+  type SearchIntent,
 } from "../search/evidence-pack";
 
 type OpenAICompatibleProviderOptions = {
@@ -56,18 +57,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.fetcher = options.fetcher ?? fetch;
   }
 
-  async generateSearchQueries(
+  async generateSearchIntents(
     participant: ModelParticipant,
     topic: string,
-  ): Promise<string[]> {
+  ): Promise<SearchIntent[]> {
     const content = await this.callChat([
       {
         role: "system",
         content: [
           "You are a web search planner for AI Roundtable.",
-          "Return JSON only: an array of 3 to 5 concise web search queries.",
-          "Prefer English queries for current facts, rankings, releases, benchmarks, prices, and policies.",
-          "Keep one Chinese query when the topic is Chinese or China-specific.",
+          "Return JSON only: an array of 3 to 5 structured SearchIntent objects.",
+          "Each object must include question, mustInclude, shouldInclude, exclude, freshness, sourcePreference, and rationale.",
+          "freshness must be latest, recent, or any.",
+          "sourcePreference must be official, benchmark, media, community, or mixed.",
+          "Prefer official and benchmark sources for current facts, rankings, releases, benchmarks, prices, and policies.",
           "Do not include explanations, markdown, or citations.",
         ].join("\n"),
       },
@@ -81,7 +84,22 @@ export class OpenAICompatibleProvider implements ModelProvider {
       },
     ]);
 
-    return parseSearchQueries(content, topic);
+    return parseSearchIntents(content, topic);
+  }
+
+  async generateSearchQueries(
+    participant: ModelParticipant,
+    topic: string,
+  ): Promise<string[]> {
+    const intents = await this.generateSearchIntents(participant, topic);
+
+    return intents.map((intent) =>
+      [
+        intent.question,
+        ...intent.mustInclude,
+        ...intent.shouldInclude,
+      ].join(" "),
+    );
   }
 
   async generateIndependentView(
@@ -326,25 +344,113 @@ function readStringList(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function parseSearchQueries(content: string, topic: string): string[] {
+function parseSearchIntents(content: string, topic: string): SearchIntent[] {
   try {
     const parsed = JSON.parse(content) as unknown;
 
     if (Array.isArray(parsed)) {
-      const queries = parsed
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const intents = parsed
+        .map((item) => normalizeSearchIntent(item))
+        .filter((item): item is SearchIntent => item !== null);
 
-      return Array.from(new Set(queries)).slice(0, 5);
+      if (intents.length > 0) {
+        return intents.slice(0, 5);
+      }
     }
   } catch {
-    // Fall through to a safe plain-text fallback.
+    // Fall through to a safe structured fallback.
   }
 
   return [
-    `${topic} official report`,
-    `${topic} benchmark`,
-    `${topic} latest analysis`,
+    {
+      question: `${topic} official report`,
+      mustInclude: [topic],
+      shouldInclude: ["official report"],
+      exclude: [],
+      freshness: "latest",
+      sourcePreference: "official",
+      rationale: "Fallback official-source search intent.",
+    },
+    {
+      question: `${topic} benchmark`,
+      mustInclude: [topic],
+      shouldInclude: ["benchmark"],
+      exclude: [],
+      freshness: "recent",
+      sourcePreference: "benchmark",
+      rationale: "Fallback benchmark-source search intent.",
+    },
+    {
+      question: `${topic} latest analysis`,
+      mustInclude: [topic],
+      shouldInclude: ["latest"],
+      exclude: [],
+      freshness: "latest",
+      sourcePreference: "mixed",
+      rationale: "Fallback current-context search intent.",
+    },
   ];
+}
+
+function normalizeSearchIntent(value: unknown): SearchIntent | null {
+  if (typeof value === "string") {
+    const question = value.trim();
+
+    return question
+      ? {
+          question,
+          mustInclude: [],
+          shouldInclude: [],
+          exclude: [],
+          freshness: "any",
+          sourcePreference: "mixed",
+          rationale: "Legacy plain-text search direction.",
+        }
+      : null;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const item = value as Partial<SearchIntent>;
+  const question = typeof item.question === "string" ? item.question.trim() : "";
+
+  if (!question) {
+    return null;
+  }
+
+  return {
+    question,
+    mustInclude: readSearchStringList(item.mustInclude),
+    shouldInclude: readSearchStringList(item.shouldInclude),
+    exclude: readSearchStringList(item.exclude),
+    freshness:
+      item.freshness === "latest" ||
+      item.freshness === "recent" ||
+      item.freshness === "any"
+        ? item.freshness
+        : "any",
+    sourcePreference:
+      item.sourcePreference === "official" ||
+      item.sourcePreference === "benchmark" ||
+      item.sourcePreference === "media" ||
+      item.sourcePreference === "community" ||
+      item.sourcePreference === "mixed"
+        ? item.sourcePreference
+        : "mixed",
+    rationale:
+      typeof item.rationale === "string" ? item.rationale.trim() : "",
+  };
+}
+
+function readSearchStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

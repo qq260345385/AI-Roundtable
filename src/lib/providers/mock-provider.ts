@@ -10,14 +10,38 @@ import type {
 export const mockProvider: ModelProvider = {
   name: "MockProvider",
 
-  async generateSearchQueries(
+  async generateSearchIntents(
     _participant: ModelParticipant,
     topic: string,
-  ): Promise<string[]> {
+  ) {
     return [
-      `${topic} official report`,
-      `${topic} benchmark`,
-      `${topic} latest analysis`,
+      {
+        question: `${topic} official release or report`,
+        mustInclude: [topic],
+        shouldInclude: ["official", "release"],
+        exclude: [],
+        freshness: "latest" as const,
+        sourcePreference: "official" as const,
+        rationale: "Official material helps verify release details and claims.",
+      },
+      {
+        question: `${topic} benchmark leaderboard evaluation`,
+        mustInclude: [topic],
+        shouldInclude: ["benchmark", "leaderboard"],
+        exclude: [],
+        freshness: "recent" as const,
+        sourcePreference: "benchmark" as const,
+        rationale: "Benchmark sources reduce vague model-strength comparisons.",
+      },
+      {
+        question: `${topic} latest independent coverage`,
+        mustInclude: [topic],
+        shouldInclude: ["latest"],
+        exclude: ["ads"],
+        freshness: "latest" as const,
+        sourcePreference: "media" as const,
+        rationale: "Independent coverage can surface current context.",
+      },
     ];
   },
 

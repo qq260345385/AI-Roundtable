@@ -14,7 +14,7 @@ AI Roundtable 是一个“多大模型圆桌会议系统”的第一版原型。
 
 ## Project Status
 
-当前版本：`v0.4 internal alpha`
+当前版本：`v0.4.2.3 internal alpha`
 
 项目处于 internal alpha / pre-release 阶段，暂不建议打 tag 或写 GitHub Release。当前重点是验证“平等多模型圆桌会议”的前后端核心体验和真实模型讨论质量。
 
@@ -149,6 +149,7 @@ AI_ROUNDTABLE_MODE=mock
 | `TAVILY_MAX_RESULTS` | 可选。Tavily 候选搜索结果数，默认最多抓取 20 条候选；系统会按资料质量筛选，最多保留 10 条进入会议。 |
 | `TAVILY_SEARCH_DEPTH` | 可选。默认 `basic`。可按 Tavily 账户能力调整。 |
 | `TAVILY_TOPIC` | 可选。默认 `general`，也可设为 `news` 或 `finance`。 |
+| `SEARCH_DEBUG_ENABLED` | 仅限本地开发。设为 `true` 且 `NODE_ENV !== "production"` 时，会议 API 才会返回完整联网搜索调试信息。生产环境不要开启。 |
 
 ## Provider Configuration
 
@@ -308,6 +309,8 @@ real 模式下，会议结果可能包含“模型调用失败记录”。这表
 如果议题涉及“最新、当前、排名、价格、版本、政策、新闻”等实时信息，系统会显示事实核验提示。参会模型默认无法联网，相关输出只能作为模型已有知识或推测，不能直接作为最新事实依据。
 
 如需让模型围绕外部资料讨论，可以在首页启用“资料文件”。当前版本支持两类资料来源：本地文档解析，以及可选 Tavily 联网搜索。联网搜索只发生在服务端，搜索 API key 只放在 `.env.local`，不会保存在前端，也不会发送给参会模型。系统会把搜索结果或本地文档统一整理为 Evidence Pack，服务端会重新编号为 `S1`、`S2` 等，会议 prompt 和 Markdown 会保留资料引用。页面会在开始会议前展示资料编号、来源、摘要预览、字符数和解析/截断提示。
+
+会议结果页默认只展示简洁联网状态，例如参考资料数量、较可靠/一般/较弱资料数量，以及是否建议人工核验。`SearchIntent`、`queryPlans`、Tavily 查询词、评分拆解、过滤详情和原始 `searchProcess` 属于内部调试信息，默认不会返回给普通前端，也不会在页面展示。本地开发如需查看完整搜索调试信息，可以设置 `SEARCH_DEBUG_ENABLED=true` 后以非 production 模式启动；生产环境即使误设公开前端变量，也不会因此返回完整 `debugSearchProcess`。
 
 资料文件支持三种输入策略：`优先原生附件`、`长文本资料包`、`自动选择`。由于不同 OpenAI-compatible provider 对“文件附件”的 API 协议并不统一，系统会根据参会 provider 的能力生成实际投递计划：如果 provider 没有声明支持原生文件附件，本次会议会明确显示并回退为长文本资料包，不会假装原文件已经直接发给模型。相比早期版本，文档正文预算已经放宽，不再默认只截取 800 字。扫描版 PDF、图片和旧版 Office 格式暂不解析。
 

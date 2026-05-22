@@ -115,8 +115,59 @@ describe("Tavily evidence search", () => {
         fetchImpl: fetchMock,
       }),
     ).rejects.toMatchObject({
+      reason: "unauthorized",
       status: 502,
-      message: "Tavily search failed with HTTP 401",
+      message: "Tavily search failed: unauthorized",
+    } satisfies Partial<TavilySearchError>);
+  });
+
+  test("classifies missing api key without calling Tavily", async () => {
+    const fetchMock = vi.fn();
+
+    await expect(
+      searchTavilyEvidence("private topic", {
+        apiKey: "",
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toMatchObject({
+      reason: "missing_api_key",
+      status: 503,
+      message: "Tavily search failed: missing_api_key",
+    } satisfies Partial<TavilySearchError>);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("classifies rate limits, network errors, and invalid responses safely", async () => {
+    await expect(
+      searchTavilyEvidence("rate limited topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: async () => Response.json({ error: "too many" }, { status: 429 }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "rate_limited",
+      message: "Tavily search failed: rate_limited",
+    } satisfies Partial<TavilySearchError>);
+
+    await expect(
+      searchTavilyEvidence("network topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: async () => {
+          throw new Error("network failed with secret-openai-key");
+        },
+      }),
+    ).rejects.toMatchObject({
+      reason: "network_error",
+      message: "Tavily search failed: network_error",
+    } satisfies Partial<TavilySearchError>);
+
+    await expect(
+      searchTavilyEvidence("invalid topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: async () => Response.json({ answer: "missing results array" }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "invalid_response",
+      message: "Tavily search failed: invalid_response",
     } satisfies Partial<TavilySearchError>);
   });
 });

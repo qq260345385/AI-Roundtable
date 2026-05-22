@@ -1,6 +1,12 @@
 # Changelog
 
-## v0.4 internal alpha
+## v0.4.2.3 internal alpha
+
+- Added compact `searchSummary` responses for web search status, evidence counts, and user-facing verification warnings.
+- Stopped default meeting and evidence search API responses from returning full `searchProcess`, query plans, Tavily query lists, and filtered-result diagnostics.
+- Moved full search diagnostics behind server-side debug mode: `SEARCH_DEBUG_ENABLED=true` and `NODE_ENV !== "production"`.
+
+## v0.4.2.1 internal alpha
 
 - Switched web search to a model-driven flow: participants propose search directions before the server runs Tavily.
 - Lowered the evidence quality gate so low-reliability but non-empty sources can be used in low-evidence mode, while very low-quality sources are still filtered.

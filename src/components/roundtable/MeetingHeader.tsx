@@ -1,5 +1,6 @@
-import type { RoundtableMode } from "@/lib/types";
+﻿import type { RoundtableMode } from "@/lib/types";
 import type { Locale, UiText } from "@/lib/i18n/ui-text";
+import { APP_VERSION } from "@/lib/version";
 
 type MeetingHeaderProps = {
   topic: string;
@@ -25,7 +26,7 @@ export function MeetingHeader({
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-5 py-8 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-sm font-medium text-emerald-700">
-            AI Roundtable · v0.4
+            AI Roundtable · {APP_VERSION}
           </p>
           <h1 className="mt-3 max-w-3xl text-3xl font-semibold leading-tight text-zinc-950 md:text-5xl">
             {text.header.appName}

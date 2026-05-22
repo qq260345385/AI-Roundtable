@@ -66,6 +66,8 @@ export function applyLiveMeetingEvent(
         ...meeting,
         topic: event.topic,
         evidencePack: event.evidencePack,
+        searchSummary: event.searchSummary,
+        debugSearchProcess: event.debugSearchProcess,
         isBriefMode: event.isBriefMode,
         isTimeSensitive: event.isTimeSensitive,
         factCheckNotice: event.factCheckNotice,

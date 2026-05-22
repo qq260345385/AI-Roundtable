@@ -83,8 +83,63 @@ function createProviderRouter(providers: ModelProvider[]): ModelProvider {
   return {
     name: "ProviderRouter",
 
+    async generateSearchIntents(participant, topic) {
+      const provider = findProvider(providers, participant);
+
+      if (provider.generateSearchIntents) {
+        return provider.generateSearchIntents(participant, topic);
+      }
+
+      if (provider.generateSearchQueries) {
+        const queries = await provider.generateSearchQueries(participant, topic);
+
+        return queries.map((query) => ({
+          question: query,
+          mustInclude: [],
+          shouldInclude: [],
+          exclude: [],
+          freshness: "any" as const,
+          sourcePreference: "mixed" as const,
+          rationale: "Legacy plain-text search query.",
+        }));
+      }
+
+      return [
+        {
+          question: `${topic} official report`,
+          mustInclude: [topic],
+          shouldInclude: ["official report"],
+          exclude: [],
+          freshness: "latest" as const,
+          sourcePreference: "official" as const,
+          rationale: "Fallback official-source search intent.",
+        },
+        {
+          question: `${topic} benchmark`,
+          mustInclude: [topic],
+          shouldInclude: ["benchmark"],
+          exclude: [],
+          freshness: "recent" as const,
+          sourcePreference: "benchmark" as const,
+          rationale: "Fallback benchmark-source search intent.",
+        },
+      ];
+    },
+
     async generateSearchQueries(participant, topic) {
       const provider = findProvider(providers, participant);
+
+      if (provider.generateSearchIntents) {
+        const intents = await provider.generateSearchIntents(participant, topic);
+
+        return intents.map((intent) =>
+          [
+            intent.question,
+            ...intent.mustInclude,
+            ...intent.shouldInclude,
+          ].join(" "),
+        );
+      }
 
       if (provider.generateSearchQueries) {
         return provider.generateSearchQueries(participant, topic);

@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
-import { normalizeEvidencePack } from "../../../../lib/search/evidence-pack";
+import {
+  createSearchFailureProcess,
+  normalizeEvidencePack,
+} from "../../../../lib/search/evidence-pack";
+import {
+  createSearchSummary,
+  isSearchDebugResponseEnabled,
+  sanitizeEvidencePackForClient,
+} from "../../../../lib/search/search-response";
 import {
   TavilySearchError,
   buildTavilySearchQueries,
+  getSafeTavilyErrorMessage,
+  getTavilyFailureReason,
   searchTavilyEvidence,
 } from "../../../../lib/search/tavily-search";
 
@@ -13,6 +23,8 @@ type SearchRequestBody = {
 };
 
 export async function POST(request: Request) {
+  let searchQueries: string[] = [];
+
   try {
     const body = await readRequestBody(request);
     const query = getQuery(body);
@@ -21,12 +33,15 @@ export async function POST(request: Request) {
       throw new SearchRequestError("query cannot be empty", 400);
     }
 
-    const searchQueries = buildTavilySearchQueries(query);
+    searchQueries = buildTavilySearchQueries(query);
     const drafts = dedupeEvidenceDrafts(
       (
         await Promise.all(
           searchQueries.map((searchQuery) =>
-            searchTavilyEvidence(searchQuery, { maxResults: 5 }),
+            searchTavilyEvidence(searchQuery, { maxResults: 5 }).then(
+              (results) =>
+                results.map((result) => ({ ...result, query: searchQuery })),
+            ),
           ),
         )
       ).flat(),
@@ -45,10 +60,32 @@ export async function POST(request: Request) {
     const evidenceWarnings = getEvidenceWarnings(evidenceStatus);
     const evidencePack = normalizeEvidencePack(
       {
-        enabled: preflightPack.items.length > 0,
+        enabled: true,
         evidenceStatus,
         evidenceWarnings,
-        items: preflightPack.items,
+        items: drafts,
+        searchProcess: {
+          executedQueries: searchQueries,
+          searchIntents: [
+            {
+              participantId: "user-query",
+              participantName: "User query",
+              provider: "server",
+              model: "tavily",
+              intents: [
+                {
+                  question: query,
+                  mustInclude: [query],
+                  shouldInclude: [],
+                  exclude: [],
+                  freshness: "any",
+                  sourcePreference: "mixed",
+                  rationale: "User-triggered direct Tavily evidence search.",
+                },
+              ],
+            },
+          ],
+        },
         searchQueries,
       },
       {
@@ -56,18 +93,46 @@ export async function POST(request: Request) {
       },
     );
 
+    const safeEvidencePack = sanitizeEvidencePackForClient(evidencePack);
+
     return NextResponse.json({
-      drafts: evidencePack.items,
-      evidencePack,
+      drafts: safeEvidencePack?.items ?? [],
+      evidencePack: safeEvidencePack,
+      searchSummary: createSearchSummary(evidencePack),
+      ...(isSearchDebugResponseEnabled()
+        ? { debugSearchProcess: evidencePack.searchProcess }
+        : {}),
       warnings: [
         ...(evidencePack.evidenceWarnings ?? []),
         ...evidencePack.items.flatMap((item) => item.quality?.warnings ?? []),
       ],
     });
   } catch (error) {
+    const failureProcess =
+      error instanceof TavilySearchError
+        ? createSearchFailureProcess({
+            executedQueries: searchQueries,
+            failureReason: getTavilyFailureReason(error),
+            warnings: [getTavilyFailureReason(error)],
+          })
+        : undefined;
+    const failurePack = failureProcess
+      ? normalizeEvidencePack({
+          enabled: true,
+          evidenceStatus: "none",
+          items: [],
+          searchProcess: failureProcess,
+          searchQueries,
+        })
+      : undefined;
+
     return NextResponse.json(
       {
         error: getErrorMessage(error),
+        ...(failurePack ? { searchSummary: createSearchSummary(failurePack) } : {}),
+        ...(failureProcess && isSearchDebugResponseEnabled()
+          ? { debugSearchProcess: failureProcess }
+          : {}),
       },
       {
         status: getErrorStatus(error),
@@ -105,6 +170,10 @@ function getQuery(body: SearchRequestBody) {
 }
 
 function getErrorMessage(error: unknown): string {
+  if (error instanceof TavilySearchError) {
+    return getSafeTavilyErrorMessage(error);
+  }
+
   if (error instanceof Error) {
     return error.message;
   }

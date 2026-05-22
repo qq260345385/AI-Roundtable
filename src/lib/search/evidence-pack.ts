@@ -1,6 +1,7 @@
 export type SearchEvidence = {
   id: string;
   title: string;
+  query?: string;
   url?: string;
   source?: string;
   publishedAt?: string;
@@ -55,8 +56,123 @@ export type EvidencePack = {
   delivery?: EvidenceDeliveryInfo;
   evidenceStatus?: EvidenceStatus;
   evidenceWarnings?: string[];
+  searchProcess?: SearchProcess;
   searchQueries?: string[];
   items: SearchEvidence[];
+};
+
+export type EvidenceMode =
+  | "normal"
+  | "low_evidence"
+  | "search_failed"
+  | "no_reliable_sources"
+  | "realtime_unverified";
+
+export type SearchFreshness = "latest" | "recent" | "any";
+
+export type SearchSourcePreference =
+  | "official"
+  | "benchmark"
+  | "media"
+  | "community"
+  | "mixed";
+
+export type SearchIntent = {
+  question: string;
+  mustInclude: string[];
+  shouldInclude: string[];
+  exclude: string[];
+  freshness: SearchFreshness;
+  sourcePreference: SearchSourcePreference;
+  rationale: string;
+};
+
+export type SearchIntentRecord = {
+  participantId: string;
+  participantName: string;
+  provider: string;
+  model: string;
+  intents: SearchIntent[];
+};
+
+export type SearchQueryPlan = {
+  query: string;
+  reason: string;
+  participantIds: string[];
+  sourcePreference: SearchSourcePreference;
+  freshness: SearchFreshness;
+};
+
+export type SearchIntentDecision = {
+  participantId?: string;
+  participantName?: string;
+  question: string;
+  action: "used" | "merged" | "discarded";
+  reason: string;
+  query?: string;
+  mergedInto?: string;
+};
+
+export type SearchFailureReason =
+  | "missing_api_key"
+  | "unauthorized"
+  | "rate_limited"
+  | "network_error"
+  | "invalid_response"
+  | "unknown_error";
+
+export type SearchProcessResult = {
+  title: string;
+  query?: string;
+  url?: string;
+  source?: string;
+  sourceType: EvidenceSourceType;
+  reliability: EvidenceReliability;
+  score: number;
+  qualityWarnings: string[];
+  includedInEvidencePack: boolean;
+  filtered: boolean;
+  filteredReason?: string;
+};
+
+export type SearchQualityOverview = {
+  totalResults: number;
+  includedCount: number;
+  filteredCount: number;
+  lowEvidenceCount: number;
+  byReliability: Record<EvidenceReliability, number>;
+  bySourceType: Record<EvidenceSourceType, number>;
+};
+
+export type SearchProcess = {
+  evidenceMode: EvidenceMode;
+  failureReason?: SearchFailureReason;
+  searchIntents: SearchIntentRecord[];
+  executedQueries: string[];
+  queryPlans: SearchQueryPlan[];
+  intentDecisions: SearchIntentDecision[];
+  qualityOverview: SearchQualityOverview;
+  filteredReasons: { reason: string; count: number }[];
+  results: SearchProcessResult[];
+  warnings: string[];
+};
+
+export type SearchSummaryStatus =
+  | "completed"
+  | "failed"
+  | "low_evidence"
+  | "not_used";
+
+export type SearchSummary = {
+  enabled: boolean;
+  status: SearchSummaryStatus;
+  evidenceMode: string;
+  totalReferences: number;
+  strongCount: number;
+  mediumCount: number;
+  weakCount: number;
+  hasRealtimeWarning: boolean;
+  userMessage: string;
 };
 
 export type EvidenceSourceType =
@@ -111,8 +227,9 @@ export function normalizeEvidencePack(
     .filter((item): item is Omit<SearchEvidence, "id"> => item !== null)
     .sort(compareEvidenceQuality);
   const usableItems = normalizedItems.filter(isUsableEvidenceItem);
+  const hasSearchProcess = isObject(input.searchProcess);
   const selectedItems =
-    usableItems.length > 0 || options.allowLowReliabilityFallback === false
+    hasSearchProcess || usableItems.length > 0 || options.allowLowReliabilityFallback === false
       ? usableItems
       : normalizedItems;
   const items = selectedItems
@@ -125,11 +242,18 @@ export function normalizeEvidencePack(
     normalizeEvidenceStatus(input.evidenceStatus) ?? getEvidenceStatus(items);
   const evidenceWarnings = normalizeStringArray(input.evidenceWarnings);
   const searchQueries = normalizeStringArray(input.searchQueries);
+  const searchProcess = createSearchProcess({
+    evidenceStatus,
+    input: input.searchProcess,
+    normalizedItems,
+    selectedItems: items,
+  });
 
   if (items.length === 0) {
     return createDisabledEvidencePack({
       evidenceStatus,
       evidenceWarnings,
+      searchProcess,
       searchQueries,
     });
   }
@@ -139,8 +263,33 @@ export function normalizeEvidencePack(
     strategy: normalizeDocumentInputStrategy(input.strategy),
     evidenceStatus,
     ...(evidenceWarnings.length > 0 ? { evidenceWarnings } : {}),
+    ...(searchProcess ? { searchProcess } : {}),
     ...(searchQueries.length > 0 ? { searchQueries } : {}),
     items,
+  };
+}
+
+export function createSearchFailureProcess(input: {
+  executedQueries?: string[];
+  failureReason?: SearchFailureReason;
+  searchIntents?: SearchIntentRecord[];
+  queryPlans?: SearchQueryPlan[];
+  intentDecisions?: SearchIntentDecision[];
+  warnings?: string[];
+}): SearchProcess {
+  return {
+    evidenceMode: "search_failed",
+    ...(normalizeSearchFailureReason(input.failureReason)
+      ? { failureReason: normalizeSearchFailureReason(input.failureReason) }
+      : {}),
+    searchIntents: input.searchIntents ?? [],
+    executedQueries: normalizeStringArray(input.executedQueries),
+    queryPlans: normalizeSearchQueryPlans(input.queryPlans),
+    intentDecisions: normalizeSearchIntentDecisions(input.intentDecisions),
+    qualityOverview: createEmptySearchQualityOverview(),
+    filteredReasons: [],
+    results: [],
+    warnings: normalizeStringArray(input.warnings),
   };
 }
 
@@ -298,7 +447,14 @@ export function scoreEvidence(input: {
 
   score += getSourceRiskAdjustment(sourceType);
 
-  const clampedScore = Math.min(Math.max(score, 0), 100);
+  let clampedScore = Math.min(Math.max(score, 0), 100);
+
+  if (
+    (sourceType === "community" || sourceType === "video") &&
+    snippet.length >= SHORT_SNIPPET_WARNING_LENGTH
+  ) {
+    clampedScore = Math.max(clampedScore, 25);
+  }
 
   return {
     warnings,
@@ -429,6 +585,7 @@ function normalizeEvidenceItem(
     input.publishedAt,
     MAX_PUBLISHED_AT_LENGTH,
   );
+  const query = normalizeOptionalText(input.query, 240);
   const url = normalizeOptionalUrl(input.url);
   const quality = createEvidenceQuality({
     rawSnippet,
@@ -445,6 +602,7 @@ function normalizeEvidenceItem(
     title,
     snippet,
     quality,
+    ...(query ? { query } : {}),
     ...(url ? { url } : {}),
     ...(source ? { source } : {}),
     ...(publishedAt ? { publishedAt } : {}),
@@ -480,14 +638,356 @@ function createDisabledEvidencePack(input?: unknown): EvidencePack {
     isObject(input) ? normalizeStringArray(input.evidenceWarnings) : [];
   const searchQueries =
     isObject(input) ? normalizeStringArray(input.searchQueries) : [];
+  const searchProcess =
+    isObject(input) && isSearchProcess(input.searchProcess)
+      ? input.searchProcess
+      : undefined;
 
   return {
     enabled: false,
     evidenceStatus,
     ...(evidenceWarnings.length > 0 ? { evidenceWarnings } : {}),
+    ...(searchProcess ? { searchProcess } : {}),
     ...(searchQueries.length > 0 ? { searchQueries } : {}),
     items: [],
   };
+}
+
+function createSearchProcess(input: {
+  evidenceStatus: EvidenceStatus;
+  input: unknown;
+  normalizedItems: Omit<SearchEvidence, "id">[];
+  selectedItems: SearchEvidence[];
+}): SearchProcess | undefined {
+  if (!isObject(input.input)) {
+    return undefined;
+  }
+
+  const executedQueries = normalizeStringArray(input.input.executedQueries);
+  const searchIntents = normalizeSearchIntents(input.input.searchIntents);
+  const queryPlans = normalizeSearchQueryPlans(input.input.queryPlans);
+  const intentDecisions = normalizeSearchIntentDecisions(
+    input.input.intentDecisions,
+  );
+  const selectedKeys = new Set(input.selectedItems.map(getEvidenceKey));
+  const results = input.normalizedItems.map((item) => {
+    const filteredReason = getFilteredReason(item, selectedKeys);
+    const quality = item.quality;
+
+    return {
+      title: item.title,
+      ...(item.query ? { query: item.query } : {}),
+      ...(item.url ? { url: item.url } : {}),
+      ...(item.source ? { source: item.source } : {}),
+      sourceType: quality?.sourceType ?? "unknown",
+      reliability: quality?.reliability ?? "very_low",
+      score: quality?.score ?? 0,
+      qualityWarnings: quality?.warnings ?? [],
+      includedInEvidencePack: !filteredReason,
+      filtered: Boolean(filteredReason),
+      ...(filteredReason ? { filteredReason } : {}),
+    };
+  });
+  const qualityOverview = summarizeSearchProcessResults(results);
+
+  return {
+    evidenceMode:
+      normalizeEvidenceMode(input.input.evidenceMode) ??
+      getEvidenceMode(input.evidenceStatus, qualityOverview),
+    ...(normalizeSearchFailureReason(input.input.failureReason)
+      ? {
+          failureReason: normalizeSearchFailureReason(
+            input.input.failureReason,
+          ),
+        }
+      : {}),
+    searchIntents,
+    executedQueries,
+    queryPlans,
+    intentDecisions,
+    qualityOverview,
+    filteredReasons: summarizeFilteredReasons(results),
+    results,
+    warnings: normalizeStringArray(input.input.warnings),
+  };
+}
+
+function normalizeSearchIntents(value: unknown): SearchIntentRecord[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      participantId: normalizeText(item.participantId, 80),
+      participantName: normalizeText(item.participantName, 120),
+      provider: normalizeText(item.provider, 80),
+      model: normalizeText(item.model, 120),
+      intents: normalizeSearchIntentArray(item.intents),
+    }))
+    .filter(
+      (item) =>
+        item.participantId &&
+        item.participantName &&
+        item.provider &&
+        item.model,
+    )
+    .slice(0, 12);
+}
+
+function normalizeSearchIntentArray(value: unknown): SearchIntent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => normalizeSearchIntent(item))
+    .filter((item): item is SearchIntent => item !== null)
+    .slice(0, 8);
+}
+
+function normalizeSearchIntent(value: unknown): SearchIntent | null {
+  if (typeof value === "string") {
+    const question = normalizeText(value, 180);
+
+    return question
+      ? {
+          question,
+          mustInclude: [],
+          shouldInclude: [],
+          exclude: [],
+          freshness: "any",
+          sourcePreference: "mixed",
+          rationale: "Legacy plain-text search direction.",
+        }
+      : null;
+  }
+
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const question = normalizeText(value.question, 180);
+
+  if (!question) {
+    return null;
+  }
+
+  return {
+    question,
+    mustInclude: normalizeStringArray(value.mustInclude),
+    shouldInclude: normalizeStringArray(value.shouldInclude),
+    exclude: normalizeStringArray(value.exclude),
+    freshness: normalizeSearchFreshness(value.freshness),
+    sourcePreference: normalizeSearchSourcePreference(value.sourcePreference),
+    rationale: normalizeText(value.rationale, 240),
+  };
+}
+
+function normalizeSearchQueryPlans(value: unknown): SearchQueryPlan[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      query: normalizeText(item.query, 240),
+      reason: normalizeText(item.reason, 240),
+      participantIds: normalizeStringArray(item.participantIds),
+      sourcePreference: normalizeSearchSourcePreference(item.sourcePreference),
+      freshness: normalizeSearchFreshness(item.freshness),
+    }))
+    .filter((item) => item.query)
+    .slice(0, 12);
+}
+
+function normalizeSearchIntentDecisions(value: unknown): SearchIntentDecision[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const question = normalizeText(item.question, 180);
+      const action = normalizeSearchIntentAction(item.action);
+
+      if (!question || !action) {
+        return null;
+      }
+
+      return {
+        ...(normalizeText(item.participantId, 80)
+          ? { participantId: normalizeText(item.participantId, 80) }
+          : {}),
+        ...(normalizeText(item.participantName, 120)
+          ? { participantName: normalizeText(item.participantName, 120) }
+          : {}),
+        question,
+        action,
+        reason: normalizeText(item.reason, 160),
+        ...(normalizeText(item.query, 240)
+          ? { query: normalizeText(item.query, 240) }
+          : {}),
+        ...(normalizeText(item.mergedInto, 240)
+          ? { mergedInto: normalizeText(item.mergedInto, 240) }
+          : {}),
+      };
+    })
+    .filter((item): item is SearchIntentDecision => item !== null)
+    .slice(0, 24);
+}
+
+function normalizeSearchFreshness(value: unknown): SearchFreshness {
+  return value === "latest" || value === "recent" || value === "any"
+    ? value
+    : "any";
+}
+
+function normalizeSearchSourcePreference(
+  value: unknown,
+): SearchSourcePreference {
+  return value === "official" ||
+    value === "benchmark" ||
+    value === "media" ||
+    value === "community" ||
+    value === "mixed"
+    ? value
+    : "mixed";
+}
+
+function normalizeSearchIntentAction(
+  value: unknown,
+): SearchIntentDecision["action"] | undefined {
+  return value === "used" || value === "merged" || value === "discarded"
+    ? value
+    : undefined;
+}
+
+function normalizeSearchFailureReason(
+  value: unknown,
+): SearchFailureReason | undefined {
+  return value === "missing_api_key" ||
+    value === "unauthorized" ||
+    value === "rate_limited" ||
+    value === "network_error" ||
+    value === "invalid_response" ||
+    value === "unknown_error"
+    ? value
+    : undefined;
+}
+
+function getFilteredReason(
+  item: Omit<SearchEvidence, "id">,
+  selectedKeys: Set<string>,
+): string | undefined {
+  if (selectedKeys.has(getEvidenceKey(item))) {
+    return undefined;
+  }
+
+  if (item.quality?.reliability === "very_low") {
+    return "very_low_quality";
+  }
+
+  return "exceeds_evidence_pack_limit";
+}
+
+function summarizeSearchProcessResults(
+  results: SearchProcessResult[],
+): SearchQualityOverview {
+  const overview = createEmptySearchQualityOverview();
+
+  overview.totalResults = results.length;
+  overview.includedCount = results.filter(
+    (result) => result.includedInEvidencePack,
+  ).length;
+  overview.filteredCount = results.length - overview.includedCount;
+  overview.lowEvidenceCount = results.filter(
+    (result) => result.reliability === "low" && result.includedInEvidencePack,
+  ).length;
+
+  for (const result of results) {
+    overview.byReliability[result.reliability] += 1;
+    overview.bySourceType[result.sourceType] += 1;
+  }
+
+  return overview;
+}
+
+function summarizeFilteredReasons(results: SearchProcessResult[]) {
+  const counts = new Map<string, number>();
+
+  for (const result of results) {
+    if (result.filteredReason) {
+      counts.set(result.filteredReason, (counts.get(result.filteredReason) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(counts, ([reason, count]) => ({ reason, count }));
+}
+
+function createEmptySearchQualityOverview(): SearchQualityOverview {
+  return {
+    totalResults: 0,
+    includedCount: 0,
+    filteredCount: 0,
+    lowEvidenceCount: 0,
+    byReliability: {
+      high: 0,
+      medium: 0,
+      low: 0,
+      very_low: 0,
+    },
+    bySourceType: {
+      official: 0,
+      benchmark: 0,
+      media: 0,
+      blog: 0,
+      community: 0,
+      social: 0,
+      video: 0,
+      unknown: 0,
+    },
+  };
+}
+
+function getEvidenceMode(
+  evidenceStatus: EvidenceStatus,
+  overview: SearchQualityOverview,
+): EvidenceMode {
+  if (overview.totalResults === 0 || evidenceStatus === "none") {
+    return "no_reliable_sources";
+  }
+
+  if (evidenceStatus === "low" || overview.lowEvidenceCount > 0) {
+    return "low_evidence";
+  }
+
+  return "normal";
+}
+
+function normalizeEvidenceMode(value: unknown): EvidenceMode | undefined {
+  if (
+    value === "normal" ||
+    value === "low_evidence" ||
+    value === "search_failed" ||
+    value === "no_reliable_sources" ||
+    value === "realtime_unverified"
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function isSearchProcess(value: unknown): value is SearchProcess {
+  return isObject(value) && normalizeEvidenceMode(value.evidenceMode) !== undefined;
+}
+
+function getEvidenceKey(item: Pick<SearchEvidence, "title" | "url">): string {
+  return (item.url || item.title).toLowerCase();
 }
 
 function normalizeOptionalText(value: unknown, maxLength: number) {
@@ -563,6 +1063,10 @@ function createEvidenceQuality(options: {
 
   if (options.snippet.length < SHORT_SNIPPET_WARNING_LENGTH) {
     quality.warnings.push("资料摘要较短，可能不足以支撑可靠讨论");
+  }
+
+  if (quality.reliability === "low") {
+    quality.warnings.push("低证据资料：只能作为观点线索，不能单独支撑事实结论");
   }
 
   return quality;
