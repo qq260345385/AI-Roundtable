@@ -46,6 +46,7 @@ if (!existsSync(".next/BUILD_ID")) {
 
 const port = Number(process.env.LIVE_SEARCH_PORT ?? 3217);
 const baseUrl = `http://127.0.0.1:${port}`;
+const searchProvider = process.env.SEARCH_PROVIDER?.trim() || "tavily";
 const startCommand = getStartCommand(port);
 const server = spawn(startCommand.command, startCommand.args, {
   env: {
@@ -53,6 +54,7 @@ const server = spawn(startCommand.command, startCommand.args, {
     AI_ROUNDTABLE_MODE: "mock",
     NODE_OPTIONS: withEnvProxy(process.env.NODE_OPTIONS),
     SEARCH_DEBUG_ENABLED: "true",
+    SEARCH_PROVIDER: searchProvider,
     TAVILY_API_KEY: apiKey,
   },
   shell: false,
@@ -80,8 +82,9 @@ try {
       id: scenario.id,
       title: scenario.title,
       evidenceMode: searchProcess.evidenceMode,
+      searchProvider: searchProcess.provider ?? searchProvider,
       searchIntent: summarizeSearchIntents(searchProcess.searchIntents),
-      tavilyQueries: searchProcess.executedQueries,
+      searchQueries: searchProcess.executedQueries,
       resultCount: searchProcess.qualityOverview.totalResults,
       evidencePackItemCount: evidencePack.items.length,
       filteredCount: searchProcess.qualityOverview.filteredCount,
@@ -98,7 +101,7 @@ try {
     });
   }
 
-  console.log(JSON.stringify({ scenarios: summaries }, null, 2));
+  console.log(JSON.stringify({ searchProvider, scenarios: summaries }, null, 2));
 } catch (error) {
   console.error("[error] Live Tavily smoke test failed.");
   console.error(error instanceof Error ? error.message : String(error));

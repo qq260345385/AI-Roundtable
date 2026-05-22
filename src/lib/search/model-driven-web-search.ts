@@ -1,9 +1,11 @@
 import type {
   EvidencePack,
+  SearchCacheEvent,
   SearchFreshness,
   SearchIntent,
   SearchIntentDecision,
   SearchIntentRecord,
+  SearchProviderDiagnostic,
   SearchQueryPlan,
   SearchSourcePreference,
 } from "./evidence-pack";
@@ -15,10 +17,13 @@ import {
   buildTavilySearchQueries,
   dedupeSearchResults,
   getTavilyFailureReason,
-  searchTavilyEvidence,
   type TavilyEvidenceDraft,
-  type TavilySearchCacheEvent,
 } from "./tavily-search";
+import { getSearchProvider } from "./search-provider-registry";
+import type {
+  SearchProvider,
+  SearchProviderResponse,
+} from "./search-provider";
 import type {
   ModelParticipant,
   ModelProvider,
@@ -51,7 +56,7 @@ type Searcher = (
   options?: {
     freshness?: SearchFreshness;
     maxResults?: number;
-    onCacheEvent?: (event: TavilySearchCacheEvent) => void;
+    onCacheEvent?: (event: SearchCacheEvent) => void;
   },
 ) => Promise<TavilyEvidenceDraft[]>;
 
@@ -59,6 +64,7 @@ type BuildModelDrivenWebEvidencePackOptions = {
   baseEvidencePack?: EvidencePack;
   participants: ModelParticipant[];
   provider: ModelProvider;
+  searchProvider?: SearchProvider;
   searcher?: Searcher;
   topic: string;
 };
@@ -67,7 +73,8 @@ export async function buildModelDrivenWebEvidencePack({
   baseEvidencePack,
   participants,
   provider,
-  searcher = searchTavilyEvidence,
+  searchProvider = getSearchProvider(),
+  searcher,
   topic,
 }: BuildModelDrivenWebEvidencePackOptions): Promise<EvidencePack> {
   const searchPlan = await buildParticipantSearchQueries(
@@ -80,7 +87,8 @@ export async function buildModelDrivenWebEvidencePack({
   const freshnessByQuery = new Map(
     searchPlan.queryPlans.map((plan) => [plan.query, plan.freshness]),
   );
-  const cacheEvents: TavilySearchCacheEvent[] = [];
+  const cacheEvents: SearchCacheEvent[] = [];
+  const providerDiagnostics: SearchProviderDiagnostic[] = [];
   let dedupeStats: ReturnType<typeof dedupeSearchResults>["stats"] | undefined;
   let webDrafts: TavilyEvidenceDraft[];
 
@@ -88,11 +96,24 @@ export async function buildModelDrivenWebEvidencePack({
     const rawWebDrafts = (
       await Promise.all(
         searchQueries.map((query) =>
-          searcher(query, {
-            freshness: freshnessByQuery.get(query),
-            maxResults: WEB_SEARCH_RESULTS_PER_QUERY,
-            onCacheEvent: (event) => cacheEvents.push(event),
-          }).then((drafts) => drafts.map((draft) => ({ ...draft, query }))),
+          searchWithConfiguredProvider({
+            freshness: freshnessByQuery.get(query) ?? "any",
+            provider: searchProvider,
+            query,
+            searcher,
+            topic,
+          }).then((response) => {
+            cacheEvents.push(...(response.cacheEvents ?? []));
+            providerDiagnostics.push(createProviderDiagnostic(response));
+
+            return response.results.map((result) => ({
+              title: result.title,
+              url: result.url,
+              snippet: result.content ?? result.snippet ?? "",
+              publishedAt: result.publishedDate,
+              query,
+            }));
+          }),
         ),
       )
     ).flat();
@@ -117,6 +138,8 @@ export async function buildModelDrivenWebEvidencePack({
           dedupeStats,
           executedQueries: searchQueries,
           failureReason,
+          provider: searchProvider.id,
+          providerDiagnostics,
           searchIntents: searchPlan.searchIntents,
           queryPlans: searchPlan.queryPlans,
           intentDecisions: searchPlan.intentDecisions,
@@ -160,6 +183,8 @@ export async function buildModelDrivenWebEvidencePack({
         searchIntents: searchPlan.searchIntents,
         queryPlans: searchPlan.queryPlans,
         intentDecisions: searchPlan.intentDecisions,
+        provider: searchProvider.id,
+        providerDiagnostics,
       },
       searchQueries,
       strategy: baseEvidencePack?.strategy ?? "text_pack",
@@ -168,6 +193,59 @@ export async function buildModelDrivenWebEvidencePack({
       topic,
     },
   );
+}
+
+async function searchWithConfiguredProvider(input: {
+  freshness: SearchFreshness;
+  provider: SearchProvider;
+  query: string;
+  searcher?: Searcher;
+  topic: string;
+}): Promise<SearchProviderResponse> {
+  if (input.searcher) {
+    const cacheEvents: SearchCacheEvent[] = [];
+    const drafts = await input.searcher(input.query, {
+      freshness: input.freshness,
+      maxResults: WEB_SEARCH_RESULTS_PER_QUERY,
+      onCacheEvent: (event) => cacheEvents.push(event),
+    });
+
+    return {
+      provider: input.provider.id,
+      results: drafts.map((draft) => ({
+        title: draft.title,
+        ...(draft.url ? { url: draft.url } : {}),
+        content: draft.snippet,
+        snippet: draft.snippet,
+        ...(draft.publishedAt ? { publishedDate: draft.publishedAt } : {}),
+        sourceQuery: input.query,
+        provider: input.provider.id,
+      })),
+      ...(cacheEvents.length > 0 ? { cacheEvents } : {}),
+      diagnostics: {
+        adapter: "legacy_searcher",
+        resultCount: drafts.length,
+      },
+    };
+  }
+
+  return input.provider.search({
+    freshness: input.freshness,
+    maxResults: WEB_SEARCH_RESULTS_PER_QUERY,
+    query: input.query,
+    searchDepth: "basic",
+    topic: input.topic,
+  });
+}
+
+function createProviderDiagnostic(
+  response: SearchProviderResponse,
+): SearchProviderDiagnostic {
+  return {
+    provider: response.provider,
+    ...(response.diagnostics ? { diagnostics: response.diagnostics } : {}),
+    ...(response.rawStats ? { rawStats: response.rawStats } : {}),
+  };
 }
 
 async function buildParticipantSearchQueries(

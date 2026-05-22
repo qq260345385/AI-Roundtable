@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0 internal alpha
+
+- Added a pluggable `SearchProvider` interface and registry, with Tavily as the default built-in provider.
+- Routed model-driven web search and direct evidence search through the provider abstraction while preserving Tavily cache, TTL, error handling, and dedupe behavior.
+- Kept provider diagnostics out of default API/UI responses and exposed provider details only in `debugSearchProcess` and live-search smoke output.
+
 ## v0.4.4 internal alpha
 
 - Added an in-memory Tavily query cache with TTLs for real-time, standard, and stable queries.

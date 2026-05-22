@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import {
   createSearchFailureProcess,
   normalizeEvidencePack,
+  type SearchCacheEvent,
+  type SearchProviderDiagnostic,
 } from "../../../../lib/search/evidence-pack";
 import {
   createSearchSummary,
@@ -14,9 +16,9 @@ import {
   dedupeSearchResults,
   getSafeTavilyErrorMessage,
   getTavilyFailureReason,
-  searchTavilyEvidence,
-  type TavilySearchCacheEvent,
 } from "../../../../lib/search/tavily-search";
+import { createSearchProviderRegistry } from "../../../../lib/search/search-provider-registry";
+import type { SearchProviderResponse } from "../../../../lib/search/search-provider";
 
 export const runtime = "nodejs";
 
@@ -25,7 +27,9 @@ type SearchRequestBody = {
 };
 
 export async function POST(request: Request) {
-  const cacheEvents: TavilySearchCacheEvent[] = [];
+  const cacheEvents: SearchCacheEvent[] = [];
+  const providerDiagnostics: SearchProviderDiagnostic[] = [];
+  let selectedSearchProviderId = "tavily";
   let searchQueries: string[] = [];
 
   try {
@@ -36,16 +40,33 @@ export async function POST(request: Request) {
       throw new SearchRequestError("query cannot be empty", 400);
     }
 
+    const providerRegistry = createSearchProviderRegistry();
+    const searchProvider = providerRegistry.selectedProvider;
+    selectedSearchProviderId = searchProvider.id;
     searchQueries = buildTavilySearchQueries(query);
     const searchResults = (
       await Promise.all(
         searchQueries.map((searchQuery) =>
-          searchTavilyEvidence(searchQuery, {
+          searchProvider.search({
+            freshness: "any",
             maxResults: 5,
-            onCacheEvent: (event) => cacheEvents.push(event),
-          }).then((results) =>
-            results.map((result) => ({ ...result, query: searchQuery })),
-          ),
+            query: searchQuery,
+            searchDepth: "basic",
+            topic: query,
+          }).then((response) => {
+            cacheEvents.push(...(response.cacheEvents ?? []));
+            providerDiagnostics.push(
+              createProviderDiagnostic(response, providerRegistry),
+            );
+
+            return response.results.map((result) => ({
+              title: result.title,
+              url: result.url,
+              snippet: result.content ?? result.snippet ?? "",
+              publishedAt: result.publishedDate,
+              query: searchQuery,
+            }));
+          }),
         ),
       )
     ).flat();
@@ -73,12 +94,14 @@ export async function POST(request: Request) {
           cacheEvents,
           dedupeStats: deduped.stats,
           executedQueries: searchQueries,
+          provider: searchProvider.id,
+          providerDiagnostics,
           searchIntents: [
             {
               participantId: "user-query",
               participantName: "User query",
               provider: "server",
-              model: "tavily",
+              model: searchProvider.id,
               intents: [
                 {
                   question: query,
@@ -121,6 +144,8 @@ export async function POST(request: Request) {
             executedQueries: searchQueries,
             failureReason: getTavilyFailureReason(error),
             cacheEvents,
+            provider: selectedSearchProviderId,
+            providerDiagnostics,
             warnings: [getTavilyFailureReason(error)],
           })
         : undefined;
@@ -204,6 +229,20 @@ class SearchRequestError extends Error {
   ) {
     super(message);
   }
+}
+
+function createProviderDiagnostic(
+  response: SearchProviderResponse,
+  registry: ReturnType<typeof createSearchProviderRegistry>,
+): SearchProviderDiagnostic {
+  return {
+    provider: response.provider,
+    displayName: registry.selectedProvider.displayName,
+    requestedProviderId: registry.requestedProviderId,
+    ...(registry.fallbackReason ? { fallbackReason: registry.fallbackReason } : {}),
+    ...(response.diagnostics ? { diagnostics: response.diagnostics } : {}),
+    ...(response.rawStats ? { rawStats: response.rawStats } : {}),
+  };
 }
 
 function getEvidenceWarnings(status: string): string[] {

@@ -298,6 +298,7 @@ describe("POST /api/meeting", () => {
     expect(JSON.stringify(body.meeting)).not.toContain("executedQueries");
     expect(JSON.stringify(body.meeting)).not.toContain("cacheEvents");
     expect(JSON.stringify(body.meeting)).not.toContain("dedupeStats");
+    expect(JSON.stringify(body.meeting)).not.toContain("providerDiagnostics");
     expect(JSON.stringify(body.meeting)).not.toContain("sourceQueries");
     expect(JSON.stringify(body.meeting)).not.toContain('"score"');
     expect(JSON.stringify(body.meeting)).not.toContain("citationLevel");
@@ -348,6 +349,7 @@ describe("POST /api/meeting", () => {
     expect(body.meeting.debugSearchProcess).toEqual(
       expect.objectContaining({
         evidenceMode: "normal",
+        provider: "tavily",
         executedQueries: expect.arrayContaining([
           expect.stringContaining("official release or report"),
         ]),

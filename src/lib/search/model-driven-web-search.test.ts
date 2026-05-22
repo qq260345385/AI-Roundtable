@@ -5,6 +5,7 @@ import {
   buildTavilySearchPlanFromIntents,
 } from "./model-driven-web-search";
 import type { SearchIntentRecord } from "./evidence-pack";
+import type { SearchProvider } from "./search-provider";
 import { TavilySearchError } from "./tavily-search";
 
 const participant: ModelParticipant = {
@@ -269,6 +270,88 @@ describe("buildModelDrivenWebEvidencePack", () => {
       }),
     );
     expect(pack.items[0].id).toBe("S1");
+  });
+
+  test("uses the SearchProvider interface for web searches", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Find official search provider evidence",
+            mustInclude: ["search provider evidence"],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "official",
+            rationale: "Exercise provider interface.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const calls: string[] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        calls.push(request.query);
+
+        return {
+          provider: "test-search",
+          diagnostics: { requestFreshness: request.freshness },
+          results: [
+            {
+              title: "Provider result",
+              url: "https://openai.com/provider-result",
+              content: `Provider interface result. ${"A".repeat(500)}`,
+              provider: "test-search",
+              sourceQuery: request.query,
+            },
+          ],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "latest search provider architecture",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(pack.items[0]).toEqual(
+      expect.objectContaining({
+        title: "Provider result",
+        query: calls[0],
+      }),
+    );
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        provider: "test-search",
+        providerDiagnostics: [
+          expect.objectContaining({
+            provider: "test-search",
+            diagnostics: { requestFreshness: "latest" },
+          }),
+        ],
+      }),
+    );
   });
 
   test("returns none status instead of throwing when web search has no results", async () => {

@@ -153,6 +153,8 @@ export type SearchQualityOverview = {
 export type SearchProcess = {
   evidenceMode: EvidenceMode;
   failureReason?: SearchFailureReason;
+  provider?: string;
+  providerDiagnostics?: SearchProviderDiagnostic[];
   cacheEvents?: SearchCacheEvent[];
   searchIntents: SearchIntentRecord[];
   executedQueries: string[];
@@ -209,6 +211,15 @@ export type SearchDedupeStats = {
   removedSameDomainCount: number;
   removals: SearchDedupeRemoval[];
   domainLimitRelaxedReason?: string;
+};
+
+export type SearchProviderDiagnostic = {
+  provider: string;
+  displayName?: string;
+  requestedProviderId?: string;
+  fallbackReason?: string;
+  diagnostics?: Record<string, unknown>;
+  rawStats?: Record<string, unknown>;
 };
 
 export type EvidenceSourceType =
@@ -315,6 +326,8 @@ export function createSearchFailureProcess(input: {
   dedupeStats?: SearchDedupeStats;
   executedQueries?: string[];
   failureReason?: SearchFailureReason;
+  provider?: string;
+  providerDiagnostics?: SearchProviderDiagnostic[];
   searchIntents?: SearchIntentRecord[];
   queryPlans?: SearchQueryPlan[];
   intentDecisions?: SearchIntentDecision[];
@@ -324,6 +337,12 @@ export function createSearchFailureProcess(input: {
     evidenceMode: "search_failed",
     ...(normalizeSearchFailureReason(input.failureReason)
       ? { failureReason: normalizeSearchFailureReason(input.failureReason) }
+      : {}),
+    ...(normalizeOptionalText(input.provider, 80)
+      ? { provider: normalizeOptionalText(input.provider, 80) }
+      : {}),
+    ...(input.providerDiagnostics && input.providerDiagnostics.length > 0
+      ? { providerDiagnostics: input.providerDiagnostics }
       : {}),
     ...(input.cacheEvents && input.cacheEvents.length > 0
       ? { cacheEvents: input.cacheEvents }
@@ -725,6 +744,10 @@ function createSearchProcess(input: {
   );
   const cacheEvents = normalizeSearchCacheEvents(input.input.cacheEvents);
   const dedupeStats = normalizeSearchDedupeStats(input.input.dedupeStats);
+  const provider = normalizeOptionalText(input.input.provider, 80);
+  const providerDiagnostics = normalizeSearchProviderDiagnostics(
+    input.input.providerDiagnostics,
+  );
   const selectedKeys = new Set(input.selectedItems.map(getEvidenceKey));
   const results = input.normalizedItems.map((item) => {
     const filteredReason = getFilteredReason(item, selectedKeys);
@@ -762,6 +785,8 @@ function createSearchProcess(input: {
           ),
         }
       : {}),
+    ...(provider ? { provider } : {}),
+    ...(providerDiagnostics.length > 0 ? { providerDiagnostics } : {}),
     searchIntents,
     executedQueries,
     queryPlans,
@@ -935,6 +960,62 @@ function normalizeSearchCacheEvents(value: unknown): SearchCacheEvent[] {
     })
     .filter((item): item is SearchCacheEvent => item !== null)
     .slice(0, 24);
+}
+
+function normalizeSearchProviderDiagnostics(
+  value: unknown,
+): SearchProviderDiagnostic[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const provider = normalizeText(item.provider, 80);
+
+      if (!provider) {
+        return null;
+      }
+
+      return {
+        provider,
+        ...(normalizeText(item.displayName, 120)
+          ? { displayName: normalizeText(item.displayName, 120) }
+          : {}),
+        ...(normalizeText(item.requestedProviderId, 80)
+          ? { requestedProviderId: normalizeText(item.requestedProviderId, 80) }
+          : {}),
+        ...(normalizeText(item.fallbackReason, 120)
+          ? { fallbackReason: normalizeText(item.fallbackReason, 120) }
+          : {}),
+        ...(isObject(item.diagnostics)
+          ? { diagnostics: sanitizeDiagnosticObject(item.diagnostics) }
+          : {}),
+        ...(isObject(item.rawStats)
+          ? { rawStats: sanitizeDiagnosticObject(item.rawStats) }
+          : {}),
+      };
+    })
+    .filter((item): item is SearchProviderDiagnostic => item !== null)
+    .slice(0, 12);
+}
+
+function sanitizeDiagnosticObject(value: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entryValue]) =>
+        typeof entryValue === "string" ||
+        typeof entryValue === "number" ||
+        typeof entryValue === "boolean",
+      )
+      .map(([key, entryValue]) => [
+        sanitizeEvidenceText(key).slice(0, 80),
+        typeof entryValue === "string"
+          ? sanitizeEvidenceText(entryValue).slice(0, 240)
+          : entryValue,
+      ]),
+  );
 }
 
 function normalizeSearchDedupeStats(value: unknown): SearchDedupeStats | undefined {

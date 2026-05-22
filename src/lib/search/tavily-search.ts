@@ -1,4 +1,13 @@
-import type { SearchEvidence, SearchFreshness } from "./evidence-pack";
+import type {
+  SearchCacheEvent,
+  SearchEvidence,
+  SearchFreshness,
+} from "./evidence-pack";
+import type {
+  SearchProvider,
+  SearchProviderRequest,
+  SearchProviderResponse,
+} from "./search-provider";
 
 type FetchLike = typeof fetch;
 
@@ -26,14 +35,7 @@ type TavilySearchResponse = {
 };
 
 export type TavilyEvidenceDraft = Omit<SearchEvidence, "id" | "quality">;
-export type TavilySearchCacheEvent = {
-  provider: "tavily";
-  query: string;
-  cacheKey: string;
-  cacheStatus: "hit" | "miss";
-  ttlMs: number;
-  expiresAt?: string;
-};
+export type TavilySearchCacheEvent = SearchCacheEvent;
 export type SearchDedupeRemoval = {
   title: string;
   url?: string;
@@ -123,6 +125,43 @@ export class TavilySearchError extends Error {
 
   reason: TavilyFailureReason;
   status: number;
+}
+
+export class TavilySearchProvider implements SearchProvider {
+  id = "tavily";
+  displayName = "Tavily";
+
+  async search(
+    request: SearchProviderRequest,
+  ): Promise<SearchProviderResponse> {
+    const cacheEvents: SearchCacheEvent[] = [];
+    const results = await searchTavilyEvidence(request.query, {
+      freshness: request.freshness,
+      maxResults: request.maxResults,
+      onCacheEvent: (event) => cacheEvents.push(event),
+      searchDepth: request.searchDepth,
+    });
+
+    return {
+      provider: this.id,
+      results: results.map((result) => ({
+        title: result.title,
+        ...(result.url ? { url: result.url } : {}),
+        content: result.snippet,
+        snippet: result.snippet,
+        ...(result.publishedAt ? { publishedDate: result.publishedAt } : {}),
+        sourceQuery: request.query,
+        provider: this.id,
+      })),
+      ...(cacheEvents.length > 0 ? { cacheEvents } : {}),
+      diagnostics: {
+        resultCount: results.length,
+        searchDepth: request.searchDepth,
+        maxResults: request.maxResults,
+        freshness: request.freshness,
+      },
+    };
+  }
 }
 
 export function getTavilyFailureReason(error: unknown): TavilyFailureReason {

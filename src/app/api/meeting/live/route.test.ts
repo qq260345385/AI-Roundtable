@@ -153,6 +153,8 @@ describe("POST /api/meeting/live", () => {
       expect.objectContaining({
         cacheEvents: expect.any(Array),
         dedupeStats: expect.any(Object),
+        provider: "tavily",
+        providerDiagnostics: expect.any(Array),
         queryPlans: expect.any(Array),
       }),
     );

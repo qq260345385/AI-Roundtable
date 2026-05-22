@@ -122,6 +122,7 @@ describe("POST /api/evidence/search", () => {
     expect(response.status).toBe(200);
     expect(bodyText).not.toContain("cacheStatus");
     expect(bodyText).not.toContain("dedupeStats");
+    expect(bodyText).not.toContain("providerDiagnostics");
     expect(bodyText).not.toContain("removedDuplicateCount");
     expect(bodyText).not.toContain("sourceQueries");
     expect(bodyText).not.toContain("same_domain_limit");
@@ -160,6 +161,10 @@ describe("POST /api/evidence/search", () => {
       expect.objectContaining({
         cacheEvents: expect.arrayContaining([
           expect.objectContaining({ cacheStatus: "miss" }),
+        ]),
+        provider: "tavily",
+        providerDiagnostics: expect.arrayContaining([
+          expect.objectContaining({ provider: "tavily" }),
         ]),
         dedupeStats: expect.objectContaining({
           originalResultCount: expect.any(Number),
