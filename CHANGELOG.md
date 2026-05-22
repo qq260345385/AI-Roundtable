@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.4 internal alpha
+
+- Added an in-memory Tavily query cache with TTLs for real-time, standard, and stable queries.
+- Added URL canonicalization, tracking-parameter removal, duplicate URL merging, and same-domain limits before evidence pack creation.
+- Kept cache and dedupe diagnostics out of default API/UI responses while exposing them in `debugSearchProcess` and live-search smoke output.
+
 ## v0.4.3 internal alpha
 
 - Added internal citation levels for web evidence so high/medium sources can support factual claims while low sources remain context-only.

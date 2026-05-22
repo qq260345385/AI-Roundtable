@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
+import { clearTavilySearchCache } from "../../../lib/search/tavily-search";
 
 const originalEnv = { ...process.env };
 const originalFetch = global.fetch;
 
 describe("POST /api/meeting", () => {
   afterEach(() => {
+    clearTavilySearchCache();
     process.env = { ...originalEnv };
     global.fetch = originalFetch;
     vi.restoreAllMocks();
@@ -294,6 +296,9 @@ describe("POST /api/meeting", () => {
     expect(JSON.stringify(body.meeting)).not.toContain("queryPlans");
     expect(JSON.stringify(body.meeting)).not.toContain("searchIntents");
     expect(JSON.stringify(body.meeting)).not.toContain("executedQueries");
+    expect(JSON.stringify(body.meeting)).not.toContain("cacheEvents");
+    expect(JSON.stringify(body.meeting)).not.toContain("dedupeStats");
+    expect(JSON.stringify(body.meeting)).not.toContain("sourceQueries");
     expect(JSON.stringify(body.meeting)).not.toContain('"score"');
     expect(JSON.stringify(body.meeting)).not.toContain("citationLevel");
     expect(JSON.stringify(body.meeting)).not.toContain("citationGuidance");
@@ -367,6 +372,18 @@ describe("POST /api/meeting", () => {
           expect.any(Object),
           expect.any(Object),
         ],
+        cacheEvents: expect.arrayContaining([
+          expect.objectContaining({
+            provider: "tavily",
+            cacheStatus: "miss",
+          }),
+        ]),
+        dedupeStats: expect.objectContaining({
+          originalResultCount: expect.any(Number),
+          dedupedResultCount: expect.any(Number),
+          removedDuplicateCount: expect.any(Number),
+          removedSameDomainCount: expect.any(Number),
+        }),
       }),
     );
     expect(body.meeting.debugSearchProcess.results[0]).toEqual(

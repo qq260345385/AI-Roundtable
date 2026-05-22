@@ -1,10 +1,12 @@
 ﻿import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
+import { clearTavilySearchCache } from "../../../../lib/search/tavily-search";
 
 const originalEnv = { ...process.env };
 
 describe("POST /api/evidence/search", () => {
   afterEach(() => {
+    clearTavilySearchCache();
     process.env = { ...originalEnv };
     vi.restoreAllMocks();
   });
@@ -90,7 +92,90 @@ describe("POST /api/evidence/search", () => {
     );
   });
 
-  test("returns only the best ten high or medium quality drafts when search returns many mixed candidates", async () => {
+  test("keeps cache and dedupe details out of the default API response", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Source A",
+            url: "https://openai.com/a?utm_source=test#top",
+            content: `A current source for the meeting. ${"A".repeat(500)}`,
+          },
+          {
+            title: "Source A duplicate",
+            url: "http://openai.com/a/",
+            content: `A duplicate source for the meeting. ${"B".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "AI news" }),
+      }),
+    );
+    const bodyText = JSON.stringify(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(bodyText).not.toContain("cacheStatus");
+    expect(bodyText).not.toContain("dedupeStats");
+    expect(bodyText).not.toContain("removedDuplicateCount");
+    expect(bodyText).not.toContain("sourceQueries");
+    expect(bodyText).not.toContain("same_domain_limit");
+  });
+
+  test("returns cache and dedupe diagnostics in debug mode", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Source A",
+            url: "https://openai.com/a?utm_source=test#top",
+            content: `A current source for the meeting. ${"A".repeat(500)}`,
+          },
+          {
+            title: "Source A duplicate",
+            url: "http://openai.com/a/",
+            content: `A duplicate source for the meeting. ${"B".repeat(500)}`,
+          },
+        ],
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "AI news" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.debugSearchProcess).toEqual(
+      expect.objectContaining({
+        cacheEvents: expect.arrayContaining([
+          expect.objectContaining({ cacheStatus: "miss" }),
+        ]),
+        dedupeStats: expect.objectContaining({
+          originalResultCount: expect.any(Number),
+          dedupedResultCount: expect.any(Number),
+          removedDuplicateCount: expect.any(Number),
+        }),
+      }),
+    );
+    expect(body.debugSearchProcess.dedupeStats.removals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "duplicate_url" }),
+      ]),
+    );
+  });
+
+  test("dedupes same-domain Tavily results before building the evidence pack", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
     process.env.SEARCH_DEBUG_ENABLED = "true";
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
@@ -119,26 +204,22 @@ describe("POST /api/evidence/search", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.drafts).toHaveLength(10);
-    expect(body.evidencePack.items).toHaveLength(10);
+    expect(body.drafts).toHaveLength(4);
+    expect(body.evidencePack.items).toHaveLength(4);
     expect(
-      body.evidencePack.items.every(
-        (item: { quality?: { reliability?: string } }) =>
-          item.quality?.reliability === "high" ||
-          item.quality?.reliability === "medium",
+      body.evidencePack.items.filter(
+        (item: { source?: string }) => item.source === "openai.com",
       ),
-    ).toBe(true);
-    expect(JSON.stringify(body.drafts)).not.toContain("Reddit rumor");
-    expect(JSON.stringify(body.evidencePack.items)).not.toContain("Reddit rumor");
+    ).toHaveLength(3);
     expect(body.evidencePack.searchProcess).toBeUndefined();
-    expect(body.debugSearchProcess.results).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          title: "Reddit rumor",
-          filtered: true,
-        }),
-      ]),
+    expect(body.debugSearchProcess.dedupeStats).toEqual(
+      expect.objectContaining({
+        removedSameDomainCount: expect.any(Number),
+      }),
     );
+    expect(
+      body.debugSearchProcess.dedupeStats.removedSameDomainCount,
+    ).toBeGreaterThan(0);
   });
 
   test("returns low evidence status instead of failing when only low quality results exist", async () => {

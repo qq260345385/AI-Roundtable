@@ -126,12 +126,18 @@ export function sanitizeEvidencePackForClient(
 
   return {
     ...safe,
-    items: evidencePack.items.map((item) => ({
-      ...item,
-      ...(item.quality
-        ? { quality: sanitizeEvidenceQualityForClient(item.quality) }
-        : {}),
-    })),
+    items: evidencePack.items.map((item) => {
+      const safeItem = { ...item };
+
+      delete safeItem.sourceQueries;
+
+      return {
+        ...safeItem,
+        ...(item.quality
+          ? { quality: sanitizeEvidenceQualityForClient(item.quality) }
+          : {}),
+      };
+    }),
   };
 }
 

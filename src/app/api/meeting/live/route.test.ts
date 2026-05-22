@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
+import { clearTavilySearchCache } from "../../../../lib/search/tavily-search";
 
 const originalEnv = { ...process.env };
 const originalFetch = global.fetch;
 
 describe("POST /api/meeting/live", () => {
   afterEach(() => {
+    clearTavilySearchCache();
     process.env = { ...originalEnv };
     global.fetch = originalFetch;
     vi.restoreAllMocks();
@@ -105,6 +107,9 @@ describe("POST /api/meeting/live", () => {
     expect(completed.meeting.evidencePack.searchQueries).toBeUndefined();
     expect(completed.meeting.debugSearchProcess).toBeUndefined();
     expect(JSON.stringify(events)).not.toContain("queryPlans");
+    expect(JSON.stringify(events)).not.toContain("cacheEvents");
+    expect(JSON.stringify(events)).not.toContain("dedupeStats");
+    expect(JSON.stringify(events)).not.toContain("sourceQueries");
   });
 
   test("streams debugSearchProcess only in non-production server debug mode", async () => {
@@ -146,6 +151,8 @@ describe("POST /api/meeting/live", () => {
     );
     expect(completed.meeting.debugSearchProcess).toEqual(
       expect.objectContaining({
+        cacheEvents: expect.any(Array),
+        dedupeStats: expect.any(Object),
         queryPlans: expect.any(Array),
       }),
     );

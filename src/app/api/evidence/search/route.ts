@@ -11,9 +11,11 @@ import {
 import {
   TavilySearchError,
   buildTavilySearchQueries,
+  dedupeSearchResults,
   getSafeTavilyErrorMessage,
   getTavilyFailureReason,
   searchTavilyEvidence,
+  type TavilySearchCacheEvent,
 } from "../../../../lib/search/tavily-search";
 
 export const runtime = "nodejs";
@@ -23,6 +25,7 @@ type SearchRequestBody = {
 };
 
 export async function POST(request: Request) {
+  const cacheEvents: TavilySearchCacheEvent[] = [];
   let searchQueries: string[] = [];
 
   try {
@@ -34,18 +37,20 @@ export async function POST(request: Request) {
     }
 
     searchQueries = buildTavilySearchQueries(query);
-    const drafts = dedupeEvidenceDrafts(
-      (
-        await Promise.all(
-          searchQueries.map((searchQuery) =>
-            searchTavilyEvidence(searchQuery, { maxResults: 5 }).then(
-              (results) =>
-                results.map((result) => ({ ...result, query: searchQuery })),
-            ),
+    const searchResults = (
+      await Promise.all(
+        searchQueries.map((searchQuery) =>
+          searchTavilyEvidence(searchQuery, {
+            maxResults: 5,
+            onCacheEvent: (event) => cacheEvents.push(event),
+          }).then((results) =>
+            results.map((result) => ({ ...result, query: searchQuery })),
           ),
-        )
-      ).flat(),
-    );
+        ),
+      )
+    ).flat();
+    const deduped = dedupeSearchResults(searchResults);
+    const drafts = deduped.items;
     const preflightPack = normalizeEvidencePack(
       {
         enabled: true,
@@ -65,6 +70,8 @@ export async function POST(request: Request) {
         evidenceWarnings,
         items: drafts,
         searchProcess: {
+          cacheEvents,
+          dedupeStats: deduped.stats,
           executedQueries: searchQueries,
           searchIntents: [
             {
@@ -113,6 +120,7 @@ export async function POST(request: Request) {
         ? createSearchFailureProcess({
             executedQueries: searchQueries,
             failureReason: getTavilyFailureReason(error),
+            cacheEvents,
             warnings: [getTavilyFailureReason(error)],
           })
         : undefined;
@@ -196,23 +204,6 @@ class SearchRequestError extends Error {
   ) {
     super(message);
   }
-}
-
-function dedupeEvidenceDrafts<T extends { title: string; url?: string }>(
-  drafts: T[],
-): T[] {
-  const seen = new Set<string>();
-
-  return drafts.filter((draft) => {
-    const key = (draft.url || draft.title).toLowerCase();
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
 }
 
 function getEvidenceWarnings(status: string): string[] {

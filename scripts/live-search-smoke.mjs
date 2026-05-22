@@ -86,6 +86,15 @@ try {
       evidencePackItemCount: evidencePack.items.length,
       filteredCount: searchProcess.qualityOverview.filteredCount,
       filteredReasons: searchProcess.filteredReasons,
+      cache: summarizeCacheEvents(searchProcess.cacheEvents ?? []),
+      dedupe: {
+        originalResultCount: searchProcess.dedupeStats?.originalResultCount ?? 0,
+        dedupedResultCount: searchProcess.dedupeStats?.dedupedResultCount ?? 0,
+        removedDuplicateCount:
+          searchProcess.dedupeStats?.removedDuplicateCount ?? 0,
+        removedSameDomainCount:
+          searchProcess.dedupeStats?.removedSameDomainCount ?? 0,
+      },
     });
   }
 
@@ -247,6 +256,13 @@ function summarizeSearchIntents(records) {
       rationale: intent.rationale,
     })),
   );
+}
+
+function summarizeCacheEvents(events) {
+  return {
+    hitCount: events.filter((event) => event.cacheStatus === "hit").length,
+    missCount: events.filter((event) => event.cacheStatus === "miss").length,
+  };
 }
 
 function delay(ms) {

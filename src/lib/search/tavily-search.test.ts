@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   TavilySearchError,
+  clearTavilySearchCache,
+  dedupeSearchResults,
+  normalizeUrl,
   normalizeTavilySearchResponse,
   searchTavilyEvidence,
 } from "./tavily-search";
 
 describe("Tavily evidence search", () => {
   afterEach(() => {
+    clearTavilySearchCache();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   test("normalizes Tavily results into evidence drafts", () => {
@@ -31,6 +36,108 @@ describe("Tavily evidence search", () => {
         snippet: "The release shipped today with web evidence support.",
       },
     ]);
+  });
+
+  test("normalizes URLs for canonical dedupe", () => {
+    expect(
+      normalizeUrl(
+        "HTTP://Example.COM/path/?utm_source=news&fbclid=abc&keep=1#section",
+      ),
+    ).toBe("https://example.com/path?keep=1");
+    expect(normalizeUrl("https://example.com/path/")).toBe(
+      "https://example.com/path",
+    );
+  });
+
+  test("dedupes tracking and hash variants while merging source queries", () => {
+    const result = dedupeSearchResults([
+      {
+        title: "Short duplicate",
+        url: "https://example.com/report?utm_source=x#top",
+        snippet: "short",
+        query: "query one",
+      },
+      {
+        title: "Long canonical",
+        url: "http://EXAMPLE.com/report/",
+        snippet: "longer canonical content",
+        query: "query two",
+      },
+    ]);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        title: "Long canonical",
+        url: "https://example.com/report",
+        query: "query two",
+        sourceQueries: ["query one", "query two"],
+      }),
+    ]);
+    expect(result.stats).toEqual(
+      expect.objectContaining({
+        originalResultCount: 2,
+        dedupedResultCount: 1,
+        removedDuplicateCount: 1,
+      }),
+    );
+    expect(result.stats.removals).toEqual([
+      expect.objectContaining({
+        reason: "duplicate_url",
+      }),
+    ]);
+  });
+
+  test("limits repeated domains while allowing more authoritative sources", () => {
+    const result = dedupeSearchResults([
+      {
+        title: "Blog A",
+        url: "https://example.com/a",
+        snippet: "A".repeat(500),
+      },
+      {
+        title: "Blog B",
+        url: "https://example.com/b",
+        snippet: "B".repeat(600),
+      },
+      {
+        title: "Blog C",
+        url: "https://example.com/c",
+        snippet: "C".repeat(700),
+      },
+      {
+        title: "Official A",
+        url: "https://openai.com/a",
+        snippet: "A".repeat(500),
+      },
+      {
+        title: "Official B",
+        url: "https://openai.com/b",
+        snippet: "B".repeat(600),
+      },
+      {
+        title: "Official C",
+        url: "https://openai.com/c",
+        snippet: "C".repeat(700),
+      },
+    ]);
+
+    expect(result.items.map((item) => item.title)).toEqual([
+      "Official C",
+      "Official B",
+      "Official A",
+      "Blog C",
+      "Blog B",
+    ]);
+    expect(result.stats.removedSameDomainCount).toBe(1);
+    expect(result.stats.removals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Blog A",
+          reason: "same_domain_limit",
+          domain: "example.com",
+        }),
+      ]),
+    );
   });
 
   test("keeps at most twenty non-empty sanitized candidate results", () => {
@@ -97,6 +204,103 @@ describe("Tavily evidence search", () => {
         source: "news.example.com",
       }),
     );
+  });
+
+  test("uses Tavily cache for identical query options", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Cached source",
+            url: "https://example.com/cache",
+            content: "Cached source content.",
+          },
+        ],
+      }),
+    );
+    const cacheEvents: unknown[] = [];
+
+    await searchTavilyEvidence("cached topic", {
+      apiKey: "tvly-test-key",
+      fetchImpl: fetchMock,
+      maxResults: 3,
+      onCacheEvent: (event) => cacheEvents.push(event),
+      searchDepth: "basic",
+    });
+    await searchTavilyEvidence("cached topic", {
+      apiKey: "tvly-test-key",
+      fetchImpl: fetchMock,
+      maxResults: 3,
+      onCacheEvent: (event) => cacheEvents.push(event),
+      searchDepth: "basic",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(cacheEvents).toEqual([
+      expect.objectContaining({ cacheStatus: "miss" }),
+      expect.objectContaining({ cacheStatus: "hit" }),
+    ]);
+  });
+
+  test("refreshes Tavily cache after TTL expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-22T00:00:00Z"));
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Fresh source",
+            url: "https://example.com/fresh",
+            content: "Fresh source content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("latest model release", {
+      apiKey: "tvly-test-key",
+      fetchImpl: fetchMock,
+      freshness: "latest",
+    });
+    vi.setSystemTime(new Date("2026-05-22T00:31:00Z"));
+    await searchTavilyEvidence("latest model release", {
+      apiKey: "tvly-test-key",
+      fetchImpl: fetchMock,
+      freshness: "latest",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not cache failed Tavily responses", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: "limited" }, { status: 429 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          results: [
+            {
+              title: "Recovered source",
+              url: "https://example.com/recovered",
+              content: "Recovered source content.",
+            },
+          ],
+        }),
+      );
+
+    await expect(
+      searchTavilyEvidence("unstable topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toMatchObject({ reason: "rate_limited" });
+    await expect(
+      searchTavilyEvidence("unstable topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: fetchMock,
+      }),
+    ).resolves.toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test("throws a sanitized error when Tavily returns a non-200 response", async () => {

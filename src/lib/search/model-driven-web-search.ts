@@ -1,6 +1,5 @@
 import type {
   EvidencePack,
-  SearchEvidence,
   SearchFreshness,
   SearchIntent,
   SearchIntentDecision,
@@ -14,9 +13,11 @@ import {
 } from "./evidence-pack";
 import {
   buildTavilySearchQueries,
+  dedupeSearchResults,
   getTavilyFailureReason,
   searchTavilyEvidence,
   type TavilyEvidenceDraft,
+  type TavilySearchCacheEvent,
 } from "./tavily-search";
 import type {
   ModelParticipant,
@@ -47,7 +48,11 @@ const MARKETING_TERMS = new Set([
 
 type Searcher = (
   query: string,
-  options?: { maxResults?: number },
+  options?: {
+    freshness?: SearchFreshness;
+    maxResults?: number;
+    onCacheEvent?: (event: TavilySearchCacheEvent) => void;
+  },
 ) => Promise<TavilyEvidenceDraft[]>;
 
 type BuildModelDrivenWebEvidencePackOptions = {
@@ -72,20 +77,29 @@ export async function buildModelDrivenWebEvidencePack({
   );
   const searchQueries = searchPlan.queries;
   const baseItems = baseEvidencePack?.enabled ? baseEvidencePack.items : [];
+  const freshnessByQuery = new Map(
+    searchPlan.queryPlans.map((plan) => [plan.query, plan.freshness]),
+  );
+  const cacheEvents: TavilySearchCacheEvent[] = [];
+  let dedupeStats: ReturnType<typeof dedupeSearchResults>["stats"] | undefined;
   let webDrafts: TavilyEvidenceDraft[];
 
   try {
-    webDrafts = dedupeEvidenceDrafts(
-      (
-        await Promise.all(
-          searchQueries.map((query) =>
-            searcher(query, { maxResults: WEB_SEARCH_RESULTS_PER_QUERY }).then(
-              (drafts) => drafts.map((draft) => ({ ...draft, query })),
-            ),
-          ),
-        )
-      ).flat(),
-    );
+    const rawWebDrafts = (
+      await Promise.all(
+        searchQueries.map((query) =>
+          searcher(query, {
+            freshness: freshnessByQuery.get(query),
+            maxResults: WEB_SEARCH_RESULTS_PER_QUERY,
+            onCacheEvent: (event) => cacheEvents.push(event),
+          }).then((drafts) => drafts.map((draft) => ({ ...draft, query }))),
+        ),
+      )
+    ).flat();
+    const deduped = dedupeSearchResults(rawWebDrafts);
+
+    webDrafts = deduped.items;
+    dedupeStats = deduped.stats;
   } catch (error) {
     const failureReason = getTavilyFailureReason(error);
 
@@ -99,6 +113,8 @@ export async function buildModelDrivenWebEvidencePack({
         ],
         items: baseItems,
         searchProcess: createSearchFailureProcess({
+          cacheEvents,
+          dedupeStats,
           executedQueries: searchQueries,
           failureReason,
           searchIntents: searchPlan.searchIntents,
@@ -138,6 +154,8 @@ export async function buildModelDrivenWebEvidencePack({
       evidenceWarnings,
       items: [...baseItems, ...webDrafts],
       searchProcess: {
+        cacheEvents,
+        dedupeStats,
         executedQueries: searchQueries,
         searchIntents: searchPlan.searchIntents,
         queryPlans: searchPlan.queryPlans,
@@ -544,23 +562,6 @@ function normalizeSourcePreference(
     value === "mixed"
     ? value
     : "mixed";
-}
-
-function dedupeEvidenceDrafts<T extends Pick<SearchEvidence, "title" | "url">>(
-  drafts: T[],
-): T[] {
-  const seen = new Set<string>();
-
-  return drafts.filter((draft) => {
-    const key = (draft.url || draft.title).toLowerCase();
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
 }
 
 function getEvidenceWarnings(status: string): string[] {

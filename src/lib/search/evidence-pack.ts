@@ -2,6 +2,7 @@ export type SearchEvidence = {
   id: string;
   title: string;
   query?: string;
+  sourceQueries?: string[];
   url?: string;
   source?: string;
   publishedAt?: string;
@@ -128,6 +129,7 @@ export type SearchProcessResult = {
   query?: string;
   url?: string;
   source?: string;
+  sourceQueries?: string[];
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
   score: number;
@@ -151,10 +153,12 @@ export type SearchQualityOverview = {
 export type SearchProcess = {
   evidenceMode: EvidenceMode;
   failureReason?: SearchFailureReason;
+  cacheEvents?: SearchCacheEvent[];
   searchIntents: SearchIntentRecord[];
   executedQueries: string[];
   queryPlans: SearchQueryPlan[];
   intentDecisions: SearchIntentDecision[];
+  dedupeStats?: SearchDedupeStats;
   qualityOverview: SearchQualityOverview;
   filteredReasons: { reason: string; count: number }[];
   results: SearchProcessResult[];
@@ -177,6 +181,34 @@ export type SearchSummary = {
   weakCount: number;
   hasRealtimeWarning: boolean;
   userMessage: string;
+};
+
+export type SearchCacheEvent = {
+  provider: "tavily";
+  query: string;
+  cacheKey: string;
+  cacheStatus: "hit" | "miss";
+  ttlMs: number;
+  expiresAt?: string;
+};
+
+export type SearchDedupeRemoval = {
+  title: string;
+  url?: string;
+  source?: string;
+  reason: "duplicate_url" | "same_domain_limit";
+  keptUrl?: string;
+  domain?: string;
+  sourceQueries?: string[];
+};
+
+export type SearchDedupeStats = {
+  originalResultCount: number;
+  dedupedResultCount: number;
+  removedDuplicateCount: number;
+  removedSameDomainCount: number;
+  removals: SearchDedupeRemoval[];
+  domainLimitRelaxedReason?: string;
 };
 
 export type EvidenceSourceType =
@@ -279,6 +311,8 @@ export function normalizeEvidencePack(
 }
 
 export function createSearchFailureProcess(input: {
+  cacheEvents?: SearchCacheEvent[];
+  dedupeStats?: SearchDedupeStats;
   executedQueries?: string[];
   failureReason?: SearchFailureReason;
   searchIntents?: SearchIntentRecord[];
@@ -291,10 +325,14 @@ export function createSearchFailureProcess(input: {
     ...(normalizeSearchFailureReason(input.failureReason)
       ? { failureReason: normalizeSearchFailureReason(input.failureReason) }
       : {}),
+    ...(input.cacheEvents && input.cacheEvents.length > 0
+      ? { cacheEvents: input.cacheEvents }
+      : {}),
     searchIntents: input.searchIntents ?? [],
     executedQueries: normalizeStringArray(input.executedQueries),
     queryPlans: normalizeSearchQueryPlans(input.queryPlans),
     intentDecisions: normalizeSearchIntentDecisions(input.intentDecisions),
+    ...(input.dedupeStats ? { dedupeStats: input.dedupeStats } : {}),
     qualityOverview: createEmptySearchQualityOverview(),
     filteredReasons: [],
     results: [],
@@ -600,6 +638,7 @@ function normalizeEvidenceItem(
     MAX_PUBLISHED_AT_LENGTH,
   );
   const query = normalizeOptionalText(input.query, 240);
+  const sourceQueries = normalizeStringArray(input.sourceQueries);
   const url = normalizeOptionalUrl(input.url);
   const quality = createEvidenceQuality({
     rawSnippet,
@@ -617,6 +656,7 @@ function normalizeEvidenceItem(
     snippet,
     quality,
     ...(query ? { query } : {}),
+    ...(sourceQueries.length > 0 ? { sourceQueries } : {}),
     ...(url ? { url } : {}),
     ...(source ? { source } : {}),
     ...(publishedAt ? { publishedAt } : {}),
@@ -683,6 +723,8 @@ function createSearchProcess(input: {
   const intentDecisions = normalizeSearchIntentDecisions(
     input.input.intentDecisions,
   );
+  const cacheEvents = normalizeSearchCacheEvents(input.input.cacheEvents);
+  const dedupeStats = normalizeSearchDedupeStats(input.input.dedupeStats);
   const selectedKeys = new Set(input.selectedItems.map(getEvidenceKey));
   const results = input.normalizedItems.map((item) => {
     const filteredReason = getFilteredReason(item, selectedKeys);
@@ -693,6 +735,7 @@ function createSearchProcess(input: {
       ...(item.query ? { query: item.query } : {}),
       ...(item.url ? { url: item.url } : {}),
       ...(item.source ? { source: item.source } : {}),
+      ...(item.sourceQueries ? { sourceQueries: item.sourceQueries } : {}),
       sourceType: quality?.sourceType ?? "unknown",
       reliability: quality?.reliability ?? "very_low",
       score: quality?.score ?? 0,
@@ -723,6 +766,8 @@ function createSearchProcess(input: {
     executedQueries,
     queryPlans,
     intentDecisions,
+    ...(cacheEvents.length > 0 ? { cacheEvents } : {}),
+    ...(dedupeStats ? { dedupeStats } : {}),
     qualityOverview,
     filteredReasons: summarizeFilteredReasons(results),
     results,
@@ -856,6 +901,117 @@ function normalizeSearchIntentDecisions(value: unknown): SearchIntentDecision[] 
     })
     .filter((item): item is SearchIntentDecision => item !== null)
     .slice(0, 24);
+}
+
+function normalizeSearchCacheEvents(value: unknown): SearchCacheEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const provider = item.provider === "tavily" ? "tavily" : undefined;
+      const cacheStatus =
+        item.cacheStatus === "hit" || item.cacheStatus === "miss"
+          ? item.cacheStatus
+          : undefined;
+      const ttlMs = typeof item.ttlMs === "number" ? item.ttlMs : 0;
+
+      if (!provider || !cacheStatus || ttlMs <= 0) {
+        return null;
+      }
+
+      return {
+        provider,
+        query: normalizeText(item.query, 240),
+        cacheKey: normalizeText(item.cacheKey, 500),
+        cacheStatus,
+        ttlMs,
+        ...(normalizeText(item.expiresAt, 80)
+          ? { expiresAt: normalizeText(item.expiresAt, 80) }
+          : {}),
+      };
+    })
+    .filter((item): item is SearchCacheEvent => item !== null)
+    .slice(0, 24);
+}
+
+function normalizeSearchDedupeStats(value: unknown): SearchDedupeStats | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const originalResultCount = normalizeNonNegativeInteger(value.originalResultCount);
+  const dedupedResultCount = normalizeNonNegativeInteger(value.dedupedResultCount);
+  const removedDuplicateCount = normalizeNonNegativeInteger(
+    value.removedDuplicateCount,
+  );
+  const removedSameDomainCount = normalizeNonNegativeInteger(
+    value.removedSameDomainCount,
+  );
+
+  return {
+    originalResultCount,
+    dedupedResultCount,
+    removedDuplicateCount,
+    removedSameDomainCount,
+    removals: normalizeSearchDedupeRemovals(value.removals),
+    ...(normalizeText(value.domainLimitRelaxedReason, 160)
+      ? {
+          domainLimitRelaxedReason: normalizeText(
+            value.domainLimitRelaxedReason,
+            160,
+          ),
+        }
+      : {}),
+  };
+}
+
+function normalizeSearchDedupeRemovals(value: unknown): SearchDedupeRemoval[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const reason =
+        item.reason === "duplicate_url" || item.reason === "same_domain_limit"
+          ? item.reason
+          : undefined;
+      const title = normalizeText(item.title, 120);
+
+      if (!reason || !title) {
+        return null;
+      }
+
+      return {
+        title,
+        reason,
+        ...(normalizeOptionalUrl(item.url) ? { url: normalizeOptionalUrl(item.url) } : {}),
+        ...(normalizeText(item.source, 80)
+          ? { source: normalizeText(item.source, 80) }
+          : {}),
+        ...(normalizeOptionalUrl(item.keptUrl)
+          ? { keptUrl: normalizeOptionalUrl(item.keptUrl) }
+          : {}),
+        ...(normalizeText(item.domain, 120)
+          ? { domain: normalizeText(item.domain, 120) }
+          : {}),
+        ...(normalizeStringArray(item.sourceQueries).length > 0
+          ? { sourceQueries: normalizeStringArray(item.sourceQueries) }
+          : {}),
+      };
+    })
+    .filter((item): item is SearchDedupeRemoval => item !== null)
+    .slice(0, 40);
+}
+
+function normalizeNonNegativeInteger(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : 0;
 }
 
 function normalizeSearchFreshness(value: unknown): SearchFreshness {
