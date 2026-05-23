@@ -37,37 +37,56 @@ if (!apiKey) {
   process.exit(0);
 }
 
-if (!existsSync(".next/BUILD_ID")) {
-  console.error(
-    "[error] .next/BUILD_ID was not found. Run `npm run build` before `npm run test:live-search`.",
+const port = Number(process.env.LIVE_SEARCH_PORT ?? 3217);
+const externalBaseUrl = process.env.LIVE_SEARCH_BASE_URL?.trim().replace(/\/+$/, "");
+const usingExternalServer = Boolean(externalBaseUrl);
+const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
+
+if (!usingExternalServer && !existsSync(".next/BUILD_ID") && !existsSync(".next")) {
+  console.warn(
+    "[warn] .next directory was not found. `npm run dev` can compile on the fly, but a prior `npm run build` is recommended.",
   );
-  process.exit(1);
 }
 
-const port = Number(process.env.LIVE_SEARCH_PORT ?? 3217);
-const baseUrl = `http://127.0.0.1:${port}`;
 const searchProvider = process.env.SEARCH_PROVIDER?.trim() || "tavily";
 const searchModes = getSearchModes();
-const startCommand = getStartCommand(port);
-const server = spawn(startCommand.command, startCommand.args, {
-  env: {
-    ...process.env,
-    AI_ROUNDTABLE_MODE: "mock",
-    NODE_OPTIONS: withEnvProxy(process.env.NODE_OPTIONS),
-    SEARCH_DEBUG_ENABLED: "true",
-    SEARCH_PROVIDER: searchProvider,
-    TAVILY_API_KEY: apiKey,
-  },
-  shell: false,
-  stdio: ["ignore", "pipe", "pipe"],
-});
-const logs = [];
 
-server.stdout.on("data", (chunk) => pushLog(logs, chunk));
-server.stderr.on("data", (chunk) => pushLog(logs, chunk));
+let server;
+let logs = [];
+
+function spawnDevServer() {
+  const startCommand = getStartCommand(port);
+  const child = spawn(startCommand.command, startCommand.args, {
+    env: {
+      ...process.env,
+      AI_ROUNDTABLE_MODE: "mock",
+      NODE_ENV: "development",
+      NODE_OPTIONS: withEnvProxy(process.env.NODE_OPTIONS),
+      SEARCH_DEBUG_ENABLED: "true",
+      SEARCH_PROVIDER: searchProvider,
+      TAVILY_API_KEY: apiKey,
+    },
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  logs = [];
+  child.stdout.on("data", (chunk) => pushLog(logs, chunk));
+  child.stderr.on("data", (chunk) => pushLog(logs, chunk));
+
+  return child;
+}
+
+if (!usingExternalServer) {
+  server = spawnDevServer();
+}
 
 try {
-  await waitForServer(baseUrl);
+  if (!usingExternalServer) {
+    await waitForServer(baseUrl);
+  } else {
+    console.log(`[live-search] using external server at ${baseUrl}`);
+  }
   const summaries = [];
   const scenarioLimit = Number(process.env.LIVE_SEARCH_SCENARIO_LIMIT ?? scenarios.length);
 
@@ -128,20 +147,22 @@ try {
   console.error(logs.slice(-20).join(""));
   process.exitCode = 1;
 } finally {
-  await stopServer(port);
+  if (!usingExternalServer) {
+    await stopServer(port);
+  }
 }
 
 function getStartCommand(port) {
   if (process.platform === "win32") {
     return {
       command: "cmd.exe",
-      args: ["/d", "/s", "/c", `npm run start -- -p ${port}`],
+      args: ["/d", "/s", "/c", `npm run dev -- -p ${port}`],
     };
   }
 
   return {
     command: "npm",
-    args: ["run", "start", "--", "-p", `${port}`],
+    args: ["run", "dev", "--", "-p", `${port}`],
   };
 }
 
@@ -182,11 +203,11 @@ function pushLog(logs, chunk) {
 }
 
 async function waitForServer(baseUrl) {
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 60000;
 
   while (Date.now() < deadline) {
     if (server.exitCode !== null) {
-      throw new Error("Next server exited before becoming ready.");
+      throw new Error("Next dev server exited before becoming ready.");
     }
 
     try {
@@ -202,7 +223,7 @@ async function waitForServer(baseUrl) {
     await delay(500);
   }
 
-  throw new Error("Timed out waiting for the Next server.");
+  throw new Error("Timed out waiting for the Next dev server.");
 }
 
 function getSearchModes() {
@@ -251,8 +272,47 @@ async function postMeetingScenario(baseUrl, question, searchMode) {
 }
 
 function assertLiveSearchShape(scenarioId, evidencePack, searchProcess) {
-  if (!evidencePack || !searchProcess) {
-    throw new Error(`${scenarioId}: missing debugSearchProcess`);
+  if (!evidencePack) {
+    throw new Error(`${scenarioId}: evidencePack is missing from meeting response`);
+  }
+
+  if (!searchProcess) {
+    const hints = [
+      `Scenario: ${scenarioId}`,
+      "",
+      "debugSearchProcess is missing from the API response.",
+      "",
+      "This usually means the server is running in production mode,",
+      "which strips debugSearchProcess as a security measure.",
+      "",
+      "Fix options:",
+    ];
+
+    if (usingExternalServer) {
+      hints.push(
+        "1. Ensure LIVE_SEARCH_BASE_URL points to a dev-mode server.",
+        "2. Start the target server with: npm run dev -- -p <port>",
+        "3. Set SEARCH_DEBUG_ENABLED=true in the target server environment.",
+        "4. Confirm NODE_ENV is NOT 'production' on the target server.",
+      );
+    } else {
+      hints.push(
+        "1. The script now uses `npm run dev` (not `npm start`).",
+        "2. Verify SEARCH_DEBUG_ENABLED=true is set in the spawned process.",
+        "3. If a custom start command is used, ensure NODE_ENV=development.",
+      );
+    }
+
+    hints.push(
+      "",
+      "Security rule: debugSearchProcess requires BOTH:",
+      "  SEARCH_DEBUG_ENABLED=true",
+      "  NODE_ENV !== 'production'",
+      "",
+      "Production mode always strips debugSearchProcess for user safety.",
+    );
+
+    throw new Error(hints.join("\n"));
   }
 
   if (!Array.isArray(evidencePack.items)) {
