@@ -286,7 +286,7 @@ export async function searchTavilyEvidence(
       });
     }
 
-    const drafts = normalizeTavilySearchResponse(data);
+    const drafts = normalizeTavilySearchResponse(data, effectiveOptions.maxResults);
 
     tavilySearchCache.set(cacheKey, {
       expiresAt: Date.now() + ttlMs,
@@ -358,6 +358,7 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
 
 export function normalizeTavilySearchResponse(
   response: TavilySearchResponse,
+  maxResults = DEFAULT_MAX_RESULTS,
 ): TavilyEvidenceDraft[] {
   if (!Array.isArray(response.results)) {
     return [];
@@ -366,7 +367,7 @@ export function normalizeTavilySearchResponse(
   return response.results
     .map(normalizeTavilyResult)
     .filter((result): result is TavilyEvidenceDraft => result !== null)
-    .slice(0, DEFAULT_MAX_RESULTS);
+    .slice(0, Math.max(1, maxResults));
 }
 
 export function buildTavilySearchQueries(topic: string): string[] {
@@ -434,11 +435,11 @@ function normalizeTavilyResult(
   const tavilyResult = result as TavilySearchResult;
   const snippet = sanitizeSearchText(stringFrom(tavilyResult.content)).trim();
 
-  if (!snippet) {
+  const url = normalizeUrl(tavilyResult.url);
+  if (!snippet && !url) {
     return null;
   }
 
-  const url = normalizeUrl(tavilyResult.url);
   const source = url ? getSourceFromUrl(url) : undefined;
   const title = sanitizeSearchText(stringFrom(tavilyResult.title)).trim();
   const publishedAt = sanitizeSearchText(

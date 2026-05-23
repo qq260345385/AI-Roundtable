@@ -14,7 +14,7 @@ AI Roundtable 是一个“多大模型圆桌会议系统”的第一版原型。
 
 ## Project Status
 
-当前版本：`v0.5.1 internal alpha`
+当前版本：`v0.5.2 internal alpha`
 
 项目处于 internal alpha / pre-release 阶段，暂不建议打 tag 或写 GitHub Release。当前重点是验证“平等多模型圆桌会议”的前后端核心体验和真实模型讨论质量。
 
@@ -152,7 +152,7 @@ AI_ROUNDTABLE_MODE=mock
 | `SEARCH_PROVIDER` | 可选。默认 `tavily`。当前内置 Tavily provider，后续可扩展 Brave、SerpAPI、秘塔、Qwen Search 等 provider。普通用户无需理解或选择 provider。 |
 | `SEARCH_DEBUG_ENABLED` | 仅限本地开发。设为 `true` 且 `NODE_ENV !== "production"` 时，会议 API 才会返回完整联网搜索调试信息。生产环境不要开启。 |
 
-联网搜索会在服务端做本地内存缓存、URL 规范化、重复 URL 合并和同域名数量限制。这些都属于后台优化，默认 UI 只展示简洁联网状态，不展示缓存命中、去重原因或同域限制细节。完整统计仅在本地开发调试模式的 `debugSearchProcess` 和 `npm run test:live-search` 输出中可见。本地内存缓存会在服务重启后清空。
+联网搜索会在服务端做本地内存缓存、URL 规范化、重复 URL 合并、同域名数量限制和 Evidence Rescue。Evidence Rescue 会先保留广搜候选池，在可用资料不足时对少量 URL 做 Tavily Extract 正文抽取，再重新评分并精选入包。普通用户只需要选择普通搜索或深度搜索；候选池、抽取次数、缓存命中、去重原因和评分拆解都属于后台优化，默认 UI 不展示。完整统计仅在本地开发调试模式的 `debugSearchProcess` 和 `npm run test:live-search` 输出中可见。本地内存缓存会在服务重启后清空。
 
 ## Provider Configuration
 

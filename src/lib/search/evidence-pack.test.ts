@@ -268,6 +268,37 @@ describe("normalizeEvidencePack", () => {
     );
   });
 
+  test("does not mark a short relevant unknown-source snippet as very low only because it is short", () => {
+    const quality = scoreEvidence({
+      title: "DeepSeek V3 benchmark leaderboard update",
+      url: "https://example.org/deepseek-v3-benchmark",
+      snippet: "DeepSeek V3 appears in current AI benchmark leaderboard results.",
+      topic: "DeepSeek V3 benchmark leaderboard",
+    });
+
+    expect(quality.sourceType).toBe("unknown");
+    expect(quality.reliability).toBe("low");
+    expect(quality.citationLevel).toBe("context_only");
+  });
+
+  test("keeps unknown-source evidence when the content is usable", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      items: [
+        {
+          title: "Independent model benchmark notes",
+          url: "https://example.org/model-benchmark-notes",
+          snippet: "Independent model benchmark notes. ".repeat(30),
+        },
+      ],
+    });
+
+    expect(pack.enabled).toBe(true);
+    expect(pack.items).toHaveLength(1);
+    expect(pack.items[0].quality?.sourceType).toBe("unknown");
+    expect(pack.items[0].quality?.reliability).not.toBe("very_low");
+  });
+
   test("scores community, video, and social sources lower", () => {
     expect(
       scoreEvidence({

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import {
   createSearchFailureProcess,
   normalizeEvidencePack,
+  type SearchMode,
   type SearchCacheEvent,
+  type SearchEvidence,
   type SearchProviderDiagnostic,
 } from "../../../../lib/search/evidence-pack";
 import {
@@ -18,12 +20,21 @@ import {
   getTavilyFailureReason,
 } from "../../../../lib/search/tavily-search";
 import { createSearchProviderRegistry } from "../../../../lib/search/search-provider-registry";
+import { getExtractProvider } from "../../../../lib/search/extract-provider-registry";
 import type { SearchProviderResponse } from "../../../../lib/search/search-provider";
 
 export const runtime = "nodejs";
 
 type SearchRequestBody = {
   query?: unknown;
+  searchMode?: unknown;
+};
+
+type SearchModeConfig = {
+  candidateLimit: number;
+  extractLimit: number;
+  finalLimit: number;
+  chunksPerSource: number;
 };
 
 export async function POST(request: Request) {
@@ -35,6 +46,8 @@ export async function POST(request: Request) {
   try {
     const body = await readRequestBody(request);
     const query = getQuery(body);
+    const searchMode = getSearchMode(body.searchMode);
+    const modeConfig = getSearchModeConfig(searchMode);
 
     if (!query) {
       throw new SearchRequestError("query cannot be empty", 400);
@@ -44,12 +57,16 @@ export async function POST(request: Request) {
     const searchProvider = providerRegistry.selectedProvider;
     selectedSearchProviderId = searchProvider.id;
     searchQueries = buildTavilySearchQueries(query);
+    const maxResultsPerQuery = getMaxResultsPerQuery(
+      modeConfig.candidateLimit,
+      searchQueries.length,
+    );
     const searchResults = (
       await Promise.all(
         searchQueries.map((searchQuery) =>
           searchProvider.search({
             freshness: "any",
-            maxResults: 5,
+            maxResults: maxResultsPerQuery,
             query: searchQuery,
             searchDepth: "basic",
             topic: query,
@@ -70,17 +87,90 @@ export async function POST(request: Request) {
         ),
       )
     ).flat();
+    const rawCandidateCount = searchResults.length;
     const deduped = dedupeSearchResults(searchResults);
-    const drafts = deduped.items;
-    const preflightPack = normalizeEvidencePack(
+    let drafts = deduped.items.slice(0, modeConfig.candidateLimit);
+    let dedupeStats = deduped.stats;
+    let rescueTriggered = false;
+    let rescueReason: string | undefined;
+    let extractAttempted = 0;
+    let extractedCandidateCount = 0;
+    let extractSucceededCount = 0;
+    let preflightPack = normalizeEvidencePack(
       {
         enabled: true,
         items: drafts,
       },
       {
+        maxItems: modeConfig.finalLimit,
         topic: query,
       },
     );
+
+    if (
+      preflightPack.items.length < 3 &&
+      drafts.some((draft) => draft.url)
+    ) {
+      rescueTriggered = true;
+      rescueReason = "usable_evidence_below_threshold";
+      const rescueUrls = drafts
+        .map((draft) => draft.url)
+        .filter((url): url is string => Boolean(url))
+        .slice(0, modeConfig.extractLimit);
+
+      extractAttempted = rescueUrls.length;
+
+      if (rescueUrls.length > 0) {
+        try {
+          const extractProvider = getExtractProvider();
+          const extractResponse = await extractProvider.extract({
+            urls: rescueUrls,
+            query,
+            chunksPerSource: modeConfig.chunksPerSource,
+            extractDepth: searchMode === "deep" ? "advanced" : "basic",
+          });
+          const extractedDrafts = extractResponse.results.map((result) => ({
+            title: result.title,
+            url: result.url,
+            snippet: result.content,
+            publishedAt: undefined,
+            query,
+          }));
+          const rescuedDeduped = dedupeSearchResults([
+            ...drafts,
+            ...extractedDrafts,
+          ]);
+
+          extractedCandidateCount = extractedDrafts.length;
+          extractSucceededCount = extractedDrafts.filter((draft) =>
+            draft.snippet.trim(),
+          ).length;
+          drafts = rescuedDeduped.items.slice(0, modeConfig.candidateLimit);
+          dedupeStats = mergeDedupeStats(dedupeStats, rescuedDeduped.stats);
+          providerDiagnostics.push({
+            provider: extractResponse.provider,
+            displayName: extractProvider.displayName,
+            ...(extractResponse.diagnostics
+              ? { diagnostics: extractResponse.diagnostics }
+              : {}),
+            ...(extractResponse.rawStats ? { rawStats: extractResponse.rawStats } : {}),
+          });
+          preflightPack = normalizeEvidencePack(
+            {
+              enabled: true,
+              items: drafts,
+            },
+            {
+              maxItems: modeConfig.finalLimit,
+              topic: query,
+            },
+          );
+        } catch (error) {
+          rescueReason = `extract_failed:${getTavilyFailureReason(error)}`;
+        }
+      }
+    }
+
     const evidenceStatus =
       preflightPack.evidenceStatus ?? (preflightPack.items.length > 0 ? "low" : "none");
     const evidenceWarnings = getEvidenceWarnings(evidenceStatus);
@@ -92,8 +182,22 @@ export async function POST(request: Request) {
         items: drafts,
         searchProcess: {
           cacheEvents,
-          dedupeStats: deduped.stats,
+          dedupeStats,
+          dedupedCandidateCount: drafts.length,
+          evidenceMode:
+            rescueTriggered && extractSucceededCount > 0
+              ? "rescued_evidence"
+              : undefined,
           executedQueries: searchQueries,
+          extractAttempted,
+          extractedCandidateCount,
+          extractSucceededCount,
+          finalEvidenceCount: preflightPack.items.length,
+          qualityDistribution: getQualityDistribution(preflightPack.items),
+          rawCandidateCount,
+          rescueReason,
+          rescueTriggered,
+          searchMode,
           provider: searchProvider.id,
           providerDiagnostics,
           searchIntents: [
@@ -119,6 +223,7 @@ export async function POST(request: Request) {
         searchQueries,
       },
       {
+        maxItems: modeConfig.finalLimit,
         topic: query,
       },
     );
@@ -202,6 +307,36 @@ function getQuery(body: SearchRequestBody) {
   return body.query.trim();
 }
 
+function getSearchMode(value: unknown): SearchMode {
+  return value === "deep" ? "deep" : "standard";
+}
+
+function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
+  if (searchMode === "deep") {
+    return {
+      candidateLimit: 60,
+      extractLimit: 18,
+      finalLimit: 10,
+      chunksPerSource: 3,
+    };
+  }
+
+  return {
+    candidateLimit: 20,
+    extractLimit: 8,
+    finalLimit: 8,
+    chunksPerSource: 2,
+  };
+}
+
+function getMaxResultsPerQuery(candidateLimit: number, queryCount: number) {
+  if (queryCount <= 0) {
+    return 5;
+  }
+
+  return Math.max(1, Math.ceil(candidateLimit / queryCount));
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof TavilySearchError) {
     return getSafeTavilyErrorMessage(error);
@@ -242,6 +377,38 @@ function createProviderDiagnostic(
     ...(registry.fallbackReason ? { fallbackReason: registry.fallbackReason } : {}),
     ...(response.diagnostics ? { diagnostics: response.diagnostics } : {}),
     ...(response.rawStats ? { rawStats: response.rawStats } : {}),
+  };
+}
+
+function getQualityDistribution(items: SearchEvidence[]) {
+  return {
+    high: items.filter((item) => item.quality?.reliability === "high").length,
+    medium: items.filter((item) => item.quality?.reliability === "medium").length,
+    low: items.filter((item) => item.quality?.reliability === "low").length,
+    very_low: items.filter(
+      (item) => item.quality?.reliability === "very_low",
+    ).length,
+  };
+}
+
+function mergeDedupeStats(
+  original: ReturnType<typeof dedupeSearchResults>["stats"],
+  rescued: ReturnType<typeof dedupeSearchResults>["stats"],
+) {
+  return {
+    originalResultCount: original.originalResultCount,
+    dedupedResultCount: rescued.dedupedResultCount,
+    removedDuplicateCount:
+      original.removedDuplicateCount + rescued.removedDuplicateCount,
+    removedSameDomainCount:
+      original.removedSameDomainCount + rescued.removedSameDomainCount,
+    removals: [...original.removals, ...rescued.removals],
+    ...(original.domainLimitRelaxedReason || rescued.domainLimitRelaxedReason
+      ? {
+          domainLimitRelaxedReason:
+            rescued.domainLimitRelaxedReason ?? original.domainLimitRelaxedReason,
+        }
+      : {}),
   };
 }
 

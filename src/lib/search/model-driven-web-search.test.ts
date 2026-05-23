@@ -5,6 +5,7 @@ import {
   buildTavilySearchPlanFromIntents,
 } from "./model-driven-web-search";
 import type { SearchIntentRecord } from "./evidence-pack";
+import type { ExtractProvider } from "./extract-provider";
 import type { SearchProvider } from "./search-provider";
 import { TavilySearchError } from "./tavily-search";
 
@@ -469,6 +470,155 @@ describe("buildModelDrivenWebEvidencePack", () => {
             query: expect.stringContaining("failing query"),
           }),
         ],
+      }),
+    );
+  });
+
+  test("triggers extract rescue when fewer than three usable web results survive preflight", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Find official evidence for a sparse search topic",
+            mustInclude: ["sparse search topic"],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "recent",
+            sourcePreference: "official",
+            rationale: "Sparse search should exercise extract rescue.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const extractedUrls: string[][] = [];
+    const extractProvider: ExtractProvider = {
+      id: "test-extract",
+      displayName: "Test Extract",
+      async extract(request) {
+        extractedUrls.push(request.urls);
+
+        return {
+          provider: "test-extract",
+          results: [
+            {
+              title: "Extracted official report",
+              url: request.urls[0],
+              content: `Extracted official report for sparse search topic. ${"A".repeat(900)}`,
+              sourceQuery: request.query,
+              provider: "test-extract",
+            },
+          ],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "sparse search topic",
+      extractProvider,
+      searcher: async () => [
+        {
+          title: "Sparse result",
+          url: "https://openai.com/sparse-result",
+          snippet: "Sparse result",
+        },
+      ],
+    });
+
+    expect(extractedUrls).toHaveLength(1);
+    expect(pack.enabled).toBe(true);
+    expect(pack.items[0]).toEqual(
+      expect.objectContaining({
+        title: "Extracted official report",
+        url: "https://openai.com/sparse-result",
+      }),
+    );
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        evidenceMode: "rescued_evidence",
+        rescueTriggered: true,
+        extractAttempted: 1,
+        extractSucceededCount: 1,
+        finalEvidenceCount: 1,
+      }),
+    );
+  });
+
+  test("deep search mode expands candidates but does not put every candidate into the evidence pack", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Find many current model benchmark sources",
+            mustInclude: ["model benchmark"],
+            shouldInclude: ["leaderboard"],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "benchmark",
+            rationale: "Deep mode should gather more candidates.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const maxResultsRequests: number[] = [];
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchMode: "deep",
+      topic: "latest model benchmark leaderboard",
+      searcher: async (_query, options) => {
+        maxResultsRequests.push(options?.maxResults ?? 0);
+
+        return Array.from({ length: 60 }, (_, index) => ({
+          title: `Benchmark source ${index + 1}`,
+          url: `https://artificialanalysis.ai/models/${index + 1}`,
+          snippet: `Benchmark source ${index + 1}. ${"A".repeat(900)}`,
+        }));
+      },
+    });
+
+    expect(maxResultsRequests[0]).toBeGreaterThan(5);
+    expect(pack.items.length).toBeGreaterThan(0);
+    expect(pack.items.length).toBeLessThanOrEqual(12);
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        searchMode: "deep",
+        rawCandidateCount: 60,
+        finalEvidenceCount: pack.items.length,
       }),
     );
   });

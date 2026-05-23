@@ -1,10 +1,12 @@
 import type {
   EvidencePack,
+  SearchEvidence,
   SearchCacheEvent,
   SearchFreshness,
   SearchIntent,
   SearchIntentDecision,
   SearchIntentRecord,
+  SearchMode,
   SearchProviderDiagnostic,
   SearchQueryPlan,
   SearchSourcePreference,
@@ -12,6 +14,7 @@ import type {
 import {
   createSearchFailureProcess,
   normalizeEvidencePack,
+  scoreEvidence,
 } from "./evidence-pack";
 import {
   buildTavilySearchQueries,
@@ -20,6 +23,8 @@ import {
   type TavilyEvidenceDraft,
 } from "./tavily-search";
 import { getSearchProvider } from "./search-provider-registry";
+import { getExtractProvider } from "./extract-provider-registry";
+import type { ExtractProvider } from "./extract-provider";
 import type {
   SearchProvider,
   SearchProviderResponse,
@@ -31,6 +36,7 @@ import type {
 
 const MAX_MODEL_DRIVEN_QUERIES = 8;
 const WEB_SEARCH_RESULTS_PER_QUERY = 5;
+const RESCUE_TRIGGER_USABLE_THRESHOLD = 3;
 const MAX_TAVILY_QUERY_LENGTH = 160;
 const VAGUE_TERMS = new Set([
   "impact",
@@ -51,6 +57,19 @@ const MARKETING_TERMS = new Set([
   "leading",
 ]);
 
+type SearchModeConfig = {
+  candidateLimit: number;
+  extractLimit: number;
+  finalLimit: number;
+  chunksPerSource: number;
+};
+
+type CandidatePoolItem = {
+  draft: TavilyEvidenceDraft & { url: string };
+  status: "usable" | "needs_extract" | "context_only" | "filtered";
+  score: number;
+};
+
 type Searcher = (
   query: string,
   options?: {
@@ -62,8 +81,10 @@ type Searcher = (
 
 type BuildModelDrivenWebEvidencePackOptions = {
   baseEvidencePack?: EvidencePack;
+  extractProvider?: ExtractProvider;
   participants: ModelParticipant[];
   provider: ModelProvider;
+  searchMode?: SearchMode;
   searchProvider?: SearchProvider;
   searcher?: Searcher;
   topic: string;
@@ -71,12 +92,15 @@ type BuildModelDrivenWebEvidencePackOptions = {
 
 export async function buildModelDrivenWebEvidencePack({
   baseEvidencePack,
+  extractProvider = getExtractProvider(),
   participants,
   provider,
+  searchMode = "standard",
   searchProvider = getSearchProvider(),
   searcher,
   topic,
 }: BuildModelDrivenWebEvidencePackOptions): Promise<EvidencePack> {
+  const modeConfig = getSearchModeConfig(searchMode);
   const searchPlan = await buildParticipantSearchQueries(
     topic,
     participants,
@@ -91,13 +115,24 @@ export async function buildModelDrivenWebEvidencePack({
   const providerDiagnostics: SearchProviderDiagnostic[] = [];
   let dedupeStats: ReturnType<typeof dedupeSearchResults>["stats"] | undefined;
   let webDrafts: TavilyEvidenceDraft[];
+  let rawCandidateCount = 0;
+  let rescueTriggered = false;
+  let rescueReason: string | undefined;
+  let extractAttempted = 0;
+  let extractedCandidateCount = 0;
+  let extractSucceededCount = 0;
 
   try {
+    const maxResultsPerQuery = getMaxResultsPerQuery(
+      modeConfig.candidateLimit,
+      searchQueries.length,
+    );
     const rawWebDrafts = (
       await Promise.all(
         searchQueries.map((query) =>
           searchWithConfiguredProvider({
             freshness: freshnessByQuery.get(query) ?? "any",
+            maxResults: maxResultsPerQuery,
             provider: searchProvider,
             query,
             searcher,
@@ -117,10 +152,85 @@ export async function buildModelDrivenWebEvidencePack({
         ),
       )
     ).flat();
+    rawCandidateCount = rawWebDrafts.length;
     const deduped = dedupeSearchResults(rawWebDrafts);
 
-    webDrafts = deduped.items;
+    webDrafts = deduped.items.slice(0, modeConfig.candidateLimit);
     dedupeStats = deduped.stats;
+
+    const preflightPack = normalizeEvidencePack(
+      {
+        enabled: webDrafts.length > 0,
+        items: webDrafts,
+      },
+      {
+        maxItems: modeConfig.finalLimit,
+        topic,
+      },
+    );
+
+    if (
+      preflightPack.items.length < RESCUE_TRIGGER_USABLE_THRESHOLD &&
+      webDrafts.some((draft) => draft.url)
+    ) {
+      rescueTriggered = true;
+      rescueReason = "usable_evidence_below_threshold";
+      const rescueCandidates = selectRescueCandidates(
+        webDrafts,
+        topic,
+        modeConfig.extractLimit,
+      );
+      const fallbackRescueCandidates =
+        rescueCandidates.length > 0
+          ? rescueCandidates
+          : webDrafts
+              .filter((draft): draft is TavilyEvidenceDraft & { url: string } =>
+                Boolean(draft.url),
+              )
+              .slice(0, modeConfig.extractLimit);
+
+      extractAttempted = fallbackRescueCandidates.length;
+
+      if (fallbackRescueCandidates.length > 0) {
+        try {
+          const extractResponse = await extractProvider.extract({
+            urls: fallbackRescueCandidates.map((candidate) => candidate.url),
+            query: getRescueQuery(topic, searchPlan.searchIntents),
+            chunksPerSource: modeConfig.chunksPerSource,
+            extractDepth: searchMode === "deep" ? "advanced" : "basic",
+          });
+          const extractedDrafts = extractResponse.results.map((result) => ({
+            title: result.title,
+            url: result.url,
+            snippet: result.content,
+            query: result.sourceQuery,
+          }));
+
+          extractedCandidateCount = extractedDrafts.length;
+          extractSucceededCount = extractedDrafts.filter((draft) =>
+            draft.snippet.trim(),
+          ).length;
+
+          const rescuedDeduped = dedupeSearchResults([
+            ...webDrafts,
+            ...extractedDrafts,
+          ]);
+
+          webDrafts = rescuedDeduped.items.slice(0, modeConfig.candidateLimit);
+          dedupeStats = mergeDedupeStats(dedupeStats, rescuedDeduped.stats);
+          providerDiagnostics.push({
+            provider: extractResponse.provider,
+            displayName: extractProvider.displayName,
+            ...(extractResponse.diagnostics
+              ? { diagnostics: extractResponse.diagnostics }
+              : {}),
+            ...(extractResponse.rawStats ? { rawStats: extractResponse.rawStats } : {}),
+          });
+        } catch (error) {
+          rescueReason = `extract_failed:${getTavilyFailureReason(error)}`;
+        }
+      }
+    }
   } catch (error) {
     const failureReason = getTavilyFailureReason(error);
 
@@ -159,6 +269,7 @@ export async function buildModelDrivenWebEvidencePack({
       items: [...baseItems, ...webDrafts],
     },
     {
+      maxItems: modeConfig.finalLimit,
       topic,
     },
   );
@@ -179,7 +290,21 @@ export async function buildModelDrivenWebEvidencePack({
       searchProcess: {
         cacheEvents,
         dedupeStats,
+        dedupedCandidateCount: webDrafts.length,
+        evidenceMode:
+          rescueTriggered && extractSucceededCount > 0
+            ? "rescued_evidence"
+            : undefined,
         executedQueries: searchQueries,
+        extractAttempted,
+        extractedCandidateCount,
+        extractSucceededCount,
+        finalEvidenceCount: preflightPack.items.length,
+        qualityDistribution: getQualityDistribution(preflightPack.items),
+        rawCandidateCount,
+        rescueReason,
+        rescueTriggered,
+        searchMode,
         searchIntents: searchPlan.searchIntents,
         queryPlans: searchPlan.queryPlans,
         intentDecisions: searchPlan.intentDecisions,
@@ -190,6 +315,7 @@ export async function buildModelDrivenWebEvidencePack({
       strategy: baseEvidencePack?.strategy ?? "text_pack",
     },
     {
+      maxItems: modeConfig.finalLimit,
       topic,
     },
   );
@@ -197,6 +323,7 @@ export async function buildModelDrivenWebEvidencePack({
 
 async function searchWithConfiguredProvider(input: {
   freshness: SearchFreshness;
+  maxResults: number;
   provider: SearchProvider;
   query: string;
   searcher?: Searcher;
@@ -206,7 +333,7 @@ async function searchWithConfiguredProvider(input: {
     const cacheEvents: SearchCacheEvent[] = [];
     const drafts = await input.searcher(input.query, {
       freshness: input.freshness,
-      maxResults: WEB_SEARCH_RESULTS_PER_QUERY,
+      maxResults: input.maxResults,
       onCacheEvent: (event) => cacheEvents.push(event),
     });
 
@@ -231,11 +358,165 @@ async function searchWithConfiguredProvider(input: {
 
   return input.provider.search({
     freshness: input.freshness,
-    maxResults: WEB_SEARCH_RESULTS_PER_QUERY,
+    maxResults: input.maxResults,
     query: input.query,
     searchDepth: "basic",
     topic: input.topic,
   });
+}
+
+function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
+  if (searchMode === "deep") {
+    return {
+      candidateLimit: 60,
+      extractLimit: 18,
+      finalLimit: 10,
+      chunksPerSource: 3,
+    };
+  }
+
+  return {
+    candidateLimit: 20,
+    extractLimit: 8,
+    finalLimit: 8,
+    chunksPerSource: 2,
+  };
+}
+
+function getMaxResultsPerQuery(candidateLimit: number, queryCount: number) {
+  if (queryCount <= 0) {
+    return WEB_SEARCH_RESULTS_PER_QUERY;
+  }
+
+  return Math.max(1, Math.ceil(candidateLimit / queryCount));
+}
+
+function selectRescueCandidates(
+  drafts: TavilyEvidenceDraft[],
+  topic: string,
+  limit: number,
+) {
+  return drafts
+    .flatMap((draft): CandidatePoolItem[] => {
+      if (!draft.url) {
+        return [];
+      }
+
+      const quality = scoreEvidence({
+        title: draft.title,
+        url: draft.url,
+        source: draft.source,
+        publishedAt: draft.publishedAt,
+        snippet: draft.snippet,
+        topic,
+      });
+      const status = getCandidateStatus(draft, quality.reliability);
+
+      if (status === "filtered") {
+        return [];
+      }
+
+      return [
+        {
+          draft: { ...draft, url: draft.url },
+          status,
+          score: quality.score ?? 0,
+        },
+      ];
+    })
+    .sort(compareCandidatePoolItems)
+    .slice(0, limit)
+    .map((candidate) => candidate.draft);
+}
+
+function getCandidateStatus(
+  draft: TavilyEvidenceDraft,
+  reliability: "high" | "medium" | "low" | "very_low",
+): CandidatePoolItem["status"] {
+  if (!draft.url) {
+    return "filtered";
+  }
+
+  if (!draft.snippet.trim() || draft.snippet.length < 300) {
+    return "needs_extract";
+  }
+
+  if (reliability === "very_low") {
+    return "needs_extract";
+  }
+
+  if (reliability === "low") {
+    return "context_only";
+  }
+
+  return "usable";
+}
+
+function compareCandidatePoolItems(
+  left: CandidatePoolItem,
+  right: CandidatePoolItem,
+) {
+  const statusDelta =
+    getCandidateStatusRank(left.status) - getCandidateStatusRank(right.status);
+
+  if (statusDelta !== 0) {
+    return statusDelta;
+  }
+
+  return right.score - left.score;
+}
+
+function getCandidateStatusRank(status: CandidatePoolItem["status"]) {
+  return {
+    usable: 0,
+    context_only: 1,
+    needs_extract: 2,
+    filtered: 3,
+  }[status];
+}
+
+function getRescueQuery(topic: string, records: SearchIntentRecord[]) {
+  return (
+    records
+      .flatMap((record) => record.intents.map((intent) => intent.question))
+      .find(Boolean) ?? topic
+  );
+}
+
+function getQualityDistribution(items: SearchEvidence[]) {
+  return {
+    high: items.filter((item) => item.quality?.reliability === "high").length,
+    medium: items.filter((item) => item.quality?.reliability === "medium").length,
+    low: items.filter((item) => item.quality?.reliability === "low").length,
+    very_low: items.filter(
+      (item) => item.quality?.reliability === "very_low",
+    ).length,
+  };
+}
+
+function mergeDedupeStats(
+  original: ReturnType<typeof dedupeSearchResults>["stats"] | undefined,
+  rescued: ReturnType<typeof dedupeSearchResults>["stats"],
+) {
+  if (!original) {
+    return rescued;
+  }
+
+  return {
+    originalResultCount: original.originalResultCount,
+    dedupedResultCount: rescued.dedupedResultCount,
+    removedDuplicateCount:
+      original.removedDuplicateCount + rescued.removedDuplicateCount,
+    removedSameDomainCount:
+      original.removedSameDomainCount + rescued.removedSameDomainCount,
+    removals: [...original.removals, ...rescued.removals],
+    ...(original.domainLimitRelaxedReason || rescued.domainLimitRelaxedReason
+      ? {
+          domainLimitRelaxedReason:
+            rescued.domainLimitRelaxedReason ?? original.domainLimitRelaxedReason,
+        }
+      : {}),
+  };
 }
 
 function createProviderDiagnostic(

@@ -180,6 +180,116 @@ describe("POST /api/evidence/search", () => {
     );
   });
 
+  test("keeps extract rescue details out of the default API response", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+
+      if (Array.isArray(body.urls)) {
+        return Response.json({
+          results: [
+            {
+              title: "Extracted source",
+              url: body.urls[0],
+              raw_content: `Extracted source content. ${"A".repeat(900)}`,
+            },
+          ],
+        });
+      }
+
+      return Response.json({
+        results: [
+          {
+            title: "Sparse source",
+            url: "https://openai.com/sparse-source",
+            content: "Sparse source",
+          },
+        ],
+      });
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "sparse AI evidence" }),
+      }),
+    );
+    const body = await response.json();
+    const bodyText = JSON.stringify(body);
+
+    expect(response.status).toBe(200);
+    expect(body.searchSummary).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        totalReferences: 1,
+      }),
+    );
+    expect(body.debugSearchProcess).toBeUndefined();
+    expect(bodyText).not.toContain("rescueTriggered");
+    expect(bodyText).not.toContain("extractAttempted");
+    expect(bodyText).not.toContain("rawCandidateCount");
+    expect(bodyText).not.toContain("Candidate Pool");
+  });
+
+  test("returns extract rescue statistics in debug mode", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+
+      if (Array.isArray(body.urls)) {
+        return Response.json({
+          results: [
+            {
+              title: "Extracted source",
+              url: body.urls[0],
+              raw_content: `Extracted source content. ${"A".repeat(900)}`,
+            },
+          ],
+        });
+      }
+
+      return Response.json({
+        results: [
+          {
+            title: "Sparse source",
+            url: "https://openai.com/sparse-source",
+            content: "Sparse source",
+          },
+        ],
+      });
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "sparse AI evidence" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.debugSearchProcess).toEqual(
+      expect.objectContaining({
+        searchMode: "standard",
+        rescueTriggered: true,
+        rescueReason: "usable_evidence_below_threshold",
+        rawCandidateCount: expect.any(Number),
+        dedupedCandidateCount: expect.any(Number),
+        extractAttempted: expect.any(Number),
+        extractedCandidateCount: 1,
+        extractSucceededCount: 1,
+        finalEvidenceCount: body.evidencePack.items.length,
+        qualityDistribution: expect.objectContaining({
+          high: expect.any(Number),
+          medium: expect.any(Number),
+          low: expect.any(Number),
+          very_low: expect.any(Number),
+        }),
+      }),
+    );
+  });
+
   test("dedupes same-domain Tavily results before building the evidence pack", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
     process.env.SEARCH_DEBUG_ENABLED = "true";
@@ -215,7 +325,7 @@ describe("POST /api/evidence/search", () => {
       body.evidencePack.items.filter(
         (item: { source?: string }) => item.source === "openai.com",
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(body.evidencePack.searchProcess).toBeUndefined();
     expect(body.debugSearchProcess.dedupeStats).toEqual(
       expect.objectContaining({
@@ -223,7 +333,7 @@ describe("POST /api/evidence/search", () => {
       }),
     );
     expect(
-      body.debugSearchProcess.dedupeStats.removedSameDomainCount,
+      body.debugSearchProcess.dedupeStats.removedDuplicateCount,
     ).toBeGreaterThan(0);
   });
 

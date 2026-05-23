@@ -47,6 +47,7 @@ if (!existsSync(".next/BUILD_ID")) {
 const port = Number(process.env.LIVE_SEARCH_PORT ?? 3217);
 const baseUrl = `http://127.0.0.1:${port}`;
 const searchProvider = process.env.SEARCH_PROVIDER?.trim() || "tavily";
+const searchModes = getSearchModes();
 const startCommand = getStartCommand(port);
 const server = spawn(startCommand.command, startCommand.args, {
   env: {
@@ -70,38 +71,56 @@ try {
   const summaries = [];
   const scenarioLimit = Number(process.env.LIVE_SEARCH_SCENARIO_LIMIT ?? scenarios.length);
 
-  for (const scenario of scenarios.slice(0, scenarioLimit)) {
-    console.log(`[live-search] running ${scenario.id}`);
-    const body = await postMeetingScenario(baseUrl, scenario.question);
-    const evidencePack = body.meeting?.evidencePack;
-    const searchProcess = body.meeting?.debugSearchProcess;
+  for (const searchMode of searchModes) {
+    for (const scenario of scenarios.slice(0, scenarioLimit)) {
+      console.log(`[live-search] running ${scenario.id} (${searchMode})`);
+      const body = await postMeetingScenario(baseUrl, scenario.question, searchMode);
+      const evidencePack = body.meeting?.evidencePack;
+      const searchProcess = body.meeting?.debugSearchProcess;
 
-    assertLiveSearchShape(scenario.id, evidencePack, searchProcess);
+      assertLiveSearchShape(scenario.id, evidencePack, searchProcess);
 
-    summaries.push({
-      id: scenario.id,
-      title: scenario.title,
-      evidenceMode: searchProcess.evidenceMode,
-      searchProvider: searchProcess.provider ?? searchProvider,
-      searchIntent: summarizeSearchIntents(searchProcess.searchIntents),
-      searchQueries: searchProcess.executedQueries,
-      resultCount: searchProcess.qualityOverview.totalResults,
-      evidencePackItemCount: evidencePack.items.length,
-      filteredCount: searchProcess.qualityOverview.filteredCount,
-      filteredReasons: searchProcess.filteredReasons,
-      cache: summarizeCacheEvents(searchProcess.cacheEvents ?? []),
-      dedupe: {
-        originalResultCount: searchProcess.dedupeStats?.originalResultCount ?? 0,
-        dedupedResultCount: searchProcess.dedupeStats?.dedupedResultCount ?? 0,
-        removedDuplicateCount:
-          searchProcess.dedupeStats?.removedDuplicateCount ?? 0,
-        removedSameDomainCount:
-          searchProcess.dedupeStats?.removedSameDomainCount ?? 0,
-      },
-    });
+      summaries.push({
+        id: scenario.id,
+        title: scenario.title,
+        searchMode,
+        evidenceMode: searchProcess.evidenceMode,
+        searchProvider: searchProcess.provider ?? searchProvider,
+        searchIntent: summarizeSearchIntents(searchProcess.searchIntents),
+        searchQueries: searchProcess.executedQueries,
+        rawCandidateCount:
+          searchProcess.rawCandidateCount ??
+          searchProcess.dedupeStats?.originalResultCount ??
+          0,
+        dedupedCandidateCount:
+          searchProcess.dedupedCandidateCount ??
+          searchProcess.dedupeStats?.dedupedResultCount ??
+          0,
+        extractAttempted: searchProcess.extractAttempted ?? 0,
+        extractedCandidateCount: searchProcess.extractedCandidateCount ?? 0,
+        evidencePackItemCount: evidencePack.items.length,
+        zeroPackAfterSuccessfulSearch:
+          searchProcess.evidenceMode !== "search_failed" &&
+          evidencePack.items.length === 0,
+        qualityDistribution:
+          searchProcess.qualityDistribution ??
+          summarizeEvidenceReliability(evidencePack.items),
+        filteredCount: searchProcess.qualityOverview.filteredCount,
+        filteredReasons: searchProcess.filteredReasons,
+        cache: summarizeCacheEvents(searchProcess.cacheEvents ?? []),
+        dedupe: {
+          originalResultCount: searchProcess.dedupeStats?.originalResultCount ?? 0,
+          dedupedResultCount: searchProcess.dedupeStats?.dedupedResultCount ?? 0,
+          removedDuplicateCount:
+            searchProcess.dedupeStats?.removedDuplicateCount ?? 0,
+          removedSameDomainCount:
+            searchProcess.dedupeStats?.removedSameDomainCount ?? 0,
+        },
+      });
+    }
   }
 
-  console.log(JSON.stringify({ searchProvider, scenarios: summaries }, null, 2));
+  console.log(JSON.stringify({ searchProvider, searchModes, scenarios: summaries }, null, 2));
 } catch (error) {
   console.error("[error] Live Tavily smoke test failed.");
   console.error(error instanceof Error ? error.message : String(error));
@@ -186,7 +205,21 @@ async function waitForServer(baseUrl) {
   throw new Error("Timed out waiting for the Next server.");
 }
 
-async function postMeetingScenario(baseUrl, question) {
+function getSearchModes() {
+  const requested = process.env.SEARCH_MODE?.trim();
+
+  if (requested === "standard" || requested === "deep") {
+    return [requested];
+  }
+
+  if (process.env.LIVE_SEARCH_BOTH_MODES === "true") {
+    return ["standard", "deep"];
+  }
+
+  return ["standard"];
+}
+
+async function postMeetingScenario(baseUrl, question, searchMode) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
 
@@ -200,6 +233,7 @@ async function postMeetingScenario(baseUrl, question) {
         isBriefMode: true,
         participantIds: ["gpt-mock"],
         question,
+        searchMode,
         webSearchEnabled: true,
       }),
       signal: controller.signal,
@@ -265,6 +299,16 @@ function summarizeCacheEvents(events) {
   return {
     hitCount: events.filter((event) => event.cacheStatus === "hit").length,
     missCount: events.filter((event) => event.cacheStatus === "miss").length,
+  };
+}
+
+function summarizeEvidenceReliability(items) {
+  return {
+    high: items.filter((item) => item.quality?.reliability === "high").length,
+    medium: items.filter((item) => item.quality?.reliability === "medium").length,
+    low: items.filter((item) => item.quality?.reliability === "low").length,
+    very_low: items.filter((item) => item.quality?.reliability === "very_low")
+      .length,
   };
 }
 

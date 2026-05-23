@@ -5,7 +5,10 @@ import {
 } from "../../../lib/meeting/engine";
 import { createProviderRegistry } from "../../../lib/providers/provider-registry";
 import { buildModelDrivenWebEvidencePack } from "../../../lib/search/model-driven-web-search";
-import { normalizeEvidencePack } from "../../../lib/search/evidence-pack";
+import {
+  normalizeEvidencePack,
+  type SearchMode,
+} from "../../../lib/search/evidence-pack";
 import { prepareMeetingForClient } from "../../../lib/search/search-response";
 import { TavilySearchError } from "../../../lib/search/tavily-search";
 import type { ModelParticipant } from "../../../lib/types";
@@ -15,6 +18,7 @@ type MeetingRequestBody = {
   isBriefMode?: unknown;
   participantIds?: unknown;
   question?: unknown;
+  searchMode?: unknown;
   webSearchEnabled?: unknown;
 };
 
@@ -24,6 +28,7 @@ export async function POST(request: Request) {
     const question = getQuestion(body);
     const isBriefMode = body.isBriefMode === true;
     const participantIds = getParticipantIds(body);
+    const searchMode = getSearchMode(body.searchMode);
     let evidencePack = normalizeEvidencePack(body.evidencePack);
 
     if (!question) {
@@ -55,6 +60,7 @@ export async function POST(request: Request) {
         baseEvidencePack: evidencePack,
         participants,
         provider: registry.provider,
+        searchMode,
         topic: question,
       });
     }
@@ -81,6 +87,10 @@ export async function POST(request: Request) {
       { status: getErrorStatus(error) },
     );
   }
+}
+
+function getSearchMode(value: unknown): SearchMode {
+  return value === "deep" ? "deep" : "standard";
 }
 
 async function readRequestBody(

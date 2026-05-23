@@ -270,7 +270,7 @@ describe("POST /api/meeting", () => {
       expect.objectContaining({
         enabled: true,
         status: "completed",
-        evidenceMode: "normal",
+        evidenceMode: "rescued_evidence",
         totalReferences: 1,
       }),
     );
@@ -348,8 +348,11 @@ describe("POST /api/meeting", () => {
     expect(body.meeting.evidencePack.searchProcess).toBeUndefined();
     expect(body.meeting.debugSearchProcess).toEqual(
       expect.objectContaining({
-        evidenceMode: "normal",
+        evidenceMode: "rescued_evidence",
         provider: "tavily",
+        rescueTriggered: true,
+        extractAttempted: expect.any(Number),
+        finalEvidenceCount: 1,
         executedQueries: expect.arrayContaining([
           expect.stringContaining("official release or report"),
         ]),

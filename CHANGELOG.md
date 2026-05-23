@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.2 internal alpha
+
+- Added an Evidence Rescue flow inspired by search-then-fetch patterns: broad search results now enter an internal candidate pool, sparse result sets can trigger Tavily Extract, and extracted content is rescored before Evidence Pack selection.
+- Added `standard` and `deep` search modes while keeping the default UI simple; deep search gathers more candidates and extracts more URLs but still caps final evidence.
+- Relaxed very-low scoring so relevant short snippets and unknown sources are not filtered solely because of source type or snippet length; low evidence remains context-only.
+
 ## v0.5.1 internal alpha
 
 - Simplified participant model cards so the default UI shows the actual model id directly without extra display-name prefixes or duplicate model metadata.

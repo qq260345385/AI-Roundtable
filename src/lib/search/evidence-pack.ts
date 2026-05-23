@@ -69,7 +69,10 @@ export type EvidenceMode =
   | "low_evidence"
   | "search_failed"
   | "no_reliable_sources"
-  | "realtime_unverified";
+  | "realtime_unverified"
+  | "rescued_evidence";
+
+export type SearchMode = "standard" | "deep";
 
 export type SearchFreshness = "latest" | "recent" | "any";
 
@@ -156,6 +159,16 @@ export type SearchProcess = {
   provider?: string;
   providerDiagnostics?: SearchProviderDiagnostic[];
   cacheEvents?: SearchCacheEvent[];
+  searchMode?: SearchMode;
+  rawCandidateCount?: number;
+  dedupedCandidateCount?: number;
+  extractAttempted?: number;
+  extractedCandidateCount?: number;
+  extractSucceededCount?: number;
+  finalEvidenceCount?: number;
+  rescueTriggered?: boolean;
+  rescueReason?: string;
+  qualityDistribution?: Record<EvidenceReliability, number>;
   searchIntents: SearchIntentRecord[];
   executedQueries: string[];
   queryPlans: SearchQueryPlan[];
@@ -259,6 +272,7 @@ const SHORT_SNIPPET_WARNING_LENGTH = 20;
 
 type NormalizeEvidencePackOptions = {
   allowLowReliabilityFallback?: boolean;
+  maxItems?: number;
   topic?: string;
 };
 
@@ -284,8 +298,9 @@ export function normalizeEvidencePack(
     hasSearchProcess || usableItems.length > 0 || options.allowLowReliabilityFallback === false
       ? usableItems
       : normalizedItems;
+  const maxItems = normalizeMaxEvidenceItems(options.maxItems);
   const items = selectedItems
-    .slice(0, MAX_EVIDENCE_ITEMS)
+    .slice(0, maxItems)
     .map((item, index) => ({
       ...item,
       id: `S${index + 1}`,
@@ -522,6 +537,15 @@ export function scoreEvidence(input: {
     clampedScore = Math.max(clampedScore, 25);
   }
 
+  if (
+    sourceType === "unknown" &&
+    snippet.length >= SHORT_SNIPPET_WARNING_LENGTH &&
+    relevanceScore >= 50 &&
+    !isClearlyUnusableEvidence(title, snippet)
+  ) {
+    clampedScore = Math.max(clampedScore, 25);
+  }
+
   const reliability = getReliability(clampedScore);
   const citationPolicy = getCitationPolicy(reliability);
 
@@ -744,6 +768,7 @@ function createSearchProcess(input: {
   );
   const cacheEvents = normalizeSearchCacheEvents(input.input.cacheEvents);
   const dedupeStats = normalizeSearchDedupeStats(input.input.dedupeStats);
+  const searchMode = normalizeSearchMode(input.input.searchMode);
   const provider = normalizeOptionalText(input.input.provider, 80);
   const providerDiagnostics = normalizeSearchProviderDiagnostics(
     input.input.providerDiagnostics,
@@ -793,6 +818,8 @@ function createSearchProcess(input: {
     intentDecisions,
     ...(cacheEvents.length > 0 ? { cacheEvents } : {}),
     ...(dedupeStats ? { dedupeStats } : {}),
+    ...(searchMode ? { searchMode } : {}),
+    ...normalizeRescueStats(input.input),
     qualityOverview,
     filteredReasons: summarizeFilteredReasons(results),
     results,
@@ -1229,12 +1256,80 @@ function normalizeEvidenceMode(value: unknown): EvidenceMode | undefined {
     value === "low_evidence" ||
     value === "search_failed" ||
     value === "no_reliable_sources" ||
-    value === "realtime_unverified"
+    value === "realtime_unverified" ||
+    value === "rescued_evidence"
   ) {
     return value;
   }
 
   return undefined;
+}
+
+function normalizeSearchMode(value: unknown): SearchMode | undefined {
+  return value === "standard" || value === "deep" ? value : undefined;
+}
+
+function normalizeRescueStats(value: Record<string, unknown>) {
+  const rescueTriggered =
+    typeof value.rescueTriggered === "boolean"
+      ? value.rescueTriggered
+      : undefined;
+  const qualityDistribution = normalizeQualityDistribution(
+    value.qualityDistribution,
+  );
+
+  return {
+    ...(value.rawCandidateCount !== undefined
+      ? { rawCandidateCount: normalizeNonNegativeInteger(value.rawCandidateCount) }
+      : {}),
+    ...(value.dedupedCandidateCount !== undefined
+      ? {
+          dedupedCandidateCount: normalizeNonNegativeInteger(
+            value.dedupedCandidateCount,
+          ),
+        }
+      : {}),
+    ...(value.extractAttempted !== undefined
+      ? { extractAttempted: normalizeNonNegativeInteger(value.extractAttempted) }
+      : {}),
+    ...(value.extractedCandidateCount !== undefined
+      ? {
+          extractedCandidateCount: normalizeNonNegativeInteger(
+            value.extractedCandidateCount,
+          ),
+        }
+      : {}),
+    ...(value.extractSucceededCount !== undefined
+      ? {
+          extractSucceededCount: normalizeNonNegativeInteger(
+            value.extractSucceededCount,
+          ),
+        }
+      : {}),
+    ...(value.finalEvidenceCount !== undefined
+      ? { finalEvidenceCount: normalizeNonNegativeInteger(value.finalEvidenceCount) }
+      : {}),
+    ...(rescueTriggered !== undefined ? { rescueTriggered } : {}),
+    ...(normalizeText(value.rescueReason, 160)
+      ? { rescueReason: normalizeText(value.rescueReason, 160) }
+      : {}),
+    ...(qualityDistribution ? { qualityDistribution } : {}),
+  };
+}
+
+function normalizeQualityDistribution(
+  value: unknown,
+): Record<EvidenceReliability, number> | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  return {
+    high: normalizeNonNegativeInteger(value.high),
+    medium: normalizeNonNegativeInteger(value.medium),
+    low: normalizeNonNegativeInteger(value.low),
+    very_low: normalizeNonNegativeInteger(value.very_low),
+  };
 }
 
 function isSearchProcess(value: unknown): value is SearchProcess {
@@ -1458,6 +1553,14 @@ function getEvidenceStatus(items: SearchEvidence[]): EvidenceStatus {
   return "low";
 }
 
+function normalizeMaxEvidenceItems(value: number | undefined) {
+  if (!Number.isFinite(value)) {
+    return MAX_EVIDENCE_ITEMS;
+  }
+
+  return Math.min(Math.max(Math.trunc(value ?? MAX_EVIDENCE_ITEMS), 1), 12);
+}
+
 function normalizeEvidenceStatus(value: unknown): EvidenceStatus | undefined {
   if (
     value === "high" ||
@@ -1596,6 +1699,29 @@ function getHostname(url: string | undefined): string {
 function hasClickbaitRisk(title: string): boolean {
   return /吊打|碾压|封神|炸裂|全网首曝|遥遥领先|奥特曼承认|最强|震撼发布/u.test(
     title,
+  );
+}
+
+function isClearlyUnusableEvidence(title: string, snippet: string): boolean {
+  const text = `${title} ${snippet}`.trim();
+
+  if (!text) {
+    return true;
+  }
+
+  if (text.length < 20) {
+    return true;
+  }
+
+  const visibleChars = text.replace(/\s/g, "");
+  const replacementCount = (visibleChars.match(/\uFFFD/g) ?? []).length;
+
+  if (visibleChars.length > 0 && replacementCount / visibleChars.length > 0.2) {
+    return true;
+  }
+
+  return /cookie policy|subscribe now|enable javascript|sign in to continue|advertisement|navigation menu/i.test(
+    text,
   );
 }
 
