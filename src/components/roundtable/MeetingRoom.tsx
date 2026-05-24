@@ -22,10 +22,13 @@ type MeetingRoomProps = {
   copyMessage: string;
   isCompleted: boolean;
   isLive: boolean;
+  isStopConfirming?: boolean;
   meeting: MeetingResult;
   onBackToSetup: () => void;
+  onCancelStopMeeting?: () => void;
   onCopyMarkdown: () => void;
   onStageChange: (stageId: string) => void;
+  onStopMeeting?: () => void;
   participants: ModelParticipant[];
   participantStatuses: LiveParticipantStatuses;
   statusMessage: string;
@@ -38,10 +41,13 @@ export function MeetingRoom({
   copyMessage,
   isCompleted,
   isLive,
+  isStopConfirming = false,
   meeting,
   onBackToSetup,
+  onCancelStopMeeting,
   onCopyMarkdown,
   onStageChange,
+  onStopMeeting,
   participants,
   participantStatuses,
   statusMessage,
@@ -77,13 +83,45 @@ export function MeetingRoom({
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              className="border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
-              onClick={onBackToSetup}
-              type="button"
-            >
-              {text.meetingRoom.backToSetup}
-            </button>
+            {isLive && onStopMeeting ? (
+              isStopConfirming ? (
+                <>
+                  <div className="w-full text-sm leading-5 text-red-700 md:w-auto md:max-w-72">
+                    {text.meetingRoom.stopMeetingHint}
+                  </div>
+                  <button
+                    className="border border-red-700 bg-red-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-red-800 hover:shadow-md active:translate-y-0"
+                    onClick={onStopMeeting}
+                    type="button"
+                  >
+                    {text.meetingRoom.confirmStopMeeting}
+                  </button>
+                  <button
+                    className="border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
+                    onClick={onCancelStopMeeting}
+                    type="button"
+                  >
+                    {text.meetingRoom.keepMeeting}
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:border-red-300 hover:bg-red-100 hover:shadow-md active:translate-y-0"
+                  onClick={onStopMeeting}
+                  type="button"
+                >
+                  {text.meetingRoom.stopMeeting}
+                </button>
+              )
+            ) : (
+              <button
+                className="border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
+                onClick={onBackToSetup}
+                type="button"
+              >
+                {text.meetingRoom.backToSetup}
+              </button>
+            )}
             <button
               className="border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-emerald-800 hover:shadow-md active:translate-y-0 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
               disabled={!isCompleted}

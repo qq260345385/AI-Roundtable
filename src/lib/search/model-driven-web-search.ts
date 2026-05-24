@@ -77,6 +77,7 @@ type Searcher = (
     freshness?: SearchFreshness;
     maxResults?: number;
     onCacheEvent?: (event: SearchCacheEvent) => void;
+    signal?: AbortSignal;
   },
 ) => Promise<TavilyEvidenceDraft[]>;
 
@@ -88,6 +89,7 @@ type BuildModelDrivenWebEvidencePackOptions = {
   searchMode?: SearchMode;
   searchProvider?: SearchProvider;
   searcher?: Searcher;
+  signal?: AbortSignal;
   topic: string;
 };
 
@@ -99,6 +101,7 @@ export async function buildModelDrivenWebEvidencePack({
   searchMode = "standard",
   searchProvider = getSearchProvider(),
   searcher,
+  signal,
   topic,
 }: BuildModelDrivenWebEvidencePackOptions): Promise<EvidencePack> {
   const modeConfig = getSearchModeConfig(searchMode);
@@ -106,6 +109,7 @@ export async function buildModelDrivenWebEvidencePack({
     topic,
     participants,
     provider,
+    signal,
   );
   const searchQueries = searchPlan.queries;
   const baseItems = baseEvidencePack?.enabled ? baseEvidencePack.items : [];
@@ -137,6 +141,7 @@ export async function buildModelDrivenWebEvidencePack({
             provider: searchProvider,
             query,
             searcher,
+            signal,
             topic,
           }).then((response) => {
             cacheEvents.push(...(response.cacheEvents ?? []));
@@ -199,6 +204,7 @@ export async function buildModelDrivenWebEvidencePack({
             query: getRescueQuery(topic, searchPlan.searchIntents),
             chunksPerSource: modeConfig.chunksPerSource,
             extractDepth: searchMode === "deep" ? "advanced" : "basic",
+            signal,
           });
           const extractedDrafts = extractResponse.results.map((result) => ({
             title: result.title,
@@ -233,6 +239,10 @@ export async function buildModelDrivenWebEvidencePack({
       }
     }
   } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+
     const failureReason = getTavilyFailureReason(error);
     const failureDiagnostics =
       error instanceof TavilySearchError && error.diagnostics
@@ -338,6 +348,7 @@ async function searchWithConfiguredProvider(input: {
   provider: SearchProvider;
   query: string;
   searcher?: Searcher;
+  signal?: AbortSignal;
   topic: string;
 }): Promise<SearchProviderResponse> {
   if (input.searcher) {
@@ -346,6 +357,7 @@ async function searchWithConfiguredProvider(input: {
       freshness: input.freshness,
       maxResults: input.maxResults,
       onCacheEvent: (event) => cacheEvents.push(event),
+      signal: input.signal,
     });
 
     return {
@@ -372,6 +384,7 @@ async function searchWithConfiguredProvider(input: {
     maxResults: input.maxResults,
     query: input.query,
     searchDepth: "basic",
+    signal: input.signal,
     topic: input.topic,
   });
 }
@@ -544,6 +557,7 @@ async function buildParticipantSearchQueries(
   topic: string,
   participants: ModelParticipant[],
   provider: ModelProvider,
+  signal?: AbortSignal,
 ): Promise<{
   queries: string[];
   searchIntents: SearchIntentRecord[];
@@ -556,12 +570,18 @@ async function buildParticipantSearchQueries(
         if (provider.generateSearchIntents) {
           return {
             participant,
-            intents: await provider.generateSearchIntents(participant, topic),
+            intents: await provider.generateSearchIntents(participant, topic, {
+              signal,
+            }),
           };
         }
 
         if (provider.generateSearchQueries) {
-          const queries = await provider.generateSearchQueries(participant, topic);
+          const queries = await provider.generateSearchQueries(
+            participant,
+            topic,
+            { signal },
+          );
 
           return {
             participant,
@@ -573,7 +593,11 @@ async function buildParticipantSearchQueries(
           participant,
           intents: [] as SearchIntent[],
         };
-      } catch {
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error;
+        }
+
         return {
           participant,
           intents: [] as SearchIntent[],

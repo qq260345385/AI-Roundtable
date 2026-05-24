@@ -116,16 +116,22 @@ async function runIndependentPhase(
   const turns: MeetingTurn[] = [];
 
   for (const participant of request.participants) {
+    throwIfAborted(request.signal);
+
     try {
       const content = await provider.generateIndependentView(
         participant,
         request.topic,
         request.evidencePack,
-        { isBriefMode: request.isBriefMode },
+        getMeetingPromptOptions(request),
       );
 
       turns.push(createTurn("independent", participant, content));
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       failures.push(createFailure(participant, "independent", error));
     }
   }
@@ -142,17 +148,23 @@ async function runResponsePhase(
   const turns: MeetingTurn[] = [];
 
   for (const participant of request.participants) {
+    throwIfAborted(request.signal);
+
     try {
       const content = await provider.generateResponse(
         participant,
         request.topic,
         independentTurns,
         request.evidencePack,
-        { isBriefMode: request.isBriefMode },
+        getMeetingPromptOptions(request),
       );
 
       turns.push(createTurn("response", participant, content));
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       failures.push(createFailure(participant, "response", error));
     }
   }
@@ -168,6 +180,8 @@ async function generateSummaryWithFallback(
   failures: MeetingProviderFailure[],
 ): Promise<MeetingSummary> {
   for (const participant of successfulParticipants) {
+    throwIfAborted(request.signal);
+
     try {
       if (provider.generateSummaryForParticipant) {
         return await provider.generateSummaryForParticipant(
@@ -175,7 +189,7 @@ async function generateSummaryWithFallback(
           request.topic,
           turns,
           request.evidencePack,
-          { isBriefMode: request.isBriefMode },
+          getMeetingPromptOptions(request),
         );
       }
 
@@ -183,14 +197,31 @@ async function generateSummaryWithFallback(
         request.topic,
         turns,
         request.evidencePack,
-        { isBriefMode: request.isBriefMode },
+        getMeetingPromptOptions(request),
       );
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       failures.push(createFailure(participant, "summary", error));
     }
   }
 
   return createFallbackSummary();
+}
+
+function getMeetingPromptOptions(request: MeetingRequest) {
+  return {
+    isBriefMode: request.isBriefMode,
+    signal: request.signal,
+  };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  }
 }
 
 function getSuccessfulParticipants(

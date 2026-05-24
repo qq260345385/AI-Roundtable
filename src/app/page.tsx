@@ -83,6 +83,7 @@ export default function Home() {
     useState<LiveParticipantStatuses>({});
   const [liveActiveStageId, setLiveActiveStageId] = useState("independent");
   const [isMeetingStreaming, setIsMeetingStreaming] = useState(false);
+  const [isStopMeetingConfirming, setIsStopMeetingConfirming] = useState(false);
   const [isEvidencePackEnabled, setIsEvidencePackEnabled] = useState(false);
   const [documentInputStrategy, setDocumentInputStrategy] =
     useState<DocumentInputStrategy>("native_file");
@@ -100,6 +101,7 @@ export default function Home() {
     const storedLocale = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     return isLocale(storedLocale) ? storedLocale : "zh";
   });
+  const meetingAbortControllerRef = useRef<AbortController | null>(null);
   const uiText = getUiText(locale);
 
   useEffect(() => {
@@ -191,7 +193,10 @@ export default function Home() {
       trimmedQuestion,
       isBriefMode,
     );
+    const meetingAbortController = new AbortController();
 
+    meetingAbortControllerRef.current?.abort();
+    meetingAbortControllerRef.current = meetingAbortController;
     setStatus("loading");
     setMessage(
       isWebSearchEnabled
@@ -206,6 +211,7 @@ export default function Home() {
     );
     setLiveActiveStageId("independent");
     setIsMeetingStreaming(true);
+    setIsStopMeetingConfirming(false);
 
     try {
       const response = await fetch("/api/meeting/live", {
@@ -225,6 +231,7 @@ export default function Home() {
           searchMode,
           webSearchEnabled: isWebSearchEnabled,
         }),
+        signal: meetingAbortController.signal,
       });
 
       if (!response.ok) {
@@ -250,10 +257,41 @@ export default function Home() {
         );
       });
     } catch (error) {
+      if (meetingAbortController.signal.aborted) {
+        return;
+      }
+
       setStatus("error");
       setMessage(getErrorMessage(error, uiText));
       setIsMeetingStreaming(false);
+    } finally {
+      if (meetingAbortControllerRef.current === meetingAbortController) {
+        meetingAbortControllerRef.current = null;
+      }
     }
+  }
+
+  function resetMeetingToSetup() {
+    setMeeting(null);
+    setStatus("initial");
+    setMessage("");
+    setCopyMessage("");
+    setMeetingParticipants([]);
+    setLiveParticipantStatuses({});
+    setLiveActiveStageId("independent");
+    setIsMeetingStreaming(false);
+    setIsStopMeetingConfirming(false);
+  }
+
+  function stopMeeting() {
+    if (!isStopMeetingConfirming) {
+      setIsStopMeetingConfirming(true);
+      return;
+    }
+
+    meetingAbortControllerRef.current?.abort();
+    meetingAbortControllerRef.current = null;
+    resetMeetingToSetup();
   }
 
   async function copyMarkdown() {
@@ -374,16 +412,13 @@ export default function Home() {
         copyMessage={copyMessage}
         isCompleted={status === "success"}
         isLive={isMeetingStreaming}
+        isStopConfirming={isStopMeetingConfirming}
         meeting={meeting}
-        onBackToSetup={() => {
-          setMeeting(null);
-          setStatus("initial");
-          setMessage("");
-          setCopyMessage("");
-          setIsMeetingStreaming(false);
-        }}
+        onBackToSetup={resetMeetingToSetup}
+        onCancelStopMeeting={() => setIsStopMeetingConfirming(false)}
         onCopyMarkdown={copyMarkdown}
         onStageChange={setLiveActiveStageId}
+        onStopMeeting={stopMeeting}
         participants={meetingParticipants}
         participantStatuses={liveParticipantStatuses}
         statusMessage={message}

@@ -61,6 +61,7 @@ export async function POST(request: Request) {
         participants,
         provider: registry.provider,
         searchMode,
+        signal: request.signal,
         topic: question,
       });
     }
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
         participants,
         evidencePack,
         isBriefMode,
+        signal: request.signal,
       },
       registry.provider,
     );

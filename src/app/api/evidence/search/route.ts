@@ -69,6 +69,7 @@ export async function POST(request: Request) {
             maxResults: maxResultsPerQuery,
             query: searchQuery,
             searchDepth: "basic",
+            signal: request.signal,
             topic: query,
           }).then((response) => {
             cacheEvents.push(...(response.cacheEvents ?? []));
@@ -128,6 +129,7 @@ export async function POST(request: Request) {
             query,
             chunksPerSource: modeConfig.chunksPerSource,
             extractDepth: searchMode === "deep" ? "advanced" : "basic",
+            signal: request.signal,
           });
           const extractedDrafts = extractResponse.results.map((result) => ({
             title: result.title,

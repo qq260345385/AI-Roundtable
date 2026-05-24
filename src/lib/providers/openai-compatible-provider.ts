@@ -60,6 +60,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   async generateSearchIntents(
     participant: ModelParticipant,
     topic: string,
+    options?: MeetingPromptOptions,
   ): Promise<SearchIntent[]> {
     const content = await this.callChat([
       {
@@ -82,7 +83,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "Create search queries that would help this participant verify current facts before speaking.",
         ].join("\n"),
       },
-    ]);
+    ], options);
 
     return parseSearchIntents(content, topic);
   }
@@ -90,8 +91,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
   async generateSearchQueries(
     participant: ModelParticipant,
     topic: string,
+    options?: MeetingPromptOptions,
   ): Promise<string[]> {
-    const intents = await this.generateSearchIntents(participant, topic);
+    const intents = await this.generateSearchIntents(participant, topic, options);
 
     return intents.map((intent) =>
       [
@@ -128,7 +130,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           .filter(Boolean)
           .join("\n"),
       },
-    ]);
+    ], options);
   }
 
   async generateResponse(
@@ -162,7 +164,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           evidencePackPrompt,
         ].join("\n"),
       },
-    ]);
+    ], options);
   }
 
   async generateSummary(
@@ -207,12 +209,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
           .filter(Boolean)
           .join("\n\n"),
       },
-    ]);
+    ], options);
 
     return parseSummary(content);
   }
 
-  private async callChat(messages: ChatMessage[]): Promise<string> {
+  private async callChat(
+    messages: ChatMessage[],
+    options?: MeetingPromptOptions,
+  ): Promise<string> {
     const response = await this.fetcher(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -223,6 +228,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         model: this.modelName,
         messages,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {

@@ -18,6 +18,7 @@ export type RoundtableMode = "mock" | "real";
 
 export type MeetingPromptOptions = {
   isBriefMode?: boolean;
+  signal?: AbortSignal;
 };
 
 export type ModelParticipant = {
@@ -46,6 +47,7 @@ export type MeetingRequest = {
   participants: ModelParticipant[];
   evidencePack?: EvidencePack;
   isBriefMode?: boolean;
+  signal?: AbortSignal;
 };
 
 export type MeetingTurn = {
@@ -158,10 +160,12 @@ export type ModelProvider = {
   generateSearchIntents?(
     participant: ModelParticipant,
     topic: string,
+    options?: MeetingPromptOptions,
   ): Promise<SearchIntent[]>;
   generateSearchQueries?(
     participant: ModelParticipant,
     topic: string,
+    options?: MeetingPromptOptions,
   ): Promise<string[]>;
   generateIndependentView(
     participant: ModelParticipant,

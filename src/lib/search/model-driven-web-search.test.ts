@@ -274,9 +274,14 @@ describe("buildModelDrivenWebEvidencePack", () => {
   });
 
   test("uses the SearchProvider interface for web searches", async () => {
+    const controller = new AbortController();
+    let intentSignal: AbortSignal | undefined;
+    let searchSignal: AbortSignal | undefined;
     const provider: ModelProvider = {
       name: "TestProvider",
-      async generateSearchIntents() {
+      async generateSearchIntents(_participant, _topic, options) {
+        intentSignal = options?.signal;
+
         return [
           {
             question: "Find official search provider evidence",
@@ -311,6 +316,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       displayName: "Test Search",
       async search(request) {
         calls.push(request.query);
+        searchSignal = request.signal;
 
         return {
           provider: "test-search",
@@ -331,11 +337,14 @@ describe("buildModelDrivenWebEvidencePack", () => {
     const pack = await buildModelDrivenWebEvidencePack({
       participants: [participant],
       provider,
+      signal: controller.signal,
       searchProvider,
       topic: "latest search provider architecture",
     });
 
     expect(calls).toHaveLength(1);
+    expect(intentSignal).toBe(controller.signal);
+    expect(searchSignal).toBe(controller.signal);
     expect(pack.items[0]).toEqual(
       expect.objectContaining({
         title: "Provider result",

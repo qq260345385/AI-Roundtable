@@ -74,6 +74,10 @@ export async function extractTavilyUrls(
     () => controller.abort(),
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
+  const requestSignal = createCombinedAbortSignal(
+    request.signal,
+    controller.signal,
+  );
 
   try {
     const response = await (options.fetchImpl ?? fetch)(
@@ -91,7 +95,7 @@ export async function extractTavilyUrls(
           query: request.query,
           urls: request.urls,
         }),
-        signal: request.signal ?? controller.signal,
+        signal: requestSignal,
       },
     );
 
@@ -205,6 +209,41 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   }
 
   return "unknown_error";
+}
+
+function createCombinedAbortSignal(
+  externalSignal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal,
+): AbortSignal {
+  if (!externalSignal) {
+    return timeoutSignal;
+  }
+
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([externalSignal, timeoutSignal]);
+  }
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal.reason);
+    }
+  };
+
+  if (externalSignal.aborted) {
+    abort(externalSignal);
+  } else if (timeoutSignal.aborted) {
+    abort(timeoutSignal);
+  } else {
+    externalSignal.addEventListener("abort", () => abort(externalSignal), {
+      once: true,
+    });
+    timeoutSignal.addEventListener("abort", () => abort(timeoutSignal), {
+      once: true,
+    });
+  }
+
+  return controller.signal;
 }
 
 async function readSafeResponseTextSnippet(response: Response) {

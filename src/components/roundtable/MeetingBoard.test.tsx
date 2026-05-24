@@ -252,4 +252,79 @@ describe("MeetingBoard", () => {
     expect(html).not.toContain("missing_api_key");
     expect(html).not.toContain("AI model benchmark latest");
   });
+
+  test("renders a stop meeting action while a live meeting is running", () => {
+    const meeting: MeetingResult = {
+      topic: "Live topic",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingRoom
+        activeStageId="independent"
+        copyMessage=""
+        isCompleted={false}
+        isLive
+        meeting={meeting}
+        onBackToSetup={() => undefined}
+        onCopyMarkdown={() => undefined}
+        onStageChange={() => undefined}
+        onStopMeeting={() => undefined}
+        participantStatuses={{}}
+        participants={[]}
+        statusMessage=""
+        statusType="loading"
+        text={getUiText("en")}
+      />,
+    );
+
+    expect(html).toContain("Stop Meeting");
+    expect(html).not.toContain("Back to Setup");
+  });
+
+  test("renders confirmation controls before stopping a live meeting", () => {
+    const meeting: MeetingResult = {
+      topic: "Live topic",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingRoom
+        activeStageId="independent"
+        copyMessage=""
+        isCompleted={false}
+        isLive
+        isStopConfirming
+        meeting={meeting}
+        onBackToSetup={() => undefined}
+        onCancelStopMeeting={() => undefined}
+        onCopyMarkdown={() => undefined}
+        onStageChange={() => undefined}
+        onStopMeeting={() => undefined}
+        participantStatuses={{}}
+        participants={[]}
+        statusMessage=""
+        statusType="loading"
+        text={getUiText("en")}
+      />,
+    );
+
+    expect(html).toContain("Confirm Stop");
+    expect(html).toContain("Continue Meeting");
+    expect(html).toContain("The meeting will stop and return to setup.");
+  });
 });

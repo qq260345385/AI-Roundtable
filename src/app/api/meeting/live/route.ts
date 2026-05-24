@@ -66,13 +66,20 @@ export async function POST(request: Request) {
         participants,
         provider: registry.provider,
         searchMode,
+        signal: request.signal,
         topic: question,
       });
     }
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
+        let isClosed = false;
+
         async function emit(event: LiveMeetingEvent) {
+          if (request.signal.aborted || isClosed) {
+            return;
+          }
+
           controller.enqueue(
             encoder.encode(
               `${JSON.stringify(prepareLiveMeetingEventForClient(event))}\n`,
@@ -87,18 +94,29 @@ export async function POST(request: Request) {
               participants,
               evidencePack,
               isBriefMode,
+              signal: request.signal,
             },
             registry.provider,
             emit,
           );
         } catch (error) {
+          if (request.signal.aborted) {
+            return;
+          }
+
           await emit({
             type: "error",
             error: getErrorMessage(error),
             status: getErrorStatus(error),
           });
         } finally {
-          controller.close();
+          isClosed = true;
+
+          try {
+            controller.close();
+          } catch {
+            // The client may have already canceled the stream.
+          }
         }
       },
     });

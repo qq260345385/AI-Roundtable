@@ -42,6 +42,7 @@ export async function runLiveMeeting(
     isTimeSensitive,
     factCheckNotice: isTimeSensitive ? FACT_HYGIENE_NOTICE : undefined,
   });
+  throwIfAborted(request.signal);
 
   const independentTurns = await runIndependentPhase(
     meetingRequest,
@@ -143,6 +144,7 @@ async function runIndependentPhase(
   });
 
   for (const participant of request.participants) {
+    throwIfAborted(request.signal);
     await emitParticipantStarted("independent", participant, emit);
 
     try {
@@ -150,13 +152,17 @@ async function runIndependentPhase(
         participant,
         request.topic,
         request.evidencePack,
-        { isBriefMode: request.isBriefMode },
+        getMeetingPromptOptions(request),
       );
       const turn = createTurn("independent", participant, content);
 
       turns.push(turn);
       await emit({ type: "turn", turn });
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       const failure = createFailure(participant, "independent", error);
 
       failures.push(failure);
@@ -184,6 +190,7 @@ async function runResponsePhase(
   });
 
   for (const participant of request.participants) {
+    throwIfAborted(request.signal);
     await emitParticipantStarted("response", participant, emit);
 
     try {
@@ -192,13 +199,17 @@ async function runResponsePhase(
         request.topic,
         independentTurns,
         request.evidencePack,
-        { isBriefMode: request.isBriefMode },
+        getMeetingPromptOptions(request),
       );
       const turn = createTurn("response", participant, content);
 
       turns.push(turn);
       await emit({ type: "turn", turn });
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       const failure = createFailure(participant, "response", error);
 
       failures.push(failure);
@@ -218,6 +229,7 @@ async function generateSummaryWithFallback(
   emit: EmitLiveMeetingEvent,
 ): Promise<MeetingSummary> {
   for (const participant of successfulParticipants) {
+    throwIfAborted(request.signal);
     await emitParticipantStarted("summary", participant, emit);
 
     try {
@@ -227,7 +239,7 @@ async function generateSummaryWithFallback(
           request.topic,
           turns,
           request.evidencePack,
-          { isBriefMode: request.isBriefMode },
+          getMeetingPromptOptions(request),
         );
       }
 
@@ -235,9 +247,13 @@ async function generateSummaryWithFallback(
         request.topic,
         turns,
         request.evidencePack,
-        { isBriefMode: request.isBriefMode },
+        getMeetingPromptOptions(request),
       );
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       const failure = createFailure(participant, "summary", error);
 
       failures.push(failure);
@@ -246,6 +262,19 @@ async function generateSummaryWithFallback(
   }
 
   return createFallbackSummary();
+}
+
+function getMeetingPromptOptions(request: MeetingRequest) {
+  return {
+    isBriefMode: request.isBriefMode,
+    signal: request.signal,
+  };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  }
 }
 
 function collectMeetingText(

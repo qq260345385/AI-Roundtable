@@ -566,6 +566,57 @@ describe("runLiveMeeting", () => {
     expect(result.summary.consensus).toEqual(["live consensus"]);
   });
 
+  test("passes abort signal through live provider calls", async () => {
+    const controller = new AbortController();
+    const receivedSignals: (AbortSignal | undefined)[] = [];
+    const provider: ModelProvider = {
+      name: "LiveProvider",
+      async generateIndependentView(_participant, _topic, _evidencePack, options) {
+        receivedSignals.push(options?.signal);
+
+        return "independent";
+      },
+      async generateResponse(
+        _participant,
+        _topic,
+        _previousTurns,
+        _evidencePack,
+        options,
+      ) {
+        receivedSignals.push(options?.signal);
+
+        return "response";
+      },
+      async generateSummary(_topic, _turns, _evidencePack, options): Promise<MeetingSummary> {
+        receivedSignals.push(options?.signal);
+
+        return {
+          consensus: ["summary"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    await runLiveMeeting(
+      {
+        topic: "abortable live meeting",
+        participants: [gptParticipant],
+        signal: controller.signal,
+      },
+      provider,
+      () => undefined,
+    );
+
+    expect(receivedSignals).toEqual([
+      controller.signal,
+      controller.signal,
+      controller.signal,
+    ]);
+  });
+
   test("emits sanitized failure events and keeps successful turns", async () => {
     const failures: string[] = [];
     const provider: ModelProvider = {

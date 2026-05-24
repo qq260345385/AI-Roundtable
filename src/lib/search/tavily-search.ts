@@ -19,6 +19,7 @@ type TavilySearchOptions = {
   maxResults?: number;
   onCacheEvent?: (event: TavilySearchCacheEvent) => void;
   searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
+  signal?: AbortSignal;
   timeoutMs?: number;
   topic?: "general" | "news" | "finance";
 };
@@ -166,6 +167,7 @@ export class TavilySearchProvider implements SearchProvider {
       maxResults: request.maxResults,
       onCacheEvent: (event) => cacheEvents.push(event),
       searchDepth: request.searchDepth,
+      signal: request.signal,
     });
 
     return {
@@ -266,6 +268,10 @@ export async function searchTavilyEvidence(
     () => controller.abort(),
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
+  const requestSignal = createCombinedAbortSignal(
+    options.signal,
+    controller.signal,
+  );
 
   try {
     const response = await (options.fetchImpl ?? fetch)(
@@ -285,7 +291,7 @@ export async function searchTavilyEvidence(
           search_depth: effectiveOptions.searchDepth,
           topic: effectiveOptions.topic,
         }),
-        signal: controller.signal,
+        signal: requestSignal,
       },
     );
 
@@ -406,6 +412,41 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   }
 
   return "unknown_error";
+}
+
+function createCombinedAbortSignal(
+  externalSignal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal,
+): AbortSignal {
+  if (!externalSignal) {
+    return timeoutSignal;
+  }
+
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([externalSignal, timeoutSignal]);
+  }
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal.reason);
+    }
+  };
+
+  if (externalSignal.aborted) {
+    abort(externalSignal);
+  } else if (timeoutSignal.aborted) {
+    abort(timeoutSignal);
+  } else {
+    externalSignal.addEventListener("abort", () => abort(externalSignal), {
+      once: true,
+    });
+    timeoutSignal.addEventListener("abort", () => abort(timeoutSignal), {
+      once: true,
+    });
+  }
+
+  return controller.signal;
 }
 
 export function createSafeTavilyDiagnostics(input: {

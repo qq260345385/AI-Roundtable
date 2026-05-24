@@ -53,6 +53,46 @@ describe("OpenAICompatibleProvider", () => {
     expect(message).not.toContain("Bearer");
   });
 
+  test("passes abort signal to chat completion fetch", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | null | undefined;
+    const provider = new OpenAICompatibleProvider({
+      providerName: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "secret-openai-key",
+      modelName: "gpt-test",
+      fetcher: async (_url, init) => {
+        receivedSignal = init?.signal;
+
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "Signal-aware response",
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    await provider.generateIndependentView(
+      {
+        id: "openai-gpt-test",
+        name: "OpenAI gpt-test",
+        provider: "OpenAI",
+        model: "gpt-test",
+        status: "available",
+        statusLabel: "Connected",
+      },
+      "test topic",
+      undefined,
+      { signal: controller.signal },
+    );
+
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
   test("asks response phase participants to address others by seat number", async () => {
     let requestBody = "";
     const provider = new OpenAICompatibleProvider({

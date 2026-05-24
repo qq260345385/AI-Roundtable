@@ -83,15 +83,19 @@ function createProviderRouter(providers: ModelProvider[]): ModelProvider {
   return {
     name: "ProviderRouter",
 
-    async generateSearchIntents(participant, topic) {
+    async generateSearchIntents(participant, topic, options) {
       const provider = findProvider(providers, participant);
 
       if (provider.generateSearchIntents) {
-        return provider.generateSearchIntents(participant, topic);
+        return provider.generateSearchIntents(participant, topic, options);
       }
 
       if (provider.generateSearchQueries) {
-        const queries = await provider.generateSearchQueries(participant, topic);
+        const queries = await provider.generateSearchQueries(
+          participant,
+          topic,
+          options,
+        );
 
         return queries.map((query) => ({
           question: query,
@@ -126,11 +130,15 @@ function createProviderRouter(providers: ModelProvider[]): ModelProvider {
       ];
     },
 
-    async generateSearchQueries(participant, topic) {
+    async generateSearchQueries(participant, topic, options) {
       const provider = findProvider(providers, participant);
 
       if (provider.generateSearchIntents) {
-        const intents = await provider.generateSearchIntents(participant, topic);
+        const intents = await provider.generateSearchIntents(
+          participant,
+          topic,
+          options,
+        );
 
         return intents.map((intent) =>
           [
@@ -142,7 +150,7 @@ function createProviderRouter(providers: ModelProvider[]): ModelProvider {
       }
 
       if (provider.generateSearchQueries) {
-        return provider.generateSearchQueries(participant, topic);
+        return provider.generateSearchQueries(participant, topic, options);
       }
 
       return [
