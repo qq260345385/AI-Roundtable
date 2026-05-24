@@ -202,6 +202,7 @@ function createSearchUserMessage(input: {
 function formatSearchFailureReason(reason: SearchFailureReason | undefined) {
   return {
     missing_api_key: "Missing API key",
+    invalid_request: "Invalid search request",
     unauthorized: "Authentication failed",
     rate_limited: "Rate limited",
     network_error: "Network error",

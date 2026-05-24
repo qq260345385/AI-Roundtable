@@ -20,6 +20,7 @@ import {
   buildTavilySearchQueries,
   dedupeSearchResults,
   getTavilyFailureReason,
+  TavilySearchError,
   type TavilyEvidenceDraft,
 } from "./tavily-search";
 import { getSearchProvider } from "./search-provider-registry";
@@ -233,6 +234,16 @@ export async function buildModelDrivenWebEvidencePack({
     }
   } catch (error) {
     const failureReason = getTavilyFailureReason(error);
+    const failureDiagnostics =
+      error instanceof TavilySearchError && error.diagnostics
+        ? [
+            ...providerDiagnostics,
+            {
+              provider: "tavily",
+              diagnostics: error.diagnostics as unknown as Record<string, unknown>,
+            },
+          ]
+        : providerDiagnostics;
 
     return normalizeEvidencePack(
       {
@@ -249,7 +260,7 @@ export async function buildModelDrivenWebEvidencePack({
           executedQueries: searchQueries,
           failureReason,
           provider: searchProvider.id,
-          providerDiagnostics,
+          providerDiagnostics: failureDiagnostics,
           searchIntents: searchPlan.searchIntents,
           queryPlans: searchPlan.queryPlans,
           intentDecisions: searchPlan.intentDecisions,

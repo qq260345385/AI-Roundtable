@@ -121,6 +121,7 @@ export type SearchIntentDecision = {
 
 export type SearchFailureReason =
   | "missing_api_key"
+  | "invalid_request"
   | "unauthorized"
   | "rate_limited"
   | "network_error"
@@ -1152,6 +1153,7 @@ function normalizeSearchFailureReason(
   value: unknown,
 ): SearchFailureReason | undefined {
   return value === "missing_api_key" ||
+    value === "invalid_request" ||
     value === "unauthorized" ||
     value === "rate_limited" ||
     value === "network_error" ||

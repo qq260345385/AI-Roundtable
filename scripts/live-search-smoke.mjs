@@ -37,6 +37,24 @@ if (!apiKey) {
   process.exit(0);
 }
 
+const preflight = await runTavilySearchPreflight(apiKey);
+console.log(
+  JSON.stringify(
+    {
+      tavilyPreflight: preflight,
+    },
+    null,
+    2,
+  ),
+);
+
+if (preflight.errorKind !== "ok") {
+  console.error(
+    `[error] Tavily Search preflight failed before meeting smoke: ${preflight.errorKind}`,
+  );
+  process.exit(1);
+}
+
 const port = Number(process.env.LIVE_SEARCH_PORT ?? 3217);
 const externalBaseUrl = process.env.LIVE_SEARCH_BASE_URL?.trim().replace(/\/+$/, "");
 const usingExternalServer = Boolean(externalBaseUrl);
@@ -198,8 +216,94 @@ function getTavilyApiKey() {
     .replace(/^['"]|['"]$/g, "");
 }
 
+async function runTavilySearchPreflight(apiKey) {
+  const endpoint = "https://api.tavily.com/search";
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        include_answer: false,
+        include_images: false,
+        include_raw_content: false,
+        max_results: 1,
+        query: "Tavily API preflight",
+        search_depth: "basic",
+        topic: "general",
+      }),
+    });
+    const responseTextSnippet = sanitizeForLog(await response.text()).slice(0, 300);
+    const errorKind = response.ok
+      ? "ok"
+      : classifyTavilyHttpStatus(response.status);
+
+    return {
+      provider: "tavily",
+      endpoint: "/search",
+      errorKind,
+      httpStatus: response.status,
+      responseTextSnippet,
+      requestHasApiKey: Boolean(apiKey),
+      apiKeyLength: apiKey.length,
+      nodeVersion: process.version,
+      fetchAvailable: typeof fetch === "function",
+      elapsedMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      provider: "tavily",
+      endpoint: "/search",
+      errorKind: "network_error",
+      safeMessage: sanitizeForLog(
+        error instanceof Error ? error.message : String(error),
+      ).slice(0, 120),
+      errorName: error instanceof Error ? error.name : undefined,
+      isAbortError: error instanceof Error && error.name === "AbortError",
+      isTypeError: error instanceof TypeError,
+      requestHasApiKey: Boolean(apiKey),
+      apiKeyLength: apiKey.length,
+      nodeVersion: process.version,
+      fetchAvailable: typeof fetch === "function",
+      elapsedMs: Date.now() - startedAt,
+    };
+  }
+}
+
+function classifyTavilyHttpStatus(status) {
+  if (status === 400) {
+    return "invalid_request";
+  }
+
+  if (status === 401 || status === 403) {
+    return "unauthorized";
+  }
+
+  if (status === 429) {
+    return "rate_limited";
+  }
+
+  if (status >= 200 && status < 300) {
+    return "ok";
+  }
+
+  return "unknown_error";
+}
+
 function pushLog(logs, chunk) {
-  logs.push(String(chunk).replace(/Bearer\s+\S+/gi, "Bearer [redacted]"));
+  logs.push(sanitizeForLog(String(chunk)));
+}
+
+function sanitizeForLog(value) {
+  return value
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/tvly-[A-Za-z0-9._~+/=-]+/gi, "tvly-[redacted]")
+    .replace(/secret[-_A-Za-z0-9]*/gi, "[redacted]")
+    .replace(/Authorization/gi, "[redacted-header]");
 }
 
 async function waitForServer(baseUrl) {

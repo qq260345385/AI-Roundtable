@@ -243,6 +243,16 @@ export async function POST(request: Request) {
       ],
     });
   } catch (error) {
+    const failureDiagnostics =
+      error instanceof TavilySearchError && error.diagnostics
+        ? [
+            ...providerDiagnostics,
+            {
+              provider: "tavily",
+              diagnostics: error.diagnostics as unknown as Record<string, unknown>,
+            },
+          ]
+        : providerDiagnostics;
     const failureProcess =
       error instanceof TavilySearchError
         ? createSearchFailureProcess({
@@ -250,7 +260,7 @@ export async function POST(request: Request) {
             failureReason: getTavilyFailureReason(error),
             cacheEvents,
             provider: selectedSearchProviderId,
-            providerDiagnostics,
+            providerDiagnostics: failureDiagnostics,
             warnings: [getTavilyFailureReason(error)],
           })
         : undefined;

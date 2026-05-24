@@ -59,11 +59,28 @@ export type SearchDedupeResult<T extends TavilyEvidenceDraft = TavilyEvidenceDra
 };
 export type TavilyFailureReason =
   | "missing_api_key"
+  | "invalid_request"
   | "unauthorized"
   | "rate_limited"
   | "network_error"
   | "invalid_response"
   | "unknown_error";
+
+export type SafeTavilyDiagnostics = {
+  provider: "tavily";
+  endpoint: "/search" | "/extract";
+  errorKind: TavilyFailureReason;
+  httpStatus?: number;
+  safeMessage?: string;
+  errorName?: string;
+  isAbortError: boolean;
+  isTypeError: boolean;
+  responseTextSnippet?: string;
+  requestHasApiKey: boolean;
+  apiKeyLength: number;
+  nodeVersion: string;
+  fetchAvailable: boolean;
+};
 
 const DEFAULT_TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const DEFAULT_MAX_RESULTS = 20;
@@ -111,7 +128,13 @@ const tavilySearchCache = new Map<
 export class TavilySearchError extends Error {
   constructor(
     messageOrReason: string,
-    options: number | { reason: TavilyFailureReason; status?: number } = 502,
+    options:
+      | number
+      | {
+          diagnostics?: SafeTavilyDiagnostics;
+          reason: TavilyFailureReason;
+          status?: number;
+        } = 502,
   ) {
     const reason =
       typeof options === "number"
@@ -121,10 +144,13 @@ export class TavilySearchError extends Error {
     super(`Tavily search failed: ${reason}`);
     this.reason = reason;
     this.status = typeof options === "number" ? options : options.status ?? 502;
+    this.diagnostics =
+      typeof options === "number" ? undefined : options.diagnostics;
   }
 
   reason: TavilyFailureReason;
   status: number;
+  diagnostics?: SafeTavilyDiagnostics;
 }
 
 export class TavilySearchProvider implements SearchProvider {
@@ -264,7 +290,17 @@ export async function searchTavilyEvidence(
     );
 
     if (!response.ok) {
+      const responseTextSnippet = await readSafeResponseTextSnippet(response);
+
       throw new TavilySearchError(getHttpFailureReason(response.status), {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/search",
+          errorKind: getHttpFailureReason(response.status),
+          httpStatus: response.status,
+          responseTextSnippet,
+          safeMessage: response.statusText,
+        }),
         reason: getHttpFailureReason(response.status),
         status: 502,
       });
@@ -301,12 +337,24 @@ export async function searchTavilyEvidence(
 
     if (error instanceof Error && error.name === "AbortError") {
       throw new TavilySearchError("network_error", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/search",
+          error,
+          errorKind: "network_error",
+        }),
         reason: "network_error",
         status: 504,
       });
     }
 
     throw new TavilySearchError("network_error", {
+      diagnostics: createSafeTavilyDiagnostics({
+        apiKey,
+        endpoint: "/search",
+        error,
+        errorKind: "network_error",
+      }),
       reason: "network_error",
       status: 502,
     });
@@ -345,6 +393,10 @@ export function getTavilyCacheTtlMs(
 }
 
 function getHttpFailureReason(status: number): TavilyFailureReason {
+  if (status === 400) {
+    return "invalid_request";
+  }
+
   if (status === 401 || status === 403) {
     return "unauthorized";
   }
@@ -354,6 +406,50 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   }
 
   return "unknown_error";
+}
+
+export function createSafeTavilyDiagnostics(input: {
+  apiKey: string | undefined;
+  endpoint: "/search" | "/extract";
+  error?: unknown;
+  errorKind: TavilyFailureReason;
+  httpStatus?: number;
+  responseTextSnippet?: string;
+  safeMessage?: string;
+}): SafeTavilyDiagnostics {
+  const error = input.error instanceof Error ? input.error : undefined;
+
+  return {
+    provider: "tavily",
+    endpoint: input.endpoint,
+    errorKind: input.errorKind,
+    ...(input.httpStatus ? { httpStatus: input.httpStatus } : {}),
+    ...(input.safeMessage
+      ? { safeMessage: sanitizeSearchText(input.safeMessage).slice(0, 120) }
+      : {}),
+    ...(error?.name ? { errorName: sanitizeSearchText(error.name).slice(0, 80) } : {}),
+    isAbortError: error?.name === "AbortError",
+    isTypeError: error instanceof TypeError,
+    ...(input.responseTextSnippet
+      ? {
+          responseTextSnippet: sanitizeSearchText(
+            input.responseTextSnippet,
+          ).slice(0, 300),
+        }
+      : {}),
+    requestHasApiKey: Boolean(input.apiKey),
+    apiKeyLength: input.apiKey?.length ?? 0,
+    nodeVersion: process.version,
+    fetchAvailable: typeof fetch === "function",
+  };
+}
+
+async function readSafeResponseTextSnippet(response: Response) {
+  try {
+    return sanitizeSearchText(await response.text()).slice(0, 300);
+  } catch {
+    return "";
+  }
 }
 
 export function normalizeTavilySearchResponse(

@@ -4,6 +4,7 @@ import type {
   ExtractProviderResponse,
 } from "./extract-provider";
 import {
+  createSafeTavilyDiagnostics,
   TavilySearchError,
   type TavilyFailureReason,
 } from "./tavily-search";
@@ -95,7 +96,17 @@ export async function extractTavilyUrls(
     );
 
     if (!response.ok) {
+      const responseTextSnippet = await readSafeResponseTextSnippet(response);
+
       throw new TavilySearchError(getHttpFailureReason(response.status), {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/extract",
+          errorKind: getHttpFailureReason(response.status),
+          httpStatus: response.status,
+          responseTextSnippet,
+          safeMessage: response.statusText,
+        }),
         reason: getHttpFailureReason(response.status),
         status: 502,
       });
@@ -132,12 +143,24 @@ export async function extractTavilyUrls(
 
     if (error instanceof Error && error.name === "AbortError") {
       throw new TavilySearchError("network_error", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/extract",
+          error,
+          errorKind: "network_error",
+        }),
         reason: "network_error",
         status: 504,
       });
     }
 
     throw new TavilySearchError("network_error", {
+      diagnostics: createSafeTavilyDiagnostics({
+        apiKey,
+        endpoint: "/extract",
+        error,
+        errorKind: "network_error",
+      }),
       reason: "network_error",
       status: 502,
     });
@@ -169,6 +192,10 @@ function normalizeExtractResult(result: unknown) {
 }
 
 function getHttpFailureReason(status: number): TavilyFailureReason {
+  if (status === 400) {
+    return "invalid_request";
+  }
+
   if (status === 401 || status === 403) {
     return "unauthorized";
   }
@@ -178,6 +205,14 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   }
 
   return "unknown_error";
+}
+
+async function readSafeResponseTextSnippet(response: Response) {
+  try {
+    return (await response.text()).slice(0, 300);
+  } catch {
+    return "";
+  }
 }
 
 function stringFrom(value: unknown) {
