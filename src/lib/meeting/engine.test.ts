@@ -236,7 +236,7 @@ describe("runMeeting", () => {
                 textLength: 3,
                 wasTruncated: false,
                 warnings: ["仅有标题或极短摘要，不能作为事实依据"],
-                sourceType: "community",
+                sourceType: "social_forum",
                 reliability: "very_low",
                 score: 0,
               },
@@ -382,7 +382,7 @@ describe("runMeeting", () => {
 
     expect(result.phases[1].turns).toHaveLength(1);
     expect(result.phases[1].turns[0].speakerName).toBe("GPT Mock");
-    expect(result.failures[0]).toMatchObject({
+    expect(result.failures?.[0]).toMatchObject({
       providerId: "claude",
       stage: "response",
     });
@@ -459,7 +459,7 @@ describe("runMeeting", () => {
     );
 
     expect(result.summary.risks[0]).toContain("未能生成模型总结");
-    expect(result.failures[0]).toMatchObject({
+    expect(result.failures?.[0]).toMatchObject({
       providerId: "gpt",
       stage: "summary",
     });

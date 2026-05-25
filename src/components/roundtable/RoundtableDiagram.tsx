@@ -1,5 +1,6 @@
 import type { ModelParticipant } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
+import { formatModelDisplayName } from "@/lib/models/model-display-name";
 
 type RoundtableDiagramProps = {
   participants: ModelParticipant[];
@@ -26,7 +27,7 @@ export function RoundtableDiagram({ participants, text }: RoundtableDiagramProps
                 {text.diagram.seat} {index + 1}
               </p>
               <p className="mt-1 font-medium text-zinc-950">
-                {participant.name}
+                {formatModelDisplayName(participant.model)}
               </p>
             </div>
           </div>

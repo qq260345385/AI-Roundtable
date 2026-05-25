@@ -14,7 +14,7 @@ const participant: ModelParticipant = {
 };
 
 describe("ParticipantList", () => {
-  test("shows the model id as the visible participant label without display-name prefixes", () => {
+  test("shows a formatted model name without display-name prefixes", () => {
     const html = renderToStaticMarkup(
       <ParticipantList
         disabled={false}
@@ -27,7 +27,8 @@ describe("ParticipantList", () => {
       />,
     );
 
-    expect(html).toContain("deepseek-v4-flash");
+    expect(html).toContain("DeepSeek V4 Flash");
+    expect(html).not.toContain("deepseek-v4-flash");
     expect(html).not.toContain("DeepSeek Flash deepseek-v4-flash");
     expect(html).not.toContain(">DeepSeek Flash<");
     expect(html).not.toContain("model:");

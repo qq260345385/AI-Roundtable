@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   createSearchFailureProcess,
+  isPublicOpinionEvidenceItem,
+  isStrongOfficialSource,
   normalizeEvidencePack,
+  scoreEvidence,
   type SearchMode,
   type SearchCacheEvent,
   type SearchEvidence,
@@ -18,6 +21,7 @@ import {
   dedupeSearchResults,
   getSafeTavilyErrorMessage,
   getTavilyFailureReason,
+  type TavilyEvidenceDraft,
 } from "../../../../lib/search/tavily-search";
 import { createSearchProviderRegistry } from "../../../../lib/search/search-provider-registry";
 import { getExtractProvider } from "../../../../lib/search/extract-provider-registry";
@@ -36,6 +40,9 @@ type SearchModeConfig = {
   finalLimit: number;
   chunksPerSource: number;
 };
+
+const RESCUE_TRIGGER_USABLE_THRESHOLD = 3;
+const RESCUE_TRIGGER_RELIABLE_THRESHOLD = 3;
 
 export async function POST(request: Request) {
   const cacheEvents: SearchCacheEvent[] = [];
@@ -97,6 +104,9 @@ export async function POST(request: Request) {
     let extractAttempted = 0;
     let extractedCandidateCount = 0;
     let extractSucceededCount = 0;
+    let officialExtractFailed = false;
+    let targetedSearchRetryTriggered = false;
+    let targetedSearchRetryReason: string | undefined;
     let preflightPack = normalizeEvidencePack(
       {
         enabled: true,
@@ -108,16 +118,77 @@ export async function POST(request: Request) {
       },
     );
 
-    if (
-      preflightPack.items.length < 3 &&
-      drafts.some((draft) => draft.url)
-    ) {
+    if (shouldRunTargetedSearchRetry(preflightPack)) {
+      targetedSearchRetryTriggered = true;
+      targetedSearchRetryReason = "social_video_ratio_above_threshold";
+      const targetedQueries = buildTargetedRetryQueries(query);
+      const targetedResults = (
+        await Promise.all(
+          targetedQueries.map((searchQuery) =>
+            searchProvider
+              .search({
+                freshness: "latest",
+                maxResults: Math.max(2, Math.ceil(modeConfig.extractLimit / 3)),
+                query: searchQuery,
+                searchDepth: "basic",
+                signal: request.signal,
+                topic: query,
+              })
+              .then((response) => {
+                cacheEvents.push(...(response.cacheEvents ?? []));
+              providerDiagnostics.push(
+                createProviderDiagnostic(response, providerRegistry),
+              );
+
+                return response.results.map((result) => ({
+                  title: result.title,
+                  url: result.url,
+                  snippet: result.content ?? result.snippet ?? "",
+                  publishedAt: result.publishedDate,
+                  query: searchQuery,
+                }));
+              }),
+          ),
+        )
+      ).flat();
+      const targetedDeduped = dedupeSearchResults([
+        ...drafts,
+        ...targetedResults,
+      ]);
+
+      drafts = targetedDeduped.items.slice(0, modeConfig.candidateLimit);
+      dedupeStats = mergeDedupeStats(dedupeStats, targetedDeduped.stats);
+      searchQueries.push(...targetedQueries);
+      preflightPack = normalizeEvidencePack(
+        {
+          enabled: true,
+          items: drafts,
+        },
+        {
+          maxItems: modeConfig.finalLimit,
+          topic: query,
+        },
+      );
+    }
+
+    const rescueDecision = getExtractRescueDecision(preflightPack, searchMode);
+
+    if (rescueDecision.triggered && drafts.some((draft) => draft.url)) {
       rescueTriggered = true;
-      rescueReason = "usable_evidence_below_threshold";
+      rescueReason = rescueDecision.reason;
       const rescueUrls = drafts
+        .filter((draft) => Boolean(draft.url))
+        .sort((left, right) =>
+          getRescueDraftRank(left, query) - getRescueDraftRank(right, query),
+        )
         .map((draft) => draft.url)
         .filter((url): url is string => Boolean(url))
         .slice(0, modeConfig.extractLimit);
+      const officialRetryUrls = new Set(
+        drafts
+          .filter((draft) => draft.url && isOfficialSnippetOnlyDraft(draft, query))
+          .map((draft) => draft.url as string),
+      );
 
       extractAttempted = rescueUrls.length;
 
@@ -147,6 +218,12 @@ export async function POST(request: Request) {
           extractSucceededCount = extractedDrafts.filter((draft) =>
             draft.snippet.trim(),
           ).length;
+          officialExtractFailed =
+            officialRetryUrls.size > 0 &&
+            !extractedDrafts.some(
+              (draft) =>
+                officialRetryUrls.has(draft.url) && draft.snippet.trim().length >= 800,
+            );
           drafts = rescuedDeduped.items.slice(0, modeConfig.candidateLimit);
           dedupeStats = mergeDedupeStats(dedupeStats, rescuedDeduped.stats);
           providerDiagnostics.push({
@@ -169,6 +246,7 @@ export async function POST(request: Request) {
           );
         } catch (error) {
           rescueReason = `extract_failed:${getTavilyFailureReason(error)}`;
+          officialExtractFailed = officialRetryUrls.size > 0;
         }
       }
     }
@@ -199,6 +277,9 @@ export async function POST(request: Request) {
           rawCandidateCount,
           rescueReason,
           rescueTriggered,
+          officialExtractFailed,
+          targetedSearchRetryTriggered,
+          targetedSearchRetryReason,
           searchMode,
           provider: searchProvider.id,
           providerDiagnostics,
@@ -320,7 +401,7 @@ function getQuery(body: SearchRequestBody) {
 }
 
 function getSearchMode(value: unknown): SearchMode {
-  return value === "deep" ? "deep" : "standard";
+  return value === "standard" ? "standard" : "deep";
 }
 
 function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
@@ -339,6 +420,144 @@ function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
     finalLimit: 8,
     chunksPerSource: 2,
   };
+}
+
+function getExtractRescueDecision(
+  pack: { items: SearchEvidence[] },
+  searchMode: SearchMode,
+): { triggered: boolean; reason?: string } {
+  if (pack.items.some(isOfficialSnippetOnlyEvidence)) {
+    return {
+      triggered: true,
+      reason: "official_snippet_only",
+    };
+  }
+
+  if (pack.items.length < RESCUE_TRIGGER_USABLE_THRESHOLD) {
+    return {
+      triggered: true,
+      reason: "usable_evidence_below_threshold",
+    };
+  }
+
+  if (getReliableEvidenceCount(pack.items) < RESCUE_TRIGGER_RELIABLE_THRESHOLD) {
+    return {
+      triggered: true,
+      reason: "reliable_evidence_below_threshold",
+    };
+  }
+
+  if (getShortExtractedTextRatio(pack.items) > 0.7) {
+    return {
+      triggered: true,
+      reason: "short_extracted_text_ratio_above_threshold",
+    };
+  }
+
+  if (
+    searchMode === "deep" &&
+    getReliableEvidenceCount(pack.items) < RESCUE_TRIGGER_RELIABLE_THRESHOLD
+  ) {
+    return {
+      triggered: true,
+      reason: "reliable_evidence_below_threshold",
+    };
+  }
+
+  return { triggered: false };
+}
+
+function shouldRunTargetedSearchRetry(pack: { items: SearchEvidence[] }): boolean {
+  if (pack.items.length === 0) {
+    return false;
+  }
+
+  const socialVideoCount = pack.items.filter(isPublicOpinionEvidenceItem).length;
+
+  return socialVideoCount / pack.items.length > 0.5;
+}
+
+function buildTargetedRetryQueries(topic: string): string[] {
+  return [
+    `${topic} official reputable media industry report -linkedin -instagram -reddit -youtube -tiktok -twitter -x.com`,
+    `${topic} Reuters Bloomberg NYTimes WSJ FT The Information TechCrunch`,
+    `${topic} official announcement report site:openai.com OR site:anthropic.com`,
+  ].map((query) => query.slice(0, 160));
+}
+
+function isOfficialSnippetOnlyEvidence(item: SearchEvidence): boolean {
+  return (
+    isStrongOfficialSource(item.quality?.sourceType) &&
+    ((item.quality?.textLength ?? item.snippet.length) < 800 ||
+      item.quality?.snippetOnly === true)
+  );
+}
+
+function isOfficialSnippetOnlyDraft(
+  draft: TavilyEvidenceDraft,
+  topic: string,
+): boolean {
+  const quality = scoreEvidence({
+    title: draft.title,
+    url: draft.url,
+    source: draft.source,
+    publishedAt: draft.publishedAt,
+    snippet: draft.snippet,
+    topic,
+  });
+
+  return (
+    isStrongOfficialSource(quality.sourceType) &&
+    (quality.textLength < 800 || quality.snippetOnly === true)
+  );
+}
+
+function getRescueDraftRank(draft: TavilyEvidenceDraft, topic: string): number {
+  const quality = scoreEvidence({
+    title: draft.title,
+    url: draft.url,
+    source: draft.source,
+    publishedAt: draft.publishedAt,
+    snippet: draft.snippet,
+    topic,
+  });
+
+  if (isStrongOfficialSource(quality.sourceType)) {
+    return 0;
+  }
+
+  if (
+    quality.sourceType === "reputable_media" ||
+    quality.sourceType === "industry_report"
+  ) {
+    return 1;
+  }
+
+  if (quality.sourceType === "unknown") {
+    return 2;
+  }
+
+  return 3;
+}
+
+function getReliableEvidenceCount(items: SearchEvidence[]): number {
+  return items.filter((item) => {
+    const reliability = item.quality?.reliability;
+
+    return reliability === "high" || reliability === "medium";
+  }).length;
+}
+
+function getShortExtractedTextRatio(items: SearchEvidence[]): number {
+  if (items.length === 0) {
+    return 0;
+  }
+
+  const shortCount = items.filter(
+    (item) => (item.quality?.textLength ?? item.snippet.length) < 800,
+  ).length;
+
+  return shortCount / items.length;
 }
 
 function getMaxResultsPerQuery(candidateLimit: number, queryCount: number) {

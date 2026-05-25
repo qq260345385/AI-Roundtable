@@ -165,8 +165,11 @@ describe("Tavily evidence search", () => {
   });
 
   test("calls Tavily search with bearer auth and returns normalized drafts", async () => {
-    const fetchMock = vi.fn(async () =>
-      Response.json({
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      void _url;
+      void _init;
+
+      return Response.json({
         results: [
           {
             title: "Fresh source",
@@ -174,8 +177,8 @@ describe("Tavily evidence search", () => {
             content: "A fresh source was found.",
           },
         ],
-      }),
-    );
+      });
+    });
 
     const drafts = await searchTavilyEvidence("fresh topic", {
       apiKey: "tvly-test-key",

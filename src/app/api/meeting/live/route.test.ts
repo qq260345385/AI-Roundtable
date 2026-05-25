@@ -147,6 +147,7 @@ describe("POST /api/meeting/live", () => {
         executedQueries: expect.arrayContaining([
           expect.stringContaining("official release or report"),
         ]),
+        searchMode: "deep",
       }),
     );
     expect(completed.meeting.debugSearchProcess).toEqual(

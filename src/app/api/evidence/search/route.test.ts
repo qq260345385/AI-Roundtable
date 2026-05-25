@@ -74,7 +74,6 @@ describe("POST /api/evidence/search", () => {
       }),
     );
     const body = await response.json();
-
     expect(response.status).toBe(200);
     expect(body.drafts).toHaveLength(1);
     expect(body.evidencePack).toEqual(
@@ -155,7 +154,6 @@ describe("POST /api/evidence/search", () => {
       }),
     );
     const body = await response.json();
-
     expect(response.status).toBe(200);
     expect(body.debugSearchProcess).toEqual(
       expect.objectContaining({
@@ -271,9 +269,9 @@ describe("POST /api/evidence/search", () => {
     expect(response.status).toBe(200);
     expect(body.debugSearchProcess).toEqual(
       expect.objectContaining({
-        searchMode: "standard",
+        searchMode: "deep",
         rescueTriggered: true,
-        rescueReason: "usable_evidence_below_threshold",
+        rescueReason: "official_snippet_only",
         rawCandidateCount: expect.any(Number),
         dedupedCandidateCount: expect.any(Number),
         extractAttempted: expect.any(Number),
@@ -325,7 +323,7 @@ describe("POST /api/evidence/search", () => {
       body.evidencePack.items.filter(
         (item: { source?: string }) => item.source === "openai.com",
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(body.evidencePack.searchProcess).toBeUndefined();
     expect(body.debugSearchProcess.dedupeStats).toEqual(
       expect.objectContaining({

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { MeetingResult } from "@/lib/types";
+import type { MeetingResult, ModelParticipant } from "@/lib/types";
 import { getUiText } from "@/lib/i18n/ui-text";
 import { MeetingBoard } from "./MeetingBoard";
 import { MeetingRoom } from "./MeetingRoom";
@@ -45,8 +45,9 @@ describe("MeetingBoard", () => {
               ],
               textLength: 500,
               wasTruncated: false,
-              sourceType: "community",
+              sourceType: "social_forum",
               reliability: "low",
+              score: 35,
             },
           },
         ],
@@ -156,13 +157,14 @@ describe("MeetingBoard", () => {
             very_low: 1,
           },
           bySourceType: {
-            official: 0,
-            benchmark: 0,
-            media: 0,
-            blog: 0,
-            community: 0,
-            social: 1,
-            video: 0,
+            official_statement: 0,
+            official_blog: 0,
+            official_docs: 0,
+            official_community: 0,
+            reputable_media: 0,
+            industry_report: 0,
+            social_forum: 1,
+            video_platform: 0,
             unknown: 0,
           },
         },
@@ -171,9 +173,11 @@ describe("MeetingBoard", () => {
           {
             title: "Short social post",
             query: "AI model benchmark community",
-            sourceType: "social",
+            sourceType: "social_forum",
             reliability: "very_low",
             score: 10,
+            citationLevel: "not_citable",
+            citationGuidance: "Do not cite this result as evidence.",
             qualityWarnings: ["Too short"],
             includedInEvidencePack: false,
             filtered: true,
@@ -287,6 +291,101 @@ describe("MeetingBoard", () => {
 
     expect(html).toContain("Stop Meeting");
     expect(html).not.toContain("Back to Setup");
+  });
+
+  test("renders formatted model names in the live participant sidebar", () => {
+    const meeting: MeetingResult = {
+      topic: "Live topic",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+    };
+    const participants: ModelParticipant[] = [
+      {
+        id: "deepseek-v4-flash",
+        name: "DeepSeek Flash deepseek-v4-flash",
+        provider: "DeepSeek Flash",
+        model: "deepseek-v4-flash",
+        status: "available",
+        statusLabel: "Connected",
+      },
+      {
+        id: "mimo-v2.5-pro",
+        name: "Xiaomi MiMo mimo-v2.5-pro",
+        provider: "Xiaomi MiMo",
+        model: "mimo-v2.5-pro",
+        status: "available",
+        statusLabel: "Connected",
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <MeetingRoom
+        activeStageId="independent"
+        copyMessage=""
+        isCompleted={false}
+        isLive
+        meeting={meeting}
+        onBackToSetup={() => undefined}
+        onCopyMarkdown={() => undefined}
+        onStageChange={() => undefined}
+        onStopMeeting={() => undefined}
+        participantStatuses={{}}
+        participants={participants}
+        statusMessage=""
+        statusType="loading"
+        text={getUiText("en")}
+      />,
+    );
+
+    expect(html).toContain("DeepSeek V4 Flash");
+    expect(html).toContain("MiMo V2.5 Pro");
+    expect(html).not.toContain("DeepSeek Flash deepseek-v4-flash");
+    expect(html).not.toContain("Xiaomi MiMo mimo-v2.5-pro");
+    expect(html).not.toContain("deepseek-v4-flash");
+    expect(html).not.toContain("mimo-v2.5-pro");
+  });
+
+  test("keeps the live participant sidebar visible while scrolling on desktop", () => {
+    const meeting: MeetingResult = {
+      topic: "Long live topic",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingRoom
+        activeStageId="independent"
+        copyMessage=""
+        isCompleted={false}
+        isLive
+        meeting={meeting}
+        onBackToSetup={() => undefined}
+        onCopyMarkdown={() => undefined}
+        onStageChange={() => undefined}
+        onStopMeeting={() => undefined}
+        participantStatuses={{}}
+        participants={[]}
+        statusMessage=""
+        statusType="loading"
+        text={getUiText("en")}
+      />,
+    );
+
+    expect(html).toContain("lg:sticky");
+    expect(html).toContain("lg:top-4");
+    expect(html).toContain("lg:max-h-[calc(100vh-2rem)]");
   });
 
   test("renders confirmation controls before stopping a live meeting", () => {

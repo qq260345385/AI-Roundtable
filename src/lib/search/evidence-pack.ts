@@ -3,6 +3,7 @@ export type SearchEvidence = {
   title: string;
   query?: string;
   sourceQueries?: string[];
+  seenInPasses?: string[];
   url?: string;
   source?: string;
   publishedAt?: string;
@@ -43,7 +44,8 @@ export type EvidenceQuality = {
   wasTruncated: boolean;
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
-  score?: number;
+  score: number;
+  snippetOnly?: boolean;
   citationLevel?: EvidenceCitationLevel;
   citationGuidance?: string;
   relevanceScore?: number;
@@ -134,9 +136,12 @@ export type SearchProcessResult = {
   url?: string;
   source?: string;
   sourceQueries?: string[];
+  seenInPasses?: string[];
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
   score: number;
+  textLength?: number;
+  snippetOnly?: boolean;
   citationLevel: EvidenceCitationLevel;
   citationGuidance: string;
   qualityWarnings: string[];
@@ -154,6 +159,54 @@ export type SearchQualityOverview = {
   bySourceType: Record<EvidenceSourceType, number>;
 };
 
+export type EvidenceDebugSummary = {
+  evidenceHitRate: {
+    candidateCount: number;
+    coreEvidenceCount: number;
+    evidenceHitRate: number;
+  };
+  extractionSuccessRate: {
+    extractAttemptCount: number;
+    extractSuccessCount: number;
+    extractionSuccessRate: number;
+  };
+  sourceMix: {
+    officialCount: number;
+    reputableMediaCount: number;
+    industryReportCount: number;
+    socialVideoCount: number;
+    unknownCount: number;
+  };
+  degradeReasonsSummary: {
+    snippetOnly: number;
+    sourceTooWeak: number;
+    textTooShort: number;
+    scoreTooLow: number;
+    extractionFailed: number;
+    socialVideoSource: number;
+  };
+  lowEvidenceTriggerReasons: {
+    coreEvidenceLessThan3: boolean;
+    highMediumLessThan3: boolean;
+    shortTextRatioTooHigh: boolean;
+    socialVideoRatioTooHigh: boolean;
+    searchFailed: boolean;
+  };
+  passStats: EvidenceSearchPassStats[];
+  selectedEvidenceByPass: { passName: string; count: number }[];
+  skippedPasses: string[];
+};
+
+export type EvidenceSearchPassStats = {
+  passName: string;
+  query: string;
+  resultCount: number;
+  extractedCount: number;
+  coreEvidenceCount: number;
+  socialVideoCount: number;
+  unknownCount: number;
+};
+
 export type SearchProcess = {
   evidenceMode: EvidenceMode;
   failureReason?: SearchFailureReason;
@@ -169,6 +222,11 @@ export type SearchProcess = {
   finalEvidenceCount?: number;
   rescueTriggered?: boolean;
   rescueReason?: string;
+  officialExtractFailed?: boolean;
+  targetedSearchRetryTriggered?: boolean;
+  targetedSearchRetryReason?: string;
+  passStats?: EvidenceSearchPassStats[];
+  skippedPasses?: string[];
   qualityDistribution?: Record<EvidenceReliability, number>;
   searchIntents: SearchIntentRecord[];
   executedQueries: string[];
@@ -176,6 +234,7 @@ export type SearchProcess = {
   intentDecisions: SearchIntentDecision[];
   dedupeStats?: SearchDedupeStats;
   qualityOverview: SearchQualityOverview;
+  debugSummary?: EvidenceDebugSummary;
   filteredReasons: { reason: string; count: number }[];
   results: SearchProcessResult[];
   warnings: string[];
@@ -237,13 +296,14 @@ export type SearchProviderDiagnostic = {
 };
 
 export type EvidenceSourceType =
-  | "official"
-  | "benchmark"
-  | "media"
-  | "blog"
-  | "community"
-  | "social"
-  | "video"
+  | "official_statement"
+  | "official_blog"
+  | "official_docs"
+  | "official_community"
+  | "reputable_media"
+  | "industry_report"
+  | "social_forum"
+  | "video_platform"
   | "unknown";
 
 export type EvidenceReliability = "high" | "medium" | "low" | "very_low";
@@ -255,11 +315,13 @@ export type EvidenceCitationLevel =
 export type EvidenceStatus = "high" | "medium" | "low" | "none";
 
 export type EvidenceQualityOverview = {
-  officialCount: number;
-  benchmarkCount: number;
-  mediaCount: number;
-  communitySocialVideoCount: number;
+  strongOfficialCount: number;
+  officialCommunityCount: number;
+  reputableMediaCount: number;
+  industryReportCount: number;
+  socialForumVideoCount: number;
   shortContentCount: number;
+  coreEvidenceCount: number;
   clickbaitRiskCount: number;
   overallReliability: "高" | "中" | "低";
 };
@@ -300,7 +362,7 @@ export function normalizeEvidencePack(
       ? usableItems
       : normalizedItems;
   const maxItems = normalizeMaxEvidenceItems(options.maxItems);
-  const items = selectedItems
+  const items = limitPublicOpinionShare(selectedItems, maxItems)
     .slice(0, maxItems)
     .map((item, index) => ({
       ...item,
@@ -337,6 +399,23 @@ export function normalizeEvidencePack(
   };
 }
 
+function limitPublicOpinionShare(
+  items: Omit<SearchEvidence, "id">[],
+  maxItems: number,
+): Omit<SearchEvidence, "id">[] {
+  const publicOpinionItems = items.filter(isPublicOpinionEvidenceLike);
+  const otherItems = items.filter((item) => !isPublicOpinionEvidenceLike(item));
+
+  if (otherItems.length === 0 || publicOpinionItems.length === 0) {
+    return items;
+  }
+
+  const publicOpinionLimit = Math.max(1, Math.floor(maxItems / 2));
+
+  return [...otherItems, ...publicOpinionItems.slice(0, publicOpinionLimit)]
+    .sort(compareEvidenceQuality);
+}
+
 export function createSearchFailureProcess(input: {
   cacheEvents?: SearchCacheEvent[];
   dedupeStats?: SearchDedupeStats;
@@ -369,6 +448,16 @@ export function createSearchFailureProcess(input: {
     intentDecisions: normalizeSearchIntentDecisions(input.intentDecisions),
     ...(input.dedupeStats ? { dedupeStats: input.dedupeStats } : {}),
     qualityOverview: createEmptySearchQualityOverview(),
+    debugSummary: createEvidenceDebugSummary({
+      evidenceMode: "search_failed",
+      failureReason: input.failureReason,
+      results: [],
+      extractAttempted: 0,
+      extractSucceededCount: 0,
+      passStats: [],
+      selectedItems: [],
+      skippedPasses: [],
+    }),
     filteredReasons: [],
     results: [],
     warnings: normalizeStringArray(input.warnings),
@@ -499,6 +588,7 @@ export function scoreEvidence(input: {
   const freshnessScore = getFreshnessScore(input.publishedAt);
   const contentScore = getContentScore(snippet);
   const diversityScore = 60;
+  const snippetOnly = snippet.length < 800;
   let score = Math.round(
     authorityScore * 0.35 +
       relevanceScore * 0.25 +
@@ -510,6 +600,11 @@ export function scoreEvidence(input: {
   if (snippet.length < 300) {
     score -= 25;
     warnings.push("内容过短，可能不足以支撑可靠结论");
+  }
+
+  if (snippetOnly) {
+    score -= 15;
+    warnings.push("仅有搜索摘要或正文不足，不能作为核心证据");
   }
 
   if (snippet.length < 120) {
@@ -532,7 +627,9 @@ export function scoreEvidence(input: {
   let clampedScore = Math.min(Math.max(score, 0), 100);
 
   if (
-    (sourceType === "community" || sourceType === "video") &&
+    (sourceType === "official_community" ||
+      sourceType === "social_forum" ||
+      sourceType === "video_platform") &&
     snippet.length >= SHORT_SNIPPET_WARNING_LENGTH
   ) {
     clampedScore = Math.max(clampedScore, 25);
@@ -547,7 +644,7 @@ export function scoreEvidence(input: {
     clampedScore = Math.max(clampedScore, 25);
   }
 
-  const reliability = getReliability(clampedScore);
+  const reliability = getReliability(clampedScore, snippetOnly, sourceType);
   const citationPolicy = getCitationPolicy(reliability);
 
   return {
@@ -557,6 +654,7 @@ export function scoreEvidence(input: {
     sourceType,
     reliability,
     score: clampedScore,
+    ...(snippetOnly ? { snippetOnly: true } : {}),
     citationLevel: citationPolicy.level,
     citationGuidance: citationPolicy.guidance,
     relevanceScore,
@@ -571,17 +669,20 @@ export function summarizeEvidenceQuality(
   evidencePack: EvidencePack | undefined,
 ): EvidenceQualityOverview {
   const items = evidencePack?.enabled ? evidencePack.items : [];
-  const officialCount = items.filter(
-    (item) => item.quality?.sourceType === "official",
+  const strongOfficialCount = items.filter(
+    (item) => isStrongOfficialSource(item.quality?.sourceType),
   ).length;
-  const benchmarkCount = items.filter(
-    (item) => item.quality?.sourceType === "benchmark",
+  const officialCommunityCount = items.filter(
+    (item) => item.quality?.sourceType === "official_community",
   ).length;
-  const mediaCount = items.filter(
-    (item) => item.quality?.sourceType === "media",
+  const reputableMediaCount = items.filter(
+    (item) => item.quality?.sourceType === "reputable_media",
   ).length;
-  const communitySocialVideoCount = items.filter((item) =>
-    ["community", "social", "video"].includes(
+  const industryReportCount = items.filter(
+    (item) => item.quality?.sourceType === "industry_report",
+  ).length;
+  const socialForumVideoCount = items.filter((item) =>
+    ["official_community", "social_forum", "video_platform"].includes(
       item.quality?.sourceType ?? "unknown",
     ),
   ).length;
@@ -595,9 +696,9 @@ export function summarizeEvidenceQuality(
       warning.includes("标题党"),
     ),
   ).length;
-  const hasOfficialOrBenchmark = items.some((item) =>
-    item.quality?.sourceType === "official" ||
-    item.quality?.sourceType === "benchmark",
+  const coreEvidenceCount = items.filter(isCoreEvidenceItem).length;
+  const hasCoreEvidence = items.some((item) =>
+    isCoreEvidenceItem(item),
   );
   const highOrMediumCount = items.filter((item) =>
     item.quality?.reliability === "high" ||
@@ -606,14 +707,16 @@ export function summarizeEvidenceQuality(
   const hasMedium = items.some((item) => item.quality?.reliability === "medium");
 
   return {
-    officialCount,
-    benchmarkCount,
-    mediaCount,
-    communitySocialVideoCount,
+    strongOfficialCount,
+    officialCommunityCount,
+    reputableMediaCount,
+    industryReportCount,
+    socialForumVideoCount,
     shortContentCount,
+    coreEvidenceCount,
     clickbaitRiskCount,
     overallReliability:
-      highOrMediumCount >= 2 && hasOfficialOrBenchmark
+      highOrMediumCount >= 2 && hasCoreEvidence
         ? "高"
         : hasMedium
           ? "中"
@@ -629,6 +732,49 @@ export function normalizeDocumentInputStrategy(
   }
 
   return "text_pack";
+}
+
+export function isStrongOfficialSource(
+  sourceType: EvidenceSourceType | undefined,
+): boolean {
+  return (
+    sourceType === "official_statement" ||
+    sourceType === "official_blog" ||
+    sourceType === "official_docs"
+  );
+}
+
+export function isCoreEvidenceItem(item: SearchEvidence): boolean {
+  const quality = item.quality;
+
+  if (!quality) {
+    return false;
+  }
+
+  return (
+    (isStrongOfficialSource(quality.sourceType) ||
+      quality.sourceType === "reputable_media" ||
+      quality.sourceType === "industry_report") &&
+    quality.textLength >= 800 &&
+    quality.snippetOnly !== true &&
+    (quality.reliability === "high" || quality.reliability === "medium")
+  );
+}
+
+export function isPublicOpinionEvidenceItem(item: SearchEvidence): boolean {
+  return isPublicOpinionEvidenceLike(item);
+}
+
+function isPublicOpinionEvidenceLike(
+  item: Pick<SearchEvidence, "quality">,
+): boolean {
+  const sourceType = item.quality?.sourceType;
+
+  return (
+    sourceType === "official_community" ||
+    sourceType === "social_forum" ||
+    sourceType === "video_platform"
+  );
 }
 
 function formatDocumentInputStrategyForPrompt(
@@ -683,6 +829,7 @@ function normalizeEvidenceItem(
   );
   const query = normalizeOptionalText(input.query, 240);
   const sourceQueries = normalizeStringArray(input.sourceQueries);
+  const seenInPasses = normalizeStringArray(input.seenInPasses);
   const url = normalizeOptionalUrl(input.url);
   const quality = createEvidenceQuality({
     rawSnippet,
@@ -701,6 +848,7 @@ function normalizeEvidenceItem(
     quality,
     ...(query ? { query } : {}),
     ...(sourceQueries.length > 0 ? { sourceQueries } : {}),
+    ...(seenInPasses.length > 0 ? { seenInPasses } : {}),
     ...(url ? { url } : {}),
     ...(source ? { source } : {}),
     ...(publishedAt ? { publishedAt } : {}),
@@ -785,9 +933,12 @@ function createSearchProcess(input: {
       ...(item.url ? { url: item.url } : {}),
       ...(item.source ? { source: item.source } : {}),
       ...(item.sourceQueries ? { sourceQueries: item.sourceQueries } : {}),
+      ...(item.seenInPasses ? { seenInPasses: item.seenInPasses } : {}),
       sourceType: quality?.sourceType ?? "unknown",
       reliability: quality?.reliability ?? "very_low",
       score: quality?.score ?? 0,
+      textLength: quality?.textLength ?? 0,
+      ...(quality?.snippetOnly ? { snippetOnly: true } : {}),
       citationLevel: quality?.citationLevel ?? "not_citable",
       citationGuidance:
         quality?.citationGuidance ??
@@ -799,11 +950,15 @@ function createSearchProcess(input: {
     };
   });
   const qualityOverview = summarizeSearchProcessResults(results);
+  const rescueStats = normalizeRescueStats(input.input);
+  const passStats = normalizeEvidenceSearchPassStats(input.input.passStats);
+  const skippedPasses = normalizeStringArray(input.input.skippedPasses);
+  const evidenceMode =
+    normalizeEvidenceMode(input.input.evidenceMode) ??
+    getEvidenceMode(input.evidenceStatus, qualityOverview);
 
   return {
-    evidenceMode:
-      normalizeEvidenceMode(input.input.evidenceMode) ??
-      getEvidenceMode(input.evidenceStatus, qualityOverview),
+    evidenceMode,
     ...(normalizeSearchFailureReason(input.input.failureReason)
       ? {
           failureReason: normalizeSearchFailureReason(
@@ -820,8 +975,21 @@ function createSearchProcess(input: {
     ...(cacheEvents.length > 0 ? { cacheEvents } : {}),
     ...(dedupeStats ? { dedupeStats } : {}),
     ...(searchMode ? { searchMode } : {}),
-    ...normalizeRescueStats(input.input),
+    ...rescueStats,
     qualityOverview,
+    debugSummary: createEvidenceDebugSummary({
+      evidenceMode,
+      failureReason: normalizeSearchFailureReason(input.input.failureReason),
+      results,
+      extractAttempted: rescueStats.extractAttempted,
+      extractSucceededCount: rescueStats.extractSucceededCount,
+      officialExtractFailed: rescueStats.officialExtractFailed,
+      targetedSearchRetryTriggered: rescueStats.targetedSearchRetryTriggered,
+      targetedSearchRetryReason: rescueStats.targetedSearchRetryReason,
+      passStats,
+      selectedItems: input.selectedItems,
+      skippedPasses,
+    }),
     filteredReasons: summarizeFilteredReasons(results),
     results,
     warnings: normalizeStringArray(input.input.warnings),
@@ -1046,6 +1214,35 @@ function sanitizeDiagnosticObject(value: Record<string, unknown>) {
   );
 }
 
+function normalizeEvidenceSearchPassStats(value: unknown): EvidenceSearchPassStats[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const passName = normalizeText(item.passName, 80);
+      const query = normalizeText(item.query, 240);
+
+      if (!passName || !query) {
+        return null;
+      }
+
+      return {
+        passName,
+        query,
+        resultCount: normalizeNonNegativeInteger(item.resultCount),
+        extractedCount: normalizeNonNegativeInteger(item.extractedCount),
+        coreEvidenceCount: normalizeNonNegativeInteger(item.coreEvidenceCount),
+        socialVideoCount: normalizeNonNegativeInteger(item.socialVideoCount),
+        unknownCount: normalizeNonNegativeInteger(item.unknownCount),
+      };
+    })
+    .filter((item): item is EvidenceSearchPassStats => item !== null)
+    .slice(0, 24);
+}
+
 function normalizeSearchDedupeStats(value: unknown): SearchDedupeStats | undefined {
   if (!isObject(value)) {
     return undefined;
@@ -1212,6 +1409,165 @@ function summarizeFilteredReasons(results: SearchProcessResult[]) {
   return Array.from(counts, ([reason, count]) => ({ reason, count }));
 }
 
+function createEvidenceDebugSummary(input: {
+  evidenceMode: EvidenceMode;
+  failureReason?: SearchFailureReason;
+  results: SearchProcessResult[];
+  extractAttempted?: number;
+  extractSucceededCount?: number;
+  officialExtractFailed?: boolean;
+  passStats?: EvidenceSearchPassStats[];
+  selectedItems?: SearchEvidence[];
+  skippedPasses?: string[];
+  targetedSearchRetryTriggered?: boolean;
+  targetedSearchRetryReason?: string;
+}): EvidenceDebugSummary {
+  const candidateCount = input.results.length;
+  const coreEvidenceCount = input.results.filter(isCoreEvidenceResult).length;
+  const extractAttemptCount = input.extractAttempted ?? 0;
+  const extractSuccessCount = input.extractSucceededCount ?? 0;
+  const socialVideoCount = input.results.filter((result) =>
+    isSocialVideoSource(result.sourceType),
+  ).length;
+  const shortTextCount = input.results.filter(
+    (result) => (result.textLength ?? 0) < 800,
+  ).length;
+  const highMediumCount = input.results.filter(
+    (result) => result.reliability === "high" || result.reliability === "medium",
+  ).length;
+
+  return {
+    evidenceHitRate: {
+      candidateCount,
+      coreEvidenceCount,
+      evidenceHitRate: divideForDebug(coreEvidenceCount, candidateCount),
+    },
+    extractionSuccessRate: {
+      extractAttemptCount,
+      extractSuccessCount,
+      extractionSuccessRate: divideForDebug(
+        extractSuccessCount,
+        extractAttemptCount,
+      ),
+    },
+    sourceMix: {
+      officialCount: input.results.filter((result) =>
+        isStrongOfficialSource(result.sourceType),
+      ).length,
+      reputableMediaCount: input.results.filter(
+        (result) => result.sourceType === "reputable_media",
+      ).length,
+      industryReportCount: input.results.filter(
+        (result) => result.sourceType === "industry_report",
+      ).length,
+      socialVideoCount,
+      unknownCount: input.results.filter(
+        (result) => result.sourceType === "unknown",
+      ).length,
+    },
+    degradeReasonsSummary: {
+      snippetOnly: input.results.filter((result) => result.snippetOnly === true)
+        .length,
+      sourceTooWeak: input.results.filter((result) =>
+        isWeakEvidenceSource(result.sourceType),
+      ).length,
+      textTooShort: shortTextCount,
+      scoreTooLow: input.results.filter((result) => result.score < 60).length,
+      extractionFailed: getExtractionFailedCount(
+        extractAttemptCount,
+        extractSuccessCount,
+        input.officialExtractFailed,
+      ),
+      socialVideoSource: socialVideoCount,
+    },
+    lowEvidenceTriggerReasons: {
+      coreEvidenceLessThan3: coreEvidenceCount < 3,
+      highMediumLessThan3: highMediumCount < 3,
+      shortTextRatioTooHigh: divideForDebug(shortTextCount, candidateCount) > 0.7,
+      socialVideoRatioTooHigh:
+        input.targetedSearchRetryTriggered === true ||
+        input.targetedSearchRetryReason === "social_video_ratio_above_threshold" ||
+        divideForDebug(socialVideoCount, candidateCount) > 0.5,
+      searchFailed:
+        input.evidenceMode === "search_failed" || input.failureReason !== undefined,
+    },
+    passStats: input.passStats ?? [],
+    selectedEvidenceByPass: summarizeSelectedEvidenceByPass(
+      input.selectedItems ?? [],
+    ),
+    skippedPasses: input.skippedPasses ?? [],
+  };
+}
+
+function summarizeSelectedEvidenceByPass(
+  selectedItems: SearchEvidence[],
+): { passName: string; count: number }[] {
+  const counts = new Map<string, number>();
+
+  for (const item of selectedItems) {
+    const passes =
+      item.seenInPasses && item.seenInPasses.length > 0
+        ? item.seenInPasses
+        : ["unknown"];
+
+    for (const passName of passes) {
+      counts.set(passName, (counts.get(passName) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(counts, ([passName, count]) => ({ passName, count }));
+}
+
+function isCoreEvidenceResult(result: SearchProcessResult): boolean {
+  return (
+    (isStrongOfficialSource(result.sourceType) ||
+      result.sourceType === "reputable_media" ||
+      result.sourceType === "industry_report") &&
+    (result.textLength ?? 0) >= 800 &&
+    result.snippetOnly !== true &&
+    (result.reliability === "high" || result.reliability === "medium")
+  );
+}
+
+function isWeakEvidenceSource(sourceType: EvidenceSourceType): boolean {
+  return (
+    sourceType === "official_community" ||
+    sourceType === "social_forum" ||
+    sourceType === "video_platform" ||
+    sourceType === "unknown"
+  );
+}
+
+function isSocialVideoSource(sourceType: EvidenceSourceType): boolean {
+  return (
+    sourceType === "official_community" ||
+    sourceType === "social_forum" ||
+    sourceType === "video_platform"
+  );
+}
+
+function getExtractionFailedCount(
+  extractAttemptCount: number,
+  extractSuccessCount: number,
+  officialExtractFailed: boolean | undefined,
+): number {
+  const failedCount = Math.max(0, extractAttemptCount - extractSuccessCount);
+
+  if (failedCount > 0 || officialExtractFailed !== true) {
+    return failedCount;
+  }
+
+  return 1;
+}
+
+function divideForDebug(numerator: number, denominator: number): number {
+  if (denominator <= 0) {
+    return 0;
+  }
+
+  return Number((numerator / denominator).toFixed(4));
+}
+
 function createEmptySearchQualityOverview(): SearchQualityOverview {
   return {
     totalResults: 0,
@@ -1225,13 +1581,14 @@ function createEmptySearchQualityOverview(): SearchQualityOverview {
       very_low: 0,
     },
     bySourceType: {
-      official: 0,
-      benchmark: 0,
-      media: 0,
-      blog: 0,
-      community: 0,
-      social: 0,
-      video: 0,
+      official_statement: 0,
+      official_blog: 0,
+      official_docs: 0,
+      official_community: 0,
+      reputable_media: 0,
+      industry_report: 0,
+      social_forum: 0,
+      video_platform: 0,
       unknown: 0,
     },
   };
@@ -1276,6 +1633,14 @@ function normalizeRescueStats(value: Record<string, unknown>) {
     typeof value.rescueTriggered === "boolean"
       ? value.rescueTriggered
       : undefined;
+  const officialExtractFailed =
+    typeof value.officialExtractFailed === "boolean"
+      ? value.officialExtractFailed
+      : undefined;
+  const targetedSearchRetryTriggered =
+    typeof value.targetedSearchRetryTriggered === "boolean"
+      ? value.targetedSearchRetryTriggered
+      : undefined;
   const qualityDistribution = normalizeQualityDistribution(
     value.qualityDistribution,
   );
@@ -1312,8 +1677,20 @@ function normalizeRescueStats(value: Record<string, unknown>) {
       ? { finalEvidenceCount: normalizeNonNegativeInteger(value.finalEvidenceCount) }
       : {}),
     ...(rescueTriggered !== undefined ? { rescueTriggered } : {}),
+    ...(officialExtractFailed !== undefined ? { officialExtractFailed } : {}),
+    ...(targetedSearchRetryTriggered !== undefined
+      ? { targetedSearchRetryTriggered }
+      : {}),
     ...(normalizeText(value.rescueReason, 160)
       ? { rescueReason: normalizeText(value.rescueReason, 160) }
+      : {}),
+    ...(normalizeText(value.targetedSearchRetryReason, 160)
+      ? {
+          targetedSearchRetryReason: normalizeText(
+            value.targetedSearchRetryReason,
+            160,
+          ),
+        }
       : {}),
     ...(qualityDistribution ? { qualityDistribution } : {}),
   };
@@ -1436,16 +1813,44 @@ function detectEvidenceSourceType(
   const hostname = getHostname(url);
 
   if (
+    ["community.openai.com", "forum.anthropic.com"].some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    )
+  ) {
+    return "official_community";
+  }
+
+  if (
+    hostname === "platform.openai.com" ||
+    hostname === "docs.anthropic.com" ||
+    hostname === "ai.google.dev" ||
+    (((hostname === "openai.com" || hostname.endsWith(".openai.com")) ||
+      (hostname === "anthropic.com" || hostname.endsWith(".anthropic.com")) ||
+      hostname.endsWith(".google")) &&
+      (sourceText.includes("/docs") || sourceText.includes("documentation")))
+  ) {
+    return "official_docs";
+  }
+
+  if (
     [
       "googleblog.com",
       "blog.google",
-      "openai.com",
-      "anthropic.com",
       "deepmind.google",
-      "ai.google.dev",
     ].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
   ) {
-    return "official";
+    return "official_blog";
+  }
+
+  if (
+    (hostname === "openai.com" || hostname.endsWith(".openai.com")) ||
+    (hostname === "anthropic.com" || hostname.endsWith(".anthropic.com"))
+  ) {
+    if (sourceText.includes("/news") || sourceText.includes("/blog")) {
+      return "official_blog";
+    }
+
+    return "official_statement";
   }
 
   if (
@@ -1461,15 +1866,15 @@ function detectEvidenceSourceType(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
-    return "benchmark";
+    return "industry_report";
   }
 
   if (
-    ["reddit.com", "zhihu.com"].some(
+    ["reddit.com", "zhihu.com", "linkedin.com"].some(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
-    return "community";
+    return "social_forum";
   }
 
   if (
@@ -1477,7 +1882,7 @@ function detectEvidenceSourceType(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
-    return "social";
+    return "social_forum";
   }
 
   if (
@@ -1485,15 +1890,36 @@ function detectEvidenceSourceType(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
-    return "video";
+    return "video_platform";
   }
 
   if (
-    ["reuters.com", "bloomberg.com", "bbc.com", "cnn.com", "theverge.com", "techcrunch.com", "36kr.com"].some(
+    [
+      "nytimes.com",
+      "reuters.com",
+      "bloomberg.com",
+      "wsj.com",
+      "ft.com",
+      "theinformation.com",
+      "techcrunch.com",
+      "theverge.com",
+      "wired.com",
+      "bbc.com",
+      "cnn.com",
+      "36kr.com",
+    ].some(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
-    return "media";
+    return "reputable_media";
+  }
+
+  if (
+    ["semianalysis.com"].some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    )
+  ) {
+    return "industry_report";
   }
 
   if (
@@ -1502,7 +1928,7 @@ function detectEvidenceSourceType(
     ) ||
     sourceText.includes("blog")
   ) {
-    return "blog";
+    return "unknown";
   }
 
   return "unknown";
@@ -1535,6 +1961,12 @@ function formatEvidenceStatusForPrompt(
 function getEvidenceStatus(items: SearchEvidence[]): EvidenceStatus {
   if (items.length === 0) {
     return "none";
+  }
+
+  const coreEvidenceCount = items.filter(isCoreEvidenceItem).length;
+
+  if (coreEvidenceCount < 3) {
+    return "low";
   }
 
   const highCount = items.filter(
@@ -1590,26 +2022,28 @@ function normalizeStringArray(value: unknown): string[] {
 
 function getAuthorityScore(sourceType: EvidenceSourceType): number {
   return {
-    official: 100,
-    benchmark: 95,
-    media: 65,
-    blog: 40,
-    community: 25,
-    video: 25,
-    social: 15,
+    official_statement: 100,
+    official_blog: 95,
+    official_docs: 95,
+    official_community: 35,
+    reputable_media: 75,
+    industry_report: 85,
+    social_forum: 20,
+    video_platform: 20,
     unknown: 30,
   }[sourceType];
 }
 
 function getSourceRiskAdjustment(sourceType: EvidenceSourceType): number {
   return {
-    official: 0,
-    benchmark: 0,
-    media: 0,
-    blog: -10,
-    community: -25,
-    video: -25,
-    social: -30,
+    official_statement: 0,
+    official_blog: 0,
+    official_docs: 0,
+    official_community: -30,
+    reputable_media: 0,
+    industry_report: 0,
+    social_forum: -30,
+    video_platform: -30,
     unknown: -10,
   }[sourceType];
 }
@@ -1727,7 +2161,24 @@ function isClearlyUnusableEvidence(title: string, snippet: string): boolean {
   );
 }
 
-function getReliability(score: number): EvidenceReliability {
+function getReliability(
+  score: number,
+  snippetOnly = false,
+  sourceType: EvidenceSourceType = "unknown",
+): EvidenceReliability {
+  if (
+    snippetOnly ||
+    sourceType === "official_community" ||
+    sourceType === "social_forum" ||
+    sourceType === "video_platform"
+  ) {
+    if (score >= 25) {
+      return "low";
+    }
+
+    return "very_low";
+  }
+
   if (score >= 80) {
     return "high";
   }
@@ -1800,13 +2251,14 @@ function isUsableEvidenceItem(item: Omit<SearchEvidence, "id">): boolean {
 
 function getSourceTypeRank(sourceType: EvidenceSourceType): number {
   return {
-    official: 0,
-    benchmark: 1,
-    media: 2,
-    blog: 3,
-    community: 4,
-    video: 5,
-    social: 6,
-    unknown: 7,
+    official_statement: 0,
+    official_blog: 1,
+    official_docs: 2,
+    reputable_media: 3,
+    industry_report: 4,
+    official_community: 5,
+    social_forum: 6,
+    video_platform: 7,
+    unknown: 8,
   }[sourceType];
 }

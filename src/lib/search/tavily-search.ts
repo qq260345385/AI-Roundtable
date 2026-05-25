@@ -664,10 +664,12 @@ export function dedupeSearchResults<T extends TavilyEvidenceDraft>(
     const better = pickBetterDraft(existing, normalized);
     const removed = better === existing ? normalized : existing;
     const mergedQueries = mergeSourceQueries(existing, normalized);
+    const mergedPasses = mergeSeenInPasses(existing, normalized);
 
     byCanonicalUrl.set(key, {
       ...better,
       sourceQueries: mergedQueries,
+      ...(mergedPasses.length > 0 ? { seenInPasses: mergedPasses } : {}),
     });
     removals.push({
       title: removed.title,
@@ -821,6 +823,16 @@ function mergeSourceQueries(
     ...(left.query ? [left.query] : []),
     ...(right.sourceQueries ?? []),
     ...(right.query ? [right.query] : []),
+  ]);
+}
+
+function mergeSeenInPasses(
+  left: TavilyEvidenceDraft,
+  right: TavilyEvidenceDraft,
+) {
+  return mergeUniqueStrings([
+    ...(left.seenInPasses ?? []),
+    ...(right.seenInPasses ?? []),
   ]);
 }
 

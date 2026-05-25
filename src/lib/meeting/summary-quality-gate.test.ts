@@ -15,7 +15,7 @@ function createEvidencePack(): EvidencePack {
           warnings: [],
           textLength: 500,
           wasTruncated: false,
-          sourceType: "official",
+          sourceType: "official_statement",
           reliability: "high",
           score: 90,
           citationLevel: "fact",
@@ -30,7 +30,7 @@ function createEvidencePack(): EvidencePack {
           warnings: [],
           textLength: 500,
           wasTruncated: false,
-          sourceType: "community",
+          sourceType: "social_forum",
           reliability: "low",
           score: 35,
           citationLevel: "context_only",
@@ -65,5 +65,82 @@ describe("applyEvidenceQualityGateToSummary", () => {
         expect.stringContaining("Community-only claim [S2]"),
       ]),
     );
+  });
+
+  test("deduplicates low-confidence hypotheses from insufficiently confirmed issues", () => {
+    const summary: MeetingSummary = {
+      consensus: [],
+      differences: [],
+      minorityViews: [],
+      confirmableFacts: [],
+      initialHypotheses: [
+        "The product may have launched in May, but available evidence is weak.",
+        "A separate product-market angle still needs checking.",
+      ],
+      insufficientlyConfirmed: [
+        "The product may have launched in May, but available evidence is weak.",
+        "Exact launch date cannot be confirmed.",
+      ],
+      risks: [],
+      nextSteps: [],
+    };
+
+    const gated = applyEvidenceQualityGateToSummary(summary, createEvidencePack());
+
+    expect(gated.initialHypotheses).toEqual([
+      "The product may have launched in May, but available evidence is weak.",
+      "A separate product-market angle still needs checking.",
+    ]);
+    expect(gated.insufficientlyConfirmed).toEqual([
+      "Exact launch date cannot be confirmed.",
+    ]);
+  });
+
+  test("downgrades specific money claims from weak or snippet-only evidence", () => {
+    const summary: MeetingSummary = {
+      consensus: ["OpenAI raised $10 billion according to [S2]."],
+      differences: [],
+      minorityViews: [],
+      confirmableFacts: ["Anthropic valuation reached $60 billion [S2]."],
+      initialHypotheses: [],
+      insufficientlyConfirmed: [],
+      risks: [],
+      nextSteps: [],
+    };
+
+    const gated = applyEvidenceQualityGateToSummary(summary, createEvidencePack());
+
+    expect(gated.consensus).toEqual([]);
+    expect(gated.confirmableFacts).toEqual([]);
+    expect(gated.insufficientlyConfirmed ?? []).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("OpenAI raised $10 billion"),
+        expect.stringContaining("Anthropic valuation reached $60 billion [S2]"),
+      ]),
+    );
+  });
+
+  test("does not repeat the empty-confirmable-facts sentence in insufficient items", () => {
+    const summary: MeetingSummary = {
+      consensus: [],
+      differences: [],
+      minorityViews: [],
+      confirmableFacts: ["无。当前资料不足以确认关键事实。"],
+      initialHypotheses: ["多数模型认为该融资传闻需要继续核验。"],
+      insufficientlyConfirmed: [
+        "无。当前资料不足以确认关键事实。",
+        "多数模型认为该融资传闻需要继续核验。",
+      ],
+      risks: [],
+      nextSteps: [],
+    };
+
+    const gated = applyEvidenceQualityGateToSummary(summary, createEvidencePack());
+
+    expect(gated.confirmableFacts).toEqual(["无。当前资料不足以确认关键事实。"]);
+    expect(gated.initialHypotheses).toEqual([
+      "多数模型认为该融资传闻需要继续核验。",
+    ]);
+    expect(gated.insufficientlyConfirmed).toEqual([]);
   });
 });

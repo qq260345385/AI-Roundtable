@@ -216,14 +216,15 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
+    expect(searchedQueries[0]).toContain("official");
     expect(searchedQueries[0]).toContain("DeepSeek V3");
-    expect(searchedQueries[0]).toContain("benchmark");
-    expect(searchedQueries[1]).toContain("official");
+    expect(searchedQueries.some((query) => query.includes("Reuters"))).toBe(true);
+    expect(searchedQueries.some((query) => query.includes("SemiAnalysis"))).toBe(true);
     expect(pack.enabled).toBe(true);
     expect(pack.searchQueries).toEqual(searchedQueries);
     expect(pack.searchProcess).toEqual(
       expect.objectContaining({
-        evidenceMode: "normal",
+        evidenceMode: "low_evidence",
         executedQueries: searchedQueries,
         searchIntents: [
           expect.objectContaining({
@@ -241,16 +242,14 @@ describe("buildModelDrivenWebEvidencePack", () => {
             ],
           }),
         ],
-        queryPlans: [
+        queryPlans: expect.arrayContaining([
           expect.objectContaining({
-            query: searchedQueries[0],
             reason: expect.stringContaining("benchmark"),
           }),
           expect.objectContaining({
-            query: searchedQueries[1],
             reason: expect.stringContaining("official"),
           }),
-        ],
+        ]),
         intentDecisions: [
           expect.objectContaining({ action: "used" }),
           expect.objectContaining({ action: "used" }),
@@ -265,9 +264,8 @@ describe("buildModelDrivenWebEvidencePack", () => {
       expect.objectContaining({
         includedInEvidencePack: true,
         filtered: false,
-        query: searchedQueries[0],
-        reliability: "medium",
-        sourceType: "benchmark",
+        reliability: "low",
+        sourceType: "industry_report",
       }),
     );
     expect(pack.items[0].id).toBe("S1");
@@ -342,7 +340,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       topic: "latest search provider architecture",
     });
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(4);
     expect(intentSignal).toBe(controller.signal);
     expect(searchSignal).toBe(controller.signal);
     expect(pack.items[0]).toEqual(
@@ -354,12 +352,12 @@ describe("buildModelDrivenWebEvidencePack", () => {
     expect(pack.searchProcess).toEqual(
       expect.objectContaining({
         provider: "test-search",
-        providerDiagnostics: [
+        providerDiagnostics: expect.arrayContaining([
           expect.objectContaining({
             provider: "test-search",
             diagnostics: { requestFreshness: "latest" },
           }),
-        ],
+        ]),
       }),
     );
   });
@@ -464,7 +462,9 @@ describe("buildModelDrivenWebEvidencePack", () => {
       expect.objectContaining({
         evidenceMode: "search_failed",
         failureReason: "unauthorized",
-        executedQueries: [expect.stringContaining("failing query")],
+        executedQueries: expect.arrayContaining([
+          expect.stringContaining("failing query"),
+        ]),
         searchIntents: [
           expect.objectContaining({
             intents: [
@@ -570,6 +570,261 @@ describe("buildModelDrivenWebEvidencePack", () => {
     );
   });
 
+  test("prioritizes official snippet-only sources for extract retry and records failures", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Find official financing evidence",
+            mustInclude: ["AI financing"],
+            shouldInclude: ["official"],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "official",
+            rationale: "Official short snippets should be retried.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const extractedUrls: string[][] = [];
+    const extractProvider: ExtractProvider = {
+      id: "test-extract",
+      displayName: "Test Extract",
+      async extract(request) {
+        extractedUrls.push(request.urls);
+
+        return {
+          provider: "test-extract",
+          results: [],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI financing",
+      extractProvider,
+      searcher: async () => [
+        {
+          title: "Official OpenAI financing note",
+          url: "https://openai.com/news/financing-note",
+          snippet: "Official snippet only. ".repeat(6),
+        },
+        {
+          title: "Reddit discussion",
+          url: "https://reddit.com/r/artificial/comments/financing",
+          snippet: "Community discussion. ".repeat(40),
+        },
+      ],
+    });
+
+    expect(extractedUrls).toHaveLength(1);
+    expect(extractedUrls[0][0]).toBe("https://openai.com/news/financing-note");
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        rescueTriggered: true,
+        officialExtractFailed: true,
+      }),
+    );
+  });
+
+  test("runs targeted source retry when social and video results dominate", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Find AI company financing evidence",
+            mustInclude: ["AI company financing"],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "Initial generic query may return social results.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const searchedQueries: string[] = [];
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI company financing",
+      searcher: async (query) => {
+        searchedQueries.push(query);
+
+        if (query.includes("official reputable media industry report")) {
+          return [
+            {
+              title: "New York Times financing report",
+              url: "https://nytimes.com/2026/05/20/technology/ai-financing.html",
+              snippet: "Reported financing context. ".repeat(80),
+            },
+          ];
+        }
+
+        return [
+          {
+            title: "LinkedIn post",
+            url: "https://linkedin.com/posts/example",
+            snippet: "LinkedIn discussion. ".repeat(50),
+          },
+          {
+            title: "YouTube reaction",
+            url: "https://youtube.com/watch?v=example",
+            snippet: "YouTube reaction. ".repeat(50),
+          },
+          {
+            title: "Instagram post",
+            url: "https://instagram.com/p/example",
+            snippet: "Instagram reaction. ".repeat(50),
+          },
+          {
+            title: "Reddit thread",
+            url: "https://reddit.com/r/artificial/comments/example",
+            snippet: "Reddit discussion. ".repeat(50),
+          },
+        ];
+      },
+    });
+
+    expect(searchedQueries.some((query) =>
+      query.includes("official reputable media industry report"),
+    )).toBe(true);
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        targetedSearchRetryTriggered: true,
+        targetedSearchRetryReason: "social_video_ratio_above_threshold",
+      }),
+    );
+    expect(pack.items.some((item) => item.url?.includes("nytimes.com"))).toBe(true);
+  });
+
+  test("deep mode triggers extract rescue when results are only weak evidence", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Compare latest GPT-5.5 and DeepSeek V4 benchmark evidence",
+            mustInclude: ["GPT-5.5", "DeepSeek V4"],
+            shouldInclude: ["benchmark", "leaderboard"],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "benchmark",
+            rationale: "Deep mode should improve weak search snippets with extraction.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const extractedUrls: string[][] = [];
+    const extractProvider: ExtractProvider = {
+      id: "test-extract",
+      displayName: "Test Extract",
+      async extract(request) {
+        extractedUrls.push(request.urls);
+
+        return {
+          provider: "test-extract",
+          results: [
+            {
+              title: "GPT-5.5 and DeepSeek V4 benchmark comparison",
+              url: request.urls[0],
+              content:
+                "GPT-5.5 DeepSeek V4 latest benchmark leaderboard comparison. " +
+                "Independent benchmark data and release notes are cross-checked. " +
+                "A".repeat(900),
+              sourceQuery: request.query,
+              provider: "test-extract",
+            },
+          ],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchMode: "deep",
+      topic: "GPT-5.5 DeepSeek V4 latest benchmark leaderboard",
+      extractProvider,
+      searcher: async () =>
+        Array.from({ length: 10 }, (_, index) => ({
+          title: `GPT-5.5 DeepSeek V4 benchmark note ${index + 1}`,
+          url: `https://www.theverge.com/ai/weak-benchmark-${index + 1}`,
+          snippet:
+            "GPT-5.5 DeepSeek V4 latest benchmark leaderboard short note " +
+            `${index + 1}. `.repeat(12),
+        })),
+    });
+
+    expect(extractedUrls).toHaveLength(1);
+    expect(extractedUrls[0].length).toBeGreaterThan(1);
+    expect(pack.items.length).toBeLessThanOrEqual(10);
+    expect(
+      pack.items.some((item) =>
+        item.quality?.reliability === "high" ||
+        item.quality?.reliability === "medium",
+      ),
+    ).toBe(true);
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        evidenceMode: "rescued_evidence",
+        rescueTriggered: true,
+        rescueReason: "reliable_evidence_below_threshold",
+        searchMode: "deep",
+      }),
+    );
+  });
+
   test("deep search mode expands candidates but does not put every candidate into the evidence pack", async () => {
     const provider: ModelProvider = {
       name: "TestProvider",
@@ -626,9 +881,288 @@ describe("buildModelDrivenWebEvidencePack", () => {
     expect(pack.searchProcess).toEqual(
       expect.objectContaining({
         searchMode: "deep",
-        rawCandidateCount: 60,
+        rawCandidateCount: 180,
         finalEvidenceCount: pack.items.length,
       }),
     );
   });
+
+  test("runs an official pass that prioritizes official source queries", async () => {
+    const provider = createNoIntentProvider();
+    const searchedQueries: string[] = [];
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "OpenAI model update",
+      searcher: async (query) => {
+        searchedQueries.push(query);
+
+        if (query.includes("site:openai.com")) {
+          return [
+            {
+              title: "OpenAI model update",
+              url: "https://openai.com/news/model-update",
+              snippet: "Official OpenAI model update. ".repeat(50),
+            },
+          ];
+        }
+
+        return [];
+      },
+    });
+
+    expect(searchedQueries[0]).toContain("site:openai.com");
+    expect(pack.items[0].url).toBe("https://openai.com/news/model-update");
+    expect(pack.searchProcess?.debugSummary?.passStats[0]).toEqual(
+      expect.objectContaining({
+        passName: "official",
+        resultCount: 1,
+        coreEvidenceCount: 1,
+      }),
+    );
+  });
+
+  test("skips social clue pass when trusted passes already provide enough core evidence", async () => {
+    const provider = createNoIntentProvider();
+    const searchedQueries: string[] = [];
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI company financing",
+      searcher: async (query) => {
+        searchedQueries.push(query);
+
+        if (query.includes("site:openai.com")) {
+          return [
+            {
+              title: "Official financing note",
+              url: "https://openai.com/news/financing",
+              snippet: "Official financing note. ".repeat(50),
+            },
+          ];
+        }
+
+        if (query.includes("Reuters")) {
+          return [
+            {
+              title: "Reuters financing report",
+              url: "https://reuters.com/technology/ai-financing",
+              snippet: "Reuters financing report. ".repeat(50),
+            },
+          ];
+        }
+
+        if (query.includes("SemiAnalysis")) {
+          return [
+            {
+              title: "SemiAnalysis financing report",
+              url: "https://semianalysis.com/ai-financing",
+              snippet: "SemiAnalysis financing report. ".repeat(50),
+            },
+          ];
+        }
+
+        if (query.includes("Reddit")) {
+          return [
+            {
+              title: "Reddit financing thread",
+              url: "https://reddit.com/r/artificial/comments/financing",
+              snippet: "Reddit discussion. ".repeat(50),
+            },
+          ];
+        }
+
+        return [];
+      },
+    });
+
+    expect(searchedQueries.some((query) => query.includes("Reddit"))).toBe(false);
+    expect(pack.searchProcess?.debugSummary?.skippedPasses).toContain(
+      "social_clue",
+    );
+    expect(pack.searchProcess?.debugSummary?.evidenceHitRate.coreEvidenceCount)
+      .toBeGreaterThanOrEqual(3);
+  });
+
+  test("keeps social clue pass results out of core evidence", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI product rumor",
+      searcher: async (query) => {
+        if (!query.includes("Reddit")) {
+          return [];
+        }
+
+        return [
+          {
+            title: "Reddit rumor",
+            url: "https://reddit.com/r/artificial/comments/rumor",
+            snippet: "Reddit rumor discussion. ".repeat(60),
+          },
+          {
+            title: "YouTube analysis",
+            url: "https://youtube.com/watch?v=rumor",
+            snippet: "YouTube analysis. ".repeat(80),
+          },
+          {
+            title: "LinkedIn post",
+            url: "https://linkedin.com/posts/rumor",
+            snippet: "LinkedIn post. ".repeat(80),
+          },
+        ];
+      },
+    });
+
+    expect(pack.searchProcess?.debugSummary?.evidenceHitRate.coreEvidenceCount)
+      .toBe(0);
+    expect(
+      pack.searchProcess?.results.every(
+        (result) =>
+          result.sourceType === "social_forum" ||
+          result.sourceType === "video_platform",
+      ),
+    ).toBe(true);
+  });
+
+  test("dedupes the same URL across passes and records all seen passes", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI model release",
+      searcher: async (query) => {
+        if (query.includes("site:openai.com")) {
+          return [
+            {
+              title: "Model release short official",
+              url: "https://openai.com/news/model-release?utm_source=test",
+              snippet: "Short official snippet.",
+            },
+          ];
+        }
+
+        if (query.includes("Reuters")) {
+          return [
+            {
+              title: "Model release full official mirror",
+              url: "https://openai.com/news/model-release",
+              snippet: "Full official release text. ".repeat(50),
+            },
+          ];
+        }
+
+        return [];
+      },
+    });
+
+    const matchingItems = pack.items.filter((item) =>
+      item.url?.includes("openai.com/news/model-release"),
+    );
+
+    expect(matchingItems).toHaveLength(1);
+    expect(matchingItems[0].quality?.textLength).toBeGreaterThanOrEqual(800);
+    expect(matchingItems[0].seenInPasses).toEqual(
+      expect.arrayContaining(["official", "reputable_media"]),
+    );
+  });
+
+  test("records pass stats and selected evidence by pass", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI benchmark report",
+      searcher: async (query) => {
+        if (query.includes("site:openai.com")) {
+          return [
+            {
+              title: "Official benchmark note",
+              url: "https://openai.com/news/benchmark",
+              snippet: "Official benchmark note. ".repeat(50),
+            },
+          ];
+        }
+
+        if (query.includes("Reuters")) {
+          return [
+            {
+              title: "Reuters benchmark note",
+              url: "https://reuters.com/technology/ai-benchmark",
+              snippet: "Reuters benchmark note. ".repeat(50),
+            },
+          ];
+        }
+
+        if (query.includes("SemiAnalysis")) {
+          return [
+            {
+              title: "SemiAnalysis benchmark note",
+              url: "https://semianalysis.com/ai-benchmark",
+              snippet: "SemiAnalysis benchmark note. ".repeat(50),
+            },
+          ];
+        }
+
+        return [];
+      },
+    });
+
+    expect(pack.searchProcess?.debugSummary?.passStats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          passName: "official",
+          resultCount: 1,
+          coreEvidenceCount: 1,
+        }),
+        expect.objectContaining({
+          passName: "reputable_media",
+          resultCount: 1,
+          coreEvidenceCount: 1,
+        }),
+        expect.objectContaining({
+          passName: "industry_report",
+          resultCount: 1,
+          coreEvidenceCount: 1,
+        }),
+      ]),
+    );
+    expect(pack.searchProcess?.debugSummary?.selectedEvidenceByPass).toEqual(
+      expect.arrayContaining([
+        { passName: "official", count: 1 },
+        { passName: "reputable_media", count: 1 },
+        { passName: "industry_report", count: 1 },
+      ]),
+    );
+  });
 });
+
+function createNoIntentProvider(): ModelProvider {
+  return {
+    name: "TestProvider",
+    async generateSearchIntents() {
+      return [];
+    },
+    async generateIndependentView() {
+      return "";
+    },
+    async generateResponse() {
+      return "";
+    },
+    async generateSummary() {
+      return {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      };
+    },
+  };
+}

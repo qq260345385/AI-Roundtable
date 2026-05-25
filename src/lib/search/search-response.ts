@@ -220,6 +220,8 @@ function sanitizeEvidenceQualityForClient(
     wasTruncated: quality.wasTruncated,
     sourceType: quality.sourceType,
     reliability: quality.reliability,
+    score: quality.score,
+    ...(quality.snippetOnly ? { snippetOnly: true } : {}),
   };
 }
 

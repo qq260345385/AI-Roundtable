@@ -1,5 +1,6 @@
 import type {
   EvidencePack,
+  EvidenceSearchPassStats,
   SearchEvidence,
   SearchCacheEvent,
   SearchFreshness,
@@ -13,6 +14,8 @@ import type {
 } from "./evidence-pack";
 import {
   createSearchFailureProcess,
+  isPublicOpinionEvidenceItem,
+  isStrongOfficialSource,
   normalizeEvidencePack,
   scoreEvidence,
 } from "./evidence-pack";
@@ -38,6 +41,7 @@ import type {
 const MAX_MODEL_DRIVEN_QUERIES = 8;
 const WEB_SEARCH_RESULTS_PER_QUERY = 5;
 const RESCUE_TRIGGER_USABLE_THRESHOLD = 3;
+const RESCUE_TRIGGER_RELIABLE_THRESHOLD = 3;
 const MAX_TAVILY_QUERY_LENGTH = 160;
 const VAGUE_TERMS = new Set([
   "impact",
@@ -57,6 +61,20 @@ const MARKETING_TERMS = new Set([
   "powerful",
   "leading",
 ]);
+const CORE_EVIDENCE_TARGET = 3;
+
+type SearchPassName =
+  | "official"
+  | "reputable_media"
+  | "industry_report"
+  | "social_clue"
+  | "targeted_retry";
+
+type SearchPassSpec = {
+  name: SearchPassName;
+  query: string;
+  freshness: SearchFreshness;
+};
 
 type SearchModeConfig = {
   candidateLimit: number;
@@ -98,7 +116,7 @@ export async function buildModelDrivenWebEvidencePack({
   extractProvider = getExtractProvider(),
   participants,
   provider,
-  searchMode = "standard",
+  searchMode = "deep",
   searchProvider = getSearchProvider(),
   searcher,
   signal,
@@ -111,13 +129,12 @@ export async function buildModelDrivenWebEvidencePack({
     provider,
     signal,
   );
-  const searchQueries = searchPlan.queries;
+  const searchQueries: string[] = [];
   const baseItems = baseEvidencePack?.enabled ? baseEvidencePack.items : [];
-  const freshnessByQuery = new Map(
-    searchPlan.queryPlans.map((plan) => [plan.query, plan.freshness]),
-  );
   const cacheEvents: SearchCacheEvent[] = [];
   const providerDiagnostics: SearchProviderDiagnostic[] = [];
+  const passStats: EvidenceSearchPassStats[] = [];
+  const skippedPasses: string[] = [];
   let dedupeStats: ReturnType<typeof dedupeSearchResults>["stats"] | undefined;
   let webDrafts: TavilyEvidenceDraft[];
   let rawCandidateCount = 0;
@@ -126,45 +143,65 @@ export async function buildModelDrivenWebEvidencePack({
   let extractAttempted = 0;
   let extractedCandidateCount = 0;
   let extractSucceededCount = 0;
+  let officialExtractFailed = false;
+  let targetedSearchRetryTriggered = false;
+  let targetedSearchRetryReason: string | undefined;
 
   try {
+    const searchPasses = buildSearchPasses(topic, searchPlan.queries);
     const maxResultsPerQuery = getMaxResultsPerQuery(
       modeConfig.candidateLimit,
-      searchQueries.length,
+      searchPasses.length,
     );
-    const rawWebDrafts = (
-      await Promise.all(
-        searchQueries.map((query) =>
-          searchWithConfiguredProvider({
-            freshness: freshnessByQuery.get(query) ?? "any",
-            maxResults: maxResultsPerQuery,
-            provider: searchProvider,
-            query,
-            searcher,
-            signal,
-            topic,
-          }).then((response) => {
-            cacheEvents.push(...(response.cacheEvents ?? []));
-            providerDiagnostics.push(createProviderDiagnostic(response));
+    const rawWebDrafts: TavilyEvidenceDraft[] = [];
 
-            return response.results.map((result) => ({
-              title: result.title,
-              url: result.url,
-              snippet: result.content ?? result.snippet ?? "",
-              publishedAt: result.publishedDate,
-              query,
-            }));
-          }),
-        ),
-      )
-    ).flat();
+    for (const searchPass of searchPasses) {
+      const currentCoreEvidenceCount = countCoreEvidenceDrafts(
+        dedupeSearchResults(rawWebDrafts).items,
+        topic,
+      );
+
+      if (
+        searchPass.name === "social_clue" &&
+        currentCoreEvidenceCount >= CORE_EVIDENCE_TARGET
+      ) {
+        skippedPasses.push(searchPass.name);
+        continue;
+      }
+
+      searchQueries.push(searchPass.query);
+      const response = await searchWithConfiguredProvider({
+        freshness: searchPass.freshness,
+        maxResults: maxResultsPerQuery,
+        provider: searchProvider,
+        query: searchPass.query,
+        searcher,
+        signal,
+        topic,
+      });
+      cacheEvents.push(...(response.cacheEvents ?? []));
+      providerDiagnostics.push(createProviderDiagnostic(response));
+      const passDrafts = response.results.map((result) => ({
+        title: result.title,
+        url: result.url,
+        snippet: result.content ?? result.snippet ?? "",
+        publishedAt: result.publishedDate,
+        query: searchPass.query,
+        seenInPasses: [searchPass.name],
+      }));
+
+      passStats.push(
+        createPassStats(searchPass.name, searchPass.query, passDrafts, topic),
+      );
+      rawWebDrafts.push(...passDrafts);
+    }
     rawCandidateCount = rawWebDrafts.length;
     const deduped = dedupeSearchResults(rawWebDrafts);
 
     webDrafts = deduped.items.slice(0, modeConfig.candidateLimit);
     dedupeStats = deduped.stats;
 
-    const preflightPack = normalizeEvidencePack(
+    let preflightPack = normalizeEvidencePack(
       {
         enabled: webDrafts.length > 0,
         items: webDrafts,
@@ -175,12 +212,72 @@ export async function buildModelDrivenWebEvidencePack({
       },
     );
 
-    if (
-      preflightPack.items.length < RESCUE_TRIGGER_USABLE_THRESHOLD &&
-      webDrafts.some((draft) => draft.url)
-    ) {
+    if (shouldRunTargetedSearchRetry(preflightPack)) {
+      targetedSearchRetryTriggered = true;
+      targetedSearchRetryReason = "social_video_ratio_above_threshold";
+      const targetedQueries = buildTargetedRetryQueries(topic);
+      const targetedDrafts = (
+        await Promise.all(
+          targetedQueries.map((query) =>
+            searchWithConfiguredProvider({
+              freshness: "latest",
+              maxResults: Math.max(2, Math.ceil(modeConfig.extractLimit / 3)),
+              provider: searchProvider,
+              query,
+              searcher,
+              signal,
+              topic,
+            }).then((response) => {
+              cacheEvents.push(...(response.cacheEvents ?? []));
+              providerDiagnostics.push(createProviderDiagnostic(response));
+
+              return response.results.map((result) => ({
+                title: result.title,
+                url: result.url,
+                snippet: result.content ?? result.snippet ?? "",
+                publishedAt: result.publishedDate,
+                query,
+                seenInPasses: ["targeted_retry"],
+              }));
+            }),
+          ),
+        )
+      ).flat();
+      passStats.push(
+        ...targetedQueries.map((query) =>
+          createPassStats(
+            "targeted_retry",
+            query,
+            targetedDrafts.filter((draft) => draft.query === query),
+            topic,
+          ),
+        ),
+      );
+      const targetedDeduped = dedupeSearchResults([
+        ...webDrafts,
+        ...targetedDrafts,
+      ]);
+
+      webDrafts = targetedDeduped.items.slice(0, modeConfig.candidateLimit);
+      dedupeStats = mergeDedupeStats(dedupeStats, targetedDeduped.stats);
+      preflightPack = normalizeEvidencePack(
+        {
+          enabled: webDrafts.length > 0,
+          items: webDrafts,
+        },
+        {
+          maxItems: modeConfig.finalLimit,
+          topic,
+        },
+      );
+      searchQueries.push(...targetedQueries);
+    }
+
+    const rescueDecision = getExtractRescueDecision(preflightPack, searchMode);
+
+    if (rescueDecision.triggered && webDrafts.some((draft) => draft.url)) {
       rescueTriggered = true;
-      rescueReason = "usable_evidence_below_threshold";
+      rescueReason = rescueDecision.reason;
       const rescueCandidates = selectRescueCandidates(
         webDrafts,
         topic,
@@ -194,6 +291,11 @@ export async function buildModelDrivenWebEvidencePack({
                 Boolean(draft.url),
               )
               .slice(0, modeConfig.extractLimit);
+      const officialRetryUrls = new Set(
+        fallbackRescueCandidates
+          .filter((candidate) => isOfficialSnippetOnlyDraft(candidate, topic))
+          .map((candidate) => candidate.url),
+      );
 
       extractAttempted = fallbackRescueCandidates.length;
 
@@ -211,12 +313,22 @@ export async function buildModelDrivenWebEvidencePack({
             url: result.url,
             snippet: result.content,
             query: result.sourceQuery,
+            seenInPasses: getSeenInPassesForUrl(
+              fallbackRescueCandidates,
+              result.url,
+            ),
           }));
 
           extractedCandidateCount = extractedDrafts.length;
           extractSucceededCount = extractedDrafts.filter((draft) =>
             draft.snippet.trim(),
           ).length;
+          officialExtractFailed =
+            officialRetryUrls.size > 0 &&
+            !extractedDrafts.some(
+              (draft) =>
+                officialRetryUrls.has(draft.url) && draft.snippet.trim().length >= 800,
+            );
 
           const rescuedDeduped = dedupeSearchResults([
             ...webDrafts,
@@ -233,8 +345,10 @@ export async function buildModelDrivenWebEvidencePack({
               : {}),
             ...(extractResponse.rawStats ? { rawStats: extractResponse.rawStats } : {}),
           });
+          recordExtractedCountsByPass(passStats, extractedDrafts);
         } catch (error) {
           rescueReason = `extract_failed:${getTavilyFailureReason(error)}`;
+          officialExtractFailed = officialRetryUrls.size > 0;
         }
       }
     }
@@ -325,6 +439,11 @@ export async function buildModelDrivenWebEvidencePack({
         rawCandidateCount,
         rescueReason,
         rescueTriggered,
+        officialExtractFailed,
+        passStats,
+        skippedPasses,
+        targetedSearchRetryTriggered,
+        targetedSearchRetryReason,
         searchMode,
         searchIntents: searchPlan.searchIntents,
         queryPlans: searchPlan.queryPlans,
@@ -389,6 +508,150 @@ async function searchWithConfiguredProvider(input: {
   });
 }
 
+function buildSearchPasses(
+  topic: string,
+  plannedQueries: string[],
+): SearchPassSpec[] {
+  const baseQuery = plannedQueries.find(Boolean) ?? topic;
+
+  return [
+    {
+      name: "official",
+      query: trimQueryToLength(
+        `site:openai.com site:anthropic.com site:ai.googleblog.com site:microsoft.com site:amazon.com official report ${baseQuery}`,
+      ),
+      freshness: "latest",
+    },
+    {
+      name: "reputable_media",
+      query: trimQueryToLength(
+        `Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch ${baseQuery}`,
+      ),
+      freshness: "latest",
+    },
+    {
+      name: "industry_report",
+      query: trimQueryToLength(
+        `SemiAnalysis Epoch AI Stanford arxiv MLCommons industry report ${baseQuery}`,
+      ),
+      freshness: "recent",
+    },
+    {
+      name: "social_clue",
+      query: trimQueryToLength(
+        `Reddit LinkedIn YouTube X discussion ${baseQuery}`,
+      ),
+      freshness: "recent",
+    },
+  ];
+}
+
+function createPassStats(
+  passName: SearchPassName,
+  query: string,
+  drafts: TavilyEvidenceDraft[],
+  topic: string,
+): EvidenceSearchPassStats {
+  const pack = normalizeEvidencePack(
+    {
+      enabled: drafts.length > 0,
+      items: drafts,
+    },
+    {
+      allowLowReliabilityFallback: true,
+      maxItems: drafts.length || 1,
+      topic,
+    },
+  );
+
+  return {
+    passName,
+    query,
+    resultCount: drafts.length,
+    extractedCount: 0,
+    coreEvidenceCount: pack.enabled
+      ? pack.items.filter(isCoreEvidenceCandidate).length
+      : 0,
+    socialVideoCount: pack.enabled
+      ? pack.items.filter(isPublicOpinionEvidenceItem).length
+      : 0,
+    unknownCount: pack.enabled
+      ? pack.items.filter((item) => item.quality?.sourceType === "unknown").length
+      : 0,
+  };
+}
+
+function countCoreEvidenceDrafts(
+  drafts: TavilyEvidenceDraft[],
+  topic: string,
+): number {
+  return createPassStats("official", "preflight", drafts, topic).coreEvidenceCount;
+}
+
+function isCoreEvidenceCandidate(item: SearchEvidence): boolean {
+  const quality = item.quality;
+
+  if (!quality) {
+    return false;
+  }
+
+  return (
+    (isStrongOfficialSource(quality.sourceType) ||
+      quality.sourceType === "reputable_media" ||
+      quality.sourceType === "industry_report") &&
+    quality.textLength >= 800 &&
+    quality.snippetOnly !== true &&
+    (quality.reliability === "high" || quality.reliability === "medium")
+  );
+}
+
+function getSeenInPassesForUrl(
+  drafts: TavilyEvidenceDraft[],
+  url: string,
+): string[] {
+  const canonicalUrl = getCanonicalSearchUrl(url);
+  const passes = drafts
+    .filter((draft) => getCanonicalSearchUrl(draft.url) === canonicalUrl)
+    .flatMap((draft) => draft.seenInPasses ?? []);
+
+  return Array.from(new Set(passes));
+}
+
+function recordExtractedCountsByPass(
+  passStats: EvidenceSearchPassStats[],
+  extractedDrafts: TavilyEvidenceDraft[],
+) {
+  const counts = new Map<string, number>();
+
+  for (const draft of extractedDrafts) {
+    for (const passName of draft.seenInPasses ?? []) {
+      counts.set(passName, (counts.get(passName) ?? 0) + 1);
+    }
+  }
+
+  for (const stat of passStats) {
+    stat.extractedCount += counts.get(stat.passName) ?? 0;
+  }
+}
+
+function getCanonicalSearchUrl(url: string | undefined): string {
+  if (!url) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.hostname = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+
+    return parsed.toString().toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
 function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
   if (searchMode === "deep") {
     return {
@@ -405,6 +668,116 @@ function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
     finalLimit: 8,
     chunksPerSource: 2,
   };
+}
+
+function getExtractRescueDecision(
+  pack: EvidencePack,
+  searchMode: SearchMode,
+): { triggered: boolean; reason?: string } {
+  if (pack.items.some(isOfficialSnippetOnlyEvidence)) {
+    return {
+      triggered: true,
+      reason: "official_snippet_only",
+    };
+  }
+
+  if (pack.items.length < RESCUE_TRIGGER_USABLE_THRESHOLD) {
+    return {
+      triggered: true,
+      reason: "usable_evidence_below_threshold",
+    };
+  }
+
+  if (getReliableEvidenceCount(pack.items) < RESCUE_TRIGGER_RELIABLE_THRESHOLD) {
+    return {
+      triggered: true,
+      reason: "reliable_evidence_below_threshold",
+    };
+  }
+
+  if (getShortExtractedTextRatio(pack.items) > 0.7) {
+    return {
+      triggered: true,
+      reason: "short_extracted_text_ratio_above_threshold",
+    };
+  }
+
+  if (
+    searchMode === "deep" &&
+    getReliableEvidenceCount(pack.items) < RESCUE_TRIGGER_RELIABLE_THRESHOLD
+  ) {
+    return {
+      triggered: true,
+      reason: "reliable_evidence_below_threshold",
+    };
+  }
+
+  return { triggered: false };
+}
+
+function shouldRunTargetedSearchRetry(pack: EvidencePack): boolean {
+  if (pack.items.length === 0) {
+    return false;
+  }
+
+  const socialVideoCount = pack.items.filter(isPublicOpinionEvidenceItem).length;
+
+  return socialVideoCount / pack.items.length > 0.5;
+}
+
+function buildTargetedRetryQueries(topic: string): string[] {
+  return [
+    `${topic} official reputable media industry report -linkedin -instagram -reddit -youtube -tiktok -twitter -x.com`,
+    `${topic} Reuters Bloomberg NYTimes WSJ FT The Information TechCrunch`,
+    `${topic} official announcement report site:openai.com OR site:anthropic.com`,
+  ].map((query) => trimQueryToLength(query));
+}
+
+function isOfficialSnippetOnlyEvidence(item: SearchEvidence): boolean {
+  return (
+    isStrongOfficialSource(item.quality?.sourceType) &&
+    ((item.quality?.textLength ?? item.snippet.length) < 800 ||
+      item.quality?.snippetOnly === true)
+  );
+}
+
+function isOfficialSnippetOnlyDraft(
+  draft: TavilyEvidenceDraft,
+  topic: string,
+): boolean {
+  const quality = scoreEvidence({
+    title: draft.title,
+    url: draft.url,
+    source: draft.source,
+    publishedAt: draft.publishedAt,
+    snippet: draft.snippet,
+    topic,
+  });
+
+  return (
+    isStrongOfficialSource(quality.sourceType) &&
+    (quality.textLength < 800 || quality.snippetOnly === true)
+  );
+}
+
+function getReliableEvidenceCount(items: SearchEvidence[]): number {
+  return items.filter((item) => {
+    const reliability = item.quality?.reliability;
+
+    return reliability === "high" || reliability === "medium";
+  }).length;
+}
+
+function getShortExtractedTextRatio(items: SearchEvidence[]): number {
+  if (items.length === 0) {
+    return 0;
+  }
+
+  const shortCount = items.filter(
+    (item) => (item.quality?.textLength ?? item.snippet.length) < 800,
+  ).length;
+
+  return shortCount / items.length;
 }
 
 function getMaxResultsPerQuery(candidateLimit: number, queryCount: number) {
@@ -434,7 +807,7 @@ function selectRescueCandidates(
         snippet: draft.snippet,
         topic,
       });
-      const status = getCandidateStatus(draft, quality.reliability);
+      const status = getCandidateStatus(draft, quality);
 
       if (status === "filtered") {
         return [];
@@ -455,21 +828,28 @@ function selectRescueCandidates(
 
 function getCandidateStatus(
   draft: TavilyEvidenceDraft,
-  reliability: "high" | "medium" | "low" | "very_low",
+  quality: ReturnType<typeof scoreEvidence>,
 ): CandidatePoolItem["status"] {
   if (!draft.url) {
     return "filtered";
+  }
+
+  if (
+    isStrongOfficialSource(quality.sourceType) &&
+    (quality.textLength < 800 || quality.snippetOnly === true)
+  ) {
+    return "needs_extract";
   }
 
   if (!draft.snippet.trim() || draft.snippet.length < 300) {
     return "needs_extract";
   }
 
-  if (reliability === "very_low") {
+  if (quality.reliability === "very_low") {
     return "needs_extract";
   }
 
-  if (reliability === "low") {
+  if (quality.reliability === "low") {
     return "context_only";
   }
 
@@ -480,6 +860,13 @@ function compareCandidatePoolItems(
   left: CandidatePoolItem,
   right: CandidatePoolItem,
 ) {
+  const sourceDelta =
+    getCandidateSourceRank(left.draft) - getCandidateSourceRank(right.draft);
+
+  if (sourceDelta !== 0) {
+    return sourceDelta;
+  }
+
   const statusDelta =
     getCandidateStatusRank(left.status) - getCandidateStatusRank(right.status);
 
@@ -488,6 +875,33 @@ function compareCandidatePoolItems(
   }
 
   return right.score - left.score;
+}
+
+function getCandidateSourceRank(draft: TavilyEvidenceDraft): number {
+  const quality = scoreEvidence({
+    title: draft.title,
+    url: draft.url,
+    source: draft.source,
+    publishedAt: draft.publishedAt,
+    snippet: draft.snippet,
+  });
+
+  if (isStrongOfficialSource(quality.sourceType)) {
+    return 0;
+  }
+
+  if (
+    quality.sourceType === "reputable_media" ||
+    quality.sourceType === "industry_report"
+  ) {
+    return 1;
+  }
+
+  if (quality.sourceType === "unknown") {
+    return 2;
+  }
+
+  return 3;
 }
 
 function getCandidateStatusRank(status: CandidatePoolItem["status"]) {
@@ -753,6 +1167,7 @@ function buildQueryFromIntent(
     ...intent.shouldInclude,
     ...getSourcePreferenceTerms(intent.sourcePreference),
     ...getFreshnessTerms(topic, intent, currentYear),
+    ...getDefaultSourceExclusionTerms(intent.sourcePreference),
     ...intent.exclude.map((term) => `-${term}`),
   ].flatMap(splitSearchPhrases);
   const compactTerms = Array.from(new Set(terms)).filter(
@@ -842,6 +1257,24 @@ function getSourcePreferenceTerms(
   }
 
   return [];
+}
+
+function getDefaultSourceExclusionTerms(
+  sourcePreference: SearchSourcePreference,
+): string[] {
+  if (sourcePreference === "community") {
+    return [];
+  }
+
+  return [
+    "-linkedin",
+    "-instagram",
+    "-reddit",
+    "-youtube",
+    "-tiktok",
+    "-twitter",
+    "-x.com",
+  ];
 }
 
 function getFreshnessTerms(

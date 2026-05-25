@@ -167,9 +167,8 @@ export const UI_TEXT = {
       webSearchTitle: "启用联网搜索",
       webSearchDescription:
         "勾选后，系统会让参会模型先提出搜索方向，再联网检索资料并提供给所有模型。",
-      searchModeStandard: "普通搜索",
-      searchModeDeep: "深度搜索，资料更多，速度较慢",
       webSearching: "正在搜索联网资料...",
+      webSearchCompleted: "联网搜索已完成，会议开始发言。",
       webSearchImported: "已导入联网资料",
       webSearchFailed: "联网资料搜索失败",
       lowEvidenceNotice:
@@ -428,9 +427,8 @@ export const UI_TEXT = {
       webSearchTitle: "Enable web search",
       webSearchDescription:
         "When enabled, participants first plan useful search queries, then the server searches the web and shares selected evidence with all models.",
-      searchModeStandard: "Standard search",
-      searchModeDeep: "Deep search, more evidence, slower",
       webSearching: "Searching web evidence...",
+      webSearchCompleted: "Web search completed. The meeting has started.",
       webSearchImported: "Imported web evidence",
       webSearchFailed: "Failed to search web evidence",
       lowEvidenceNotice:

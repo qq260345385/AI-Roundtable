@@ -150,7 +150,7 @@ describe("GET /api/models", () => {
       "https://working.example/v1";
     process.env.AI_ROUNDTABLE_PROVIDER_WORKING_API_KEY = "working-key";
     process.env.AI_ROUNDTABLE_PROVIDER_WORKING_MODEL = "working-model";
-    vi.stubGlobal("fetch", async (url) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       if (String(url).includes("broken.example")) {
         return new Response("Authorization Bearer secret-openai-key failed", {
           status: 500,

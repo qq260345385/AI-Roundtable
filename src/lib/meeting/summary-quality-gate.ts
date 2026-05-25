@@ -6,8 +6,10 @@ export function applyEvidenceQualityGateToSummary(
   summary: MeetingSummary,
   evidencePack: EvidencePack | undefined,
 ): MeetingSummary {
+  const dedupedSummary = dedupeSummaryUncertainty(summary);
+
   if (!evidencePack?.enabled || evidencePack.items.length === 0) {
-    return summary;
+    return dedupedSummary;
   }
 
   const hasUsableEvidence = evidencePack.items.some((item) =>
@@ -16,27 +18,32 @@ export function applyEvidenceQualityGateToSummary(
   );
 
   if (hasUsableEvidence) {
-    return downgradeWeakConfirmableFacts(summary, evidencePack);
+    return dedupeSummaryUncertainty(
+      downgradeWeakConsensusClaims(
+        downgradeWeakConfirmableFacts(dedupedSummary, evidencePack),
+        evidencePack,
+      ),
+    );
   }
 
   const downgradedFacts = [
-    ...(summary.confirmableFacts ?? []),
-    ...summary.consensus,
+    ...(dedupedSummary.confirmableFacts ?? []),
+    ...dedupedSummary.consensus,
   ];
 
   if (downgradedFacts.length === 0) {
-    return summary;
+    return dedupedSummary;
   }
 
-  return {
-    ...summary,
+  return dedupeSummaryUncertainty({
+    ...dedupedSummary,
     consensus: [],
     confirmableFacts: [],
     insufficientlyConfirmed: [
-      ...(summary.insufficientlyConfirmed ?? []),
+      ...(dedupedSummary.insufficientlyConfirmed ?? []),
       ...downgradedFacts.map(markAsInsufficientlyConfirmed),
     ],
-  };
+  });
 }
 
 function downgradeWeakConfirmableFacts(
@@ -93,10 +100,118 @@ function downgradeWeakConfirmableFacts(
   };
 }
 
+function downgradeWeakConsensusClaims(
+  summary: MeetingSummary,
+  evidencePack: EvidencePack,
+): MeetingSummary {
+  if (summary.consensus.length === 0) {
+    return summary;
+  }
+
+  const weakCitationIds = getWeakCitationIds(evidencePack);
+  const consensus: string[] = [];
+  const insufficientlyConfirmed = [...(summary.insufficientlyConfirmed ?? [])];
+
+  for (const item of summary.consensus) {
+    if (shouldDowngradeNumericClaim(item, weakCitationIds)) {
+      insufficientlyConfirmed.push(markAsInsufficientlyConfirmed(item));
+    } else {
+      consensus.push(item);
+    }
+  }
+
+  return {
+    ...summary,
+    consensus,
+    insufficientlyConfirmed,
+  };
+}
+
+function getWeakCitationIds(evidencePack: EvidencePack): Set<string> {
+  return new Set(
+    evidencePack.items
+      .filter(
+        (item) =>
+          item.quality?.citationLevel === "context_only" ||
+          item.quality?.citationLevel === "not_citable" ||
+          item.quality?.reliability === "low" ||
+          item.quality?.reliability === "very_low" ||
+          item.quality?.snippetOnly === true ||
+          (item.quality?.score ?? 0) < 60,
+      )
+      .map((item) => item.id),
+  );
+}
+
+function shouldDowngradeNumericClaim(
+  value: string,
+  weakCitationIds: Set<string>,
+): boolean {
+  const citesWeakEvidence = extractCitationIds(value).some((id) =>
+    weakCitationIds.has(id),
+  );
+
+  return citesWeakEvidence && containsSensitiveNumericClaim(value);
+}
+
+function containsSensitiveNumericClaim(value: string): boolean {
+  return /(\$|￥|€|£|\b\d+(?:\.\d+)?\s*(?:billion|million|bn|m|亿美元|亿元|万亿|亿|万)\b|融资|估值|营收|收入|IPO|上市|时间表|valuation|funding|revenue)/i.test(
+    value,
+  );
+}
+
 function markAsInsufficientlyConfirmed(value: string): string {
   if (value.includes("不能确认") || value.includes("不足以确认")) {
     return value;
   }
 
   return `${value}（仅由低可信资料支持，不能确认。）`;
+}
+
+function dedupeSummaryUncertainty(summary: MeetingSummary): MeetingSummary {
+  const initialHypotheses = dedupeStrings(summary.initialHypotheses ?? []);
+  const initialKeys = new Set(initialHypotheses.map(normalizeSummaryPoint));
+  const insufficientlyConfirmed = dedupeStrings(
+    summary.insufficientlyConfirmed ?? [],
+  ).filter(
+    (item) =>
+      !isNoConfirmableFactsSentence(item) &&
+      !initialKeys.has(normalizeSummaryPoint(item)),
+  );
+
+  return {
+    ...summary,
+    initialHypotheses,
+    insufficientlyConfirmed,
+  };
+}
+
+function isNoConfirmableFactsSentence(value: string): boolean {
+  return normalizeSummaryPoint(value) === normalizeSummaryPoint("无。当前资料不足以确认关键事实。");
+}
+
+function dedupeStrings(items: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of items) {
+    const key = normalizeSummaryPoint(item);
+
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function normalizeSummaryPoint(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\[[sS]\d+\]/g, "")
+    .replace(/[，。；：、,.!?:;"'“”‘’()\[\]（）\s]/g, "")
+    .trim();
 }

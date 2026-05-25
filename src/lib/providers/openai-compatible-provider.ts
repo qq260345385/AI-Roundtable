@@ -121,8 +121,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
         content: [
           `会议议题：${topic}`,
           "这是第一阶段：独立观点。",
-          "请作为平等参会者发表你的看法。你不是固定角色 agent，也没有被分配固定任务。",
-          "请尽量体现你这个模型自身的表达方式、推理倾向和关注重点。",
+          `你的本轮分析角色：${getAnalysisRole(participant)}。`,
+          "请围绕这个角色优先分析，但仍要像普通用户可读的圆桌发言，不要展示复杂内部推理。",
+          "发言控制在 500～800 字；只保留与结论有关的证据、判断和不确定性。",
           briefModePrompt,
           factHygienePrompt,
           evidencePackPrompt,
@@ -156,9 +157,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "下面是其他参会者在第一阶段的独立观点，已按圆桌席位编号列出：",
           formatTurnsWithSeatNumbers(previousTurns, participant.name),
           "请自由回应：可以同意、部分同意、补充、质疑、反驳或延展。",
+          "必须回应至少一个其他席位的具体观点，并新增一个不同角度；不要复述上一阶段已有内容。",
           "回应其他参会者时，请使用席位编号称呼对方，例如“1号的观点”或“我想补充 2号”。",
           "不要直接称呼对方的模型名或显示名，例如不要写“感谢 Pro”或“Flash 提到”。",
-          "不要为了制造冲突而强行反驳，也不要把自己变成固定职责 agent。",
+          `你的本轮分析角色：${getAnalysisRole(participant)}。请从这个角色补一个新角度。`,
           briefModePrompt,
           factHygienePrompt,
           evidencePackPrompt,
@@ -189,6 +191,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
           "禁止基于 low / very_low 资料使用“证明”“显示”“已经超越”“确定领先”“吊打”“追平”“实锤”等强断言。",
           "如果结论只被 low / very_low 资料支持，请放入“社区观点”或“不足以确认”，并使用“有资料声称”“社区讨论认为”“尚未核验”“不能据此确认”等措辞。",
+          "low-evidence mode 下，低质量资料里的融资额、估值、营收、收入、IPO 时间表等具体数字只能放入低置信推测或不能确认的关键问题，不能作为正文论据或可确认事实。",
+          "引用低质量资料时必须写成“资料[Sx]提供了一个待核验线索，但因来源质量低/正文不足，不能确认。”或“有低可信资料声称xxx，但本轮无法确认，不能作为结论依据。”",
+          "禁止写“根据[Sx]，OpenAI融资xxx”“资料显示Anthropic估值xxx”这类把低可信资料声称包装成事实的句式。",
+          "第三阶段必须压缩重复观点，避免同一句同时出现在“低置信推测”和“不能确认的关键问题”。",
+          "如果没有可确认事实，confirmableFacts 必须返回 [\"无。当前资料不足以确认关键事实。\"]。",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -200,11 +207,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "这是第三阶段：共识整理。",
           "会议发言：",
           formatTurns(turns),
-          "请按以下结构整理：可确认事实、初步推测、社区观点、不足以确认、风险点、下一步建议。",
+          "请按以下结构整理：可确认事实、低置信推测、不能确认的关键问题、风险点、下一步核验建议。",
           options?.isBriefMode
             ? "简要会议模式下，每个字段最多 3 条，每条尽量不超过 60 字。"
             : "",
-          "请严格返回 JSON，不要添加 Markdown。字段必须是 confirmableFacts、initialHypotheses、communityViews、insufficientlyConfirmed、risks、nextSteps，每个字段都是字符串数组。为了兼容旧界面，也可以同时提供 consensus、differences、minorityViews。",
+          "请严格返回 JSON，不要添加 Markdown。字段必须是 confirmableFacts、initialHypotheses、insufficientlyConfirmed、risks、nextSteps，每个字段都是字符串数组。communityViews 可用于舆论线索；为了兼容旧界面，也可以同时提供 consensus、differences、minorityViews。",
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -267,10 +274,26 @@ function getSystemMessage(participant: ModelParticipant): ChatMessage {
       `你是 ${participant.name}。`,
       `provider: ${participant.provider}`,
       `model: ${participant.model}`,
-      "你是圆桌会议中的平等参会者，不是固定角色 agent。",
-      "你可以表达自己的模型倾向，但不要假装自己被分配了固定职责。",
+      `你的分析角色：${getAnalysisRole(participant)}。`,
+      "你是圆桌会议中的平等参会者；角色只用于减少重复和明确关注重点。",
+      "面向普通用户输出，保持简洁、克制、低认知负担。",
     ].join("\n"),
   };
+}
+
+function getAnalysisRole(participant: ModelParticipant): string {
+  const roles = [
+    "技术架构分析师",
+    "商业与融资分析师",
+    "产品与生态分析师",
+    "风险与监管分析师",
+  ];
+  const key = `${participant.id}:${participant.provider}:${participant.model}`;
+  const index =
+    Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0) %
+    roles.length;
+
+  return roles[index];
 }
 
 function formatTurns(turns: MeetingTurn[], currentSpeakerName?: string): string {

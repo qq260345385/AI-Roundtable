@@ -138,7 +138,7 @@ export async function POST(request: Request) {
 }
 
 function getSearchMode(value: unknown): SearchMode {
-  return value === "deep" ? "deep" : "standard";
+  return value === "standard" ? "standard" : "deep";
 }
 
 async function readRequestBody(

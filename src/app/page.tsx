@@ -22,6 +22,7 @@ import {
   FACT_HYGIENE_NOTICE,
   shouldShowFactHygieneNotice,
 } from "@/lib/meeting/fact-hygiene";
+import { getLiveMeetingStatusMessage } from "@/lib/meeting/live-status-message";
 import { getUiText, isLocale, type Locale } from "@/lib/i18n/ui-text";
 import type {
   MeetingApiResponse,
@@ -35,7 +36,6 @@ import type {
 } from "@/lib/types";
 import type {
   DocumentInputStrategy,
-  SearchMode,
 } from "@/lib/search/evidence-pack";
 
 type MeetingStatus = "initial" | "loading" | "success" | "error";
@@ -91,7 +91,6 @@ export default function Home() {
   const [evidenceImportMessage, setEvidenceImportMessage] = useState("");
   const [isEvidenceImporting, setIsEvidenceImporting] = useState(false);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
-  const [searchMode, setSearchMode] = useState<SearchMode>("standard");
   const [isBriefMode, setIsBriefMode] = useState(false);
   const [locale, setLocale] = useState<Locale>(() => {
     if (typeof window === "undefined") {
@@ -228,7 +227,7 @@ export default function Home() {
           isBriefMode,
           participantIds: selectedParticipantIds,
           question: trimmedQuestion,
-          searchMode,
+          searchMode: "deep",
           webSearchEnabled: isWebSearchEnabled,
         }),
         signal: meetingAbortController.signal,
@@ -300,7 +299,9 @@ export default function Home() {
     }
 
     try {
-      const markdown = exportMeetingToMarkdown(meeting, meetingParticipants);
+      const markdown = exportMeetingToMarkdown(meeting, meetingParticipants, {
+        includeEvidenceDebug: Boolean(meeting.debugSearchProcess),
+      });
       await navigator.clipboard.writeText(markdown);
       setCopyMessage(uiText.save.copied);
     } catch {
@@ -493,32 +494,6 @@ export default function Home() {
                   </span>
                 </span>
               </label>
-              {isWebSearchEnabled ? (
-                <div className="grid gap-2 border border-zinc-200 bg-white p-3 text-sm text-zinc-800 sm:grid-cols-2">
-                  <label className="flex items-start gap-2">
-                    <input
-                      checked={searchMode === "standard"}
-                      className="mt-1 h-4 w-4 accent-emerald-700"
-                      disabled={status === "loading"}
-                      name="search-mode"
-                      onChange={() => setSearchMode("standard")}
-                      type="radio"
-                    />
-                    <span>{uiText.evidence.searchModeStandard}</span>
-                  </label>
-                  <label className="flex items-start gap-2">
-                    <input
-                      checked={searchMode === "deep"}
-                      className="mt-1 h-4 w-4 accent-emerald-700"
-                      disabled={status === "loading"}
-                      name="search-mode"
-                      onChange={() => setSearchMode("deep")}
-                      type="radio"
-                    />
-                    <span>{uiText.evidence.searchModeDeep}</span>
-                  </label>
-                </div>
-              ) : null}
               <EvidencePackEditor
                 disabled={status === "loading"}
                 drafts={evidenceDrafts}
@@ -1114,6 +1089,12 @@ function handleLiveMeetingEvent(
 
   if (activeStageId) {
     setters.setLiveActiveStageId(activeStageId);
+  }
+
+  const liveStatusMessage = getLiveMeetingStatusMessage(event, text);
+
+  if (liveStatusMessage) {
+    setters.setMessage(liveStatusMessage);
   }
 
   if (event.type === "meeting_completed") {

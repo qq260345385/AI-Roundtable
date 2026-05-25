@@ -15,6 +15,7 @@ import {
   type MeetingStageView,
 } from "@/lib/meeting/meeting-room";
 import { formatFailureForDisplay } from "@/lib/meeting/failure-format";
+import { formatModelDisplayName } from "@/lib/models/model-display-name";
 import { WebSearchProcessPanel } from "./MeetingBoard";
 
 type MeetingRoomProps = {
@@ -154,7 +155,7 @@ export function MeetingRoom({
         ) : null}
 
         <div className="grid flex-1 gap-5 lg:grid-cols-[310px_1fr]">
-          <aside className="space-y-4">
+          <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
             <section className="border border-white/70 bg-white/80 p-5 shadow-sm backdrop-blur">
               <h2 className="text-lg font-semibold">
                 {text.meetingRoom.councilMembers}
@@ -174,11 +175,8 @@ export function MeetingRoom({
                           {text.meetingRoom.seat} {index + 1}
                         </p>
                         <h3 className="mt-1 break-words font-medium text-zinc-950">
-                          {participant.name}
+                          {formatModelDisplayName(participant.model)}
                         </h3>
-                        <p className="mt-1 break-words text-xs leading-5 text-zinc-500">
-                          {participant.provider} / {participant.model}
-                        </p>
                         {participantStatuses[participant.id] ===
                         "speaking" ? (
                           <span className="mt-2 inline-flex border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800">

@@ -1,6 +1,10 @@
 import type { SearchProvider } from "./search-provider";
 import { TavilySearchProvider } from "./tavily-search";
 
+type SearchProviderEnv = {
+  SEARCH_PROVIDER?: string;
+};
+
 export type SearchProviderRegistry = {
   requestedProviderId: string;
   selectedProvider: SearchProvider;
@@ -8,13 +12,13 @@ export type SearchProviderRegistry = {
 };
 
 export function getSearchProvider(
-  env: NodeJS.ProcessEnv = process.env,
+  env: SearchProviderEnv = { SEARCH_PROVIDER: process.env.SEARCH_PROVIDER },
 ): SearchProvider {
   return createSearchProviderRegistry(env).selectedProvider;
 }
 
 export function createSearchProviderRegistry(
-  env: NodeJS.ProcessEnv = process.env,
+  env: SearchProviderEnv = { SEARCH_PROVIDER: process.env.SEARCH_PROVIDER },
 ): SearchProviderRegistry {
   const requestedProviderId = normalizeProviderId(env.SEARCH_PROVIDER);
   const providers = new Map<string, SearchProvider>([

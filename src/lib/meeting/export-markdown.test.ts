@@ -101,7 +101,7 @@ describe("exportMeetingToMarkdown", () => {
                 textLength: 500,
                 wasTruncated: false,
                 warnings: [],
-                sourceType: "benchmark",
+                sourceType: "industry_report",
                 reliability: "medium",
                 score: 70,
               },
@@ -112,7 +112,7 @@ describe("exportMeetingToMarkdown", () => {
       participants,
     );
 
-    expect(markdown).toContain("## 待核验资料候选");
+    expect(markdown).toContain("## Evidence Pack");
     expect(markdown).toContain("文档输入策略：优先原生附件");
     expect(markdown).toContain(
       "- [S1] 资料标题 - Example News - https://example.com/news",
@@ -138,7 +138,7 @@ describe("exportMeetingToMarkdown", () => {
                 textLength: 500,
                 wasTruncated: false,
                 warnings: [],
-                sourceType: "community",
+                sourceType: "social_forum",
                 reliability: "low",
                 score: 40,
               },
@@ -191,7 +191,7 @@ describe("exportMeetingToMarkdown", () => {
                 textLength: 500,
                 wasTruncated: false,
                 warnings: [],
-                sourceType: "official",
+                sourceType: "official_statement",
                 reliability: "high",
                 score: 90,
               },
@@ -209,7 +209,7 @@ describe("exportMeetingToMarkdown", () => {
                   "内容过短，可能不足以支撑可靠结论",
                   "仅有标题或极短摘要，不能作为事实依据",
                 ],
-                sourceType: "community",
+                sourceType: "social_forum",
                 reliability: "very_low",
                 score: 0,
               },
@@ -224,7 +224,7 @@ describe("exportMeetingToMarkdown", () => {
                 textLength: 500,
                 wasTruncated: false,
                 warnings: [],
-                sourceType: "benchmark",
+                sourceType: "industry_report",
                 reliability: "medium",
                 score: 70,
               },
@@ -236,13 +236,13 @@ describe("exportMeetingToMarkdown", () => {
     );
 
     expect(markdown).toContain("## 资料质量概览");
-    expect(markdown).toContain("- 官方资料数量：1");
-    expect(markdown).toContain("- 第三方评测资料数量：1");
+    expect(markdown).toContain("- 强官方资料数量：1");
+    expect(markdown).toContain("- 行业报告资料数量：1");
     expect(markdown).toContain("- 社区 / 社交 / 视频资料数量：1");
     expect(markdown).toContain("- 内容过短资料数量：1");
-    expect(markdown).toContain("- 本轮结论可靠性：高");
+    expect(markdown).toContain("- 本轮结论可靠性：中");
     expect(markdown.indexOf("## 资料质量概览")).toBeLessThan(
-      markdown.indexOf("## 待核验资料候选"),
+      markdown.indexOf("## Evidence Pack"),
     );
   });
 
@@ -262,6 +262,9 @@ describe("exportMeetingToMarkdown", () => {
                 textLength: 800,
                 wasTruncated: true,
                 warnings: ["内容已截断", "资料摘要较短，可能不足以支撑可靠讨论"],
+                sourceType: "unknown",
+                reliability: "low",
+                score: 0,
               },
             },
           ],
@@ -277,10 +280,145 @@ describe("exportMeetingToMarkdown", () => {
     );
   });
 
+  test("does not export undefined evidence scores", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        evidencePack: {
+          enabled: true,
+          items: [
+            {
+              id: "S1",
+              title: "Evidence without score",
+              source: "Example",
+              url: "https://example.com/report",
+              snippet: "Long enough evidence. ".repeat(80),
+              quality: {
+                textLength: 1600,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "reputable_media" as never,
+                reliability: "medium",
+                score: 0,
+              },
+            },
+          ],
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).not.toContain("undefined/100");
+    expect(markdown).toMatch(/0\/100|未评分/);
+  });
+
+  test("splits evidence into core clues and downgraded sections", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        evidencePack: {
+          enabled: true,
+          items: [
+            {
+              id: "S1",
+              title: "Reuters long report",
+              source: "Reuters",
+              url: "https://reuters.com/technology/example",
+              snippet: "Long Reuters report. ".repeat(80),
+              quality: {
+                textLength: 1600,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "reputable_media" as never,
+                reliability: "high",
+                score: 82,
+              },
+            },
+            {
+              id: "S2",
+              title: "Reddit discussion",
+              source: "Reddit",
+              url: "https://reddit.com/r/artificial/comments/example",
+              snippet: "Long Reddit discussion. ".repeat(80),
+              quality: {
+                textLength: 1600,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "social_forum" as never,
+                reliability: "low",
+                score: 35,
+              },
+            },
+            {
+              id: "S3",
+              title: "YouTube reaction",
+              source: "YouTube",
+              url: "https://youtube.com/watch?v=example",
+              snippet: "Long YouTube transcript summary. ".repeat(80),
+              quality: {
+                textLength: 1600,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "video_platform" as never,
+                reliability: "low",
+                score: 30,
+              },
+            },
+            {
+              id: "S4",
+              title: "LinkedIn post",
+              source: "LinkedIn",
+              url: "https://linkedin.com/posts/example",
+              snippet: "Long LinkedIn post. ".repeat(80),
+              quality: {
+                textLength: 1600,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "social_forum" as never,
+                reliability: "low",
+                score: 25,
+              },
+            },
+            {
+              id: "S5",
+              title: "Short official snippet",
+              source: "OpenAI",
+              url: "https://openai.com/news/example",
+              snippet: "Short official snippet.",
+              quality: {
+                textLength: 120,
+                wasTruncated: false,
+                warnings: ["仅有搜索摘要，不能作为核心证据"],
+                sourceType: "official_blog" as never,
+                reliability: "low",
+                score: 50,
+                snippetOnly: true,
+              } as never,
+            },
+          ],
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("## 核心证据");
+    expect(markdown).toContain("## 舆论线索");
+    expect(markdown).toContain("## 被降级资料");
+    expect(markdown).toContain("本轮核心证据少于 3 条，会议已进入 low-evidence mode");
+    expect(sectionText(markdown, "## 核心证据")).toContain("Reuters long report");
+    expect(sectionText(markdown, "## 核心证据")).not.toContain("Reddit discussion");
+    expect(sectionText(markdown, "## 核心证据")).not.toContain("YouTube reaction");
+    expect(sectionText(markdown, "## 核心证据")).not.toContain("LinkedIn post");
+    expect(sectionText(markdown, "## 舆论线索")).toContain("Reddit discussion");
+    expect(sectionText(markdown, "## 舆论线索")).toContain("YouTube reaction");
+    expect(sectionText(markdown, "## 舆论线索")).toContain("LinkedIn post");
+    expect(sectionText(markdown, "## 被降级资料")).toContain("Short official snippet");
+  });
+
   test("exports a no-evidence notice when evidence pack is disabled", () => {
     const markdown = exportMeetingToMarkdown(meeting, participants);
 
-    expect(markdown).toContain("## 待核验资料候选");
+    expect(markdown).toContain("## Evidence Pack");
     expect(markdown).toContain("本轮会议未启用外部资料包");
     expect(markdown).toContain("需要额外核验");
   });
@@ -370,11 +508,15 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("本轮会议未启用外部资料包");
   });
 
-  test("exports minority views", () => {
+  test("exports the compact third-stage structure", () => {
     const markdown = exportMeetingToMarkdown(meeting, participants);
 
-    expect(markdown).toContain("### 有价值的少数派观点");
-    expect(markdown).toContain("少数派观点：保留人工阅读比自动评分更重要。");
+    expect(markdown).toContain("### 可确认事实");
+    expect(markdown).toContain("### 低置信推测");
+    expect(markdown).toContain("### 不能确认的关键问题");
+    expect(markdown).toContain("### 下一步核验建议");
+    expect(markdown).not.toContain("### 初步推测");
+    expect(markdown).not.toContain("### 不足以确认");
   });
 
   test("does not export api key fields", () => {
@@ -507,4 +649,122 @@ describe("exportMeetingToMarkdown", () => {
 
     expect(markdown).not.toContain("## 事实核验提示");
   });
+  test("hides evidence debug by default and exports it when debug is enabled", () => {
+    const meetingWithDebug: MeetingResult = {
+      ...meeting,
+      debugSearchProcess: {
+        evidenceMode: "low_evidence",
+        searchIntents: [],
+        executedQueries: ["AI financing"],
+        queryPlans: [],
+        intentDecisions: [],
+        qualityOverview: {
+          totalResults: 10,
+          includedCount: 2,
+          filteredCount: 8,
+          lowEvidenceCount: 0,
+          byReliability: {
+            high: 1,
+            medium: 1,
+            low: 4,
+            very_low: 4,
+          },
+          bySourceType: {
+            official_statement: 1,
+            official_blog: 0,
+            official_docs: 0,
+            official_community: 0,
+            reputable_media: 1,
+            industry_report: 0,
+            social_forum: 6,
+            video_platform: 0,
+            unknown: 2,
+          },
+        },
+        filteredReasons: [],
+        results: [],
+        warnings: [],
+        debugSummary: {
+          evidenceHitRate: {
+            candidateCount: 10,
+            coreEvidenceCount: 2,
+            evidenceHitRate: 0.2,
+          },
+          extractionSuccessRate: {
+            extractAttemptCount: 5,
+            extractSuccessCount: 3,
+            extractionSuccessRate: 0.6,
+          },
+          sourceMix: {
+            officialCount: 1,
+            reputableMediaCount: 1,
+            industryReportCount: 0,
+            socialVideoCount: 6,
+            unknownCount: 2,
+          },
+          degradeReasonsSummary: {
+            snippetOnly: 3,
+            sourceTooWeak: 8,
+            textTooShort: 8,
+            scoreTooLow: 4,
+            extractionFailed: 2,
+            socialVideoSource: 6,
+          },
+          lowEvidenceTriggerReasons: {
+            coreEvidenceLessThan3: true,
+            highMediumLessThan3: true,
+            shortTextRatioTooHigh: true,
+            socialVideoRatioTooHigh: true,
+            searchFailed: false,
+          },
+          passStats: [
+            {
+              passName: "official",
+              query: "site:openai.com AI financing",
+              resultCount: 2,
+              extractedCount: 1,
+              coreEvidenceCount: 1,
+              socialVideoCount: 0,
+              unknownCount: 0,
+            },
+          ],
+          selectedEvidenceByPass: [{ passName: "official", count: 1 }],
+          skippedPasses: ["social_clue"],
+        },
+      },
+    };
+
+    expect(exportMeetingToMarkdown(meetingWithDebug, participants)).not.toContain(
+      "## Evidence Debug",
+    );
+
+    const markdown = exportMeetingToMarkdown(meetingWithDebug, participants, {
+      includeEvidenceDebug: true,
+    });
+
+    expect(markdown).toContain("## Evidence Debug");
+    expect(markdown).toContain("- candidateCount: 10");
+    expect(markdown).toContain("- evidenceHitRate: 0.2");
+    expect(markdown).toContain("- extractionSuccessRate: 0.6");
+    expect(markdown).toContain("- snippetOnly: 3");
+    expect(markdown).toContain("- coreEvidenceLessThan3: true");
+    expect(markdown).toContain("- socialVideoRatioTooHigh: true");
+    expect(markdown).toContain("### Pass Stats");
+    expect(markdown).toContain("- official: resultCount=2");
+    expect(markdown).toContain("### Selected Evidence By Pass");
+    expect(markdown).toContain("- official: 1");
+    expect(markdown).toContain("- social_clue");
+  });
 });
+
+function sectionText(markdown: string, heading: string): string {
+  const start = markdown.indexOf(heading);
+
+  if (start < 0) {
+    return "";
+  }
+
+  const nextHeading = markdown.indexOf("\n## ", start + heading.length);
+
+  return nextHeading < 0 ? markdown.slice(start) : markdown.slice(start, nextHeading);
+}

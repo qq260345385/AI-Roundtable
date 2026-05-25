@@ -300,7 +300,7 @@ describe("POST /api/meeting", () => {
     expect(JSON.stringify(body.meeting)).not.toContain("dedupeStats");
     expect(JSON.stringify(body.meeting)).not.toContain("providerDiagnostics");
     expect(JSON.stringify(body.meeting)).not.toContain("sourceQueries");
-    expect(JSON.stringify(body.meeting)).not.toContain('"score"');
+    expect(JSON.stringify(body.meeting)).toContain('"score"');
     expect(JSON.stringify(body.meeting)).not.toContain("citationLevel");
     expect(JSON.stringify(body.meeting)).not.toContain("citationGuidance");
     expect(JSON.stringify(body.meeting)).not.toContain("weakCitationIds");
@@ -351,6 +351,7 @@ describe("POST /api/meeting", () => {
         evidenceMode: "rescued_evidence",
         provider: "tavily",
         rescueTriggered: true,
+        searchMode: "deep",
         extractAttempted: expect.any(Number),
         finalEvidenceCount: 1,
         executedQueries: expect.arrayContaining([
@@ -394,14 +395,14 @@ describe("POST /api/meeting", () => {
     expect(body.meeting.debugSearchProcess.results[0]).toEqual(
       expect.objectContaining({
         score: expect.any(Number),
-        citationLevel: "qualified_fact",
+        citationLevel: "context_only",
       }),
     );
   });
 
   test("does not return debugSearchProcess in production even when search debug is enabled", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     process.env.SEARCH_DEBUG_ENABLED = "true";
     process.env.TAVILY_API_KEY = "tvly-test-key";
     vi.stubGlobal("fetch", async () =>
@@ -491,7 +492,7 @@ describe("POST /api/meeting", () => {
       "https://working.example/v1";
     process.env.AI_ROUNDTABLE_PROVIDER_WORKING_API_KEY = "working-key";
     process.env.AI_ROUNDTABLE_PROVIDER_WORKING_MODEL = "working-model";
-    vi.stubGlobal("fetch", async (url) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       if (String(url).endsWith("/models")) {
         const model = String(url).includes("broken.example")
           ? "broken-model"
@@ -547,7 +548,7 @@ describe("POST /api/meeting", () => {
       "https://broken.example/v1";
     process.env.AI_ROUNDTABLE_PROVIDER_BROKEN_API_KEY = "secret-openai-key";
     process.env.AI_ROUNDTABLE_PROVIDER_BROKEN_MODEL = "broken-model";
-    vi.stubGlobal("fetch", async (url) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       if (String(url).endsWith("/models")) {
         return new Response(JSON.stringify({ data: [{ id: "broken-model" }] }));
       }

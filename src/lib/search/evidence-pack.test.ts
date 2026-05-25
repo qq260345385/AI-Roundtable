@@ -218,13 +218,56 @@ describe("normalizeEvidencePack", () => {
     const quality = scoreEvidence({
       title: "Gemini model update",
       url: "https://blog.google/technology/ai/gemini-update/",
-      snippet: "A".repeat(500),
+      snippet: "A".repeat(900),
     });
 
-    expect(quality.sourceType).toBe("official");
+    expect(quality.sourceType).toBe("official_blog");
     expect(quality.reliability).toBe("high");
     expect(quality.citationLevel).toBe("fact");
     expect(quality.score).toBeGreaterThanOrEqual(80);
+  });
+
+  test("does not treat snippet-only evidence as high quality", () => {
+    const quality = scoreEvidence({
+      title: "Reuters short search result",
+      url: "https://reuters.com/technology/artificial-intelligence/example",
+      snippet: "Short search-result summary. ".repeat(6),
+    });
+
+    expect(quality).toEqual(
+      expect.objectContaining({
+        snippetOnly: true,
+        reliability: expect.not.stringMatching(/^high$/),
+      }),
+    );
+    expect(quality.score).toEqual(expect.any(Number));
+  });
+
+  test("classifies official community domains separately from strong official sources", () => {
+    const communityQuality = scoreEvidence({
+      title: "OpenAI community discussion",
+      url: "https://community.openai.com/t/example-thread",
+      snippet: "Community forum discussion. ".repeat(50),
+    });
+    const newsQuality = scoreEvidence({
+      title: "OpenAI news post",
+      url: "https://openai.com/news/example",
+      snippet: "Official OpenAI news post. ".repeat(50),
+    });
+
+    expect(communityQuality.sourceType).toBe("official_community");
+    expect(communityQuality.reliability).not.toBe("high");
+    expect(newsQuality.sourceType).toBe("official_blog");
+  });
+
+  test("classifies nytimes.com as reputable media", () => {
+    const quality = scoreEvidence({
+      title: "New York Times AI financing report",
+      url: "https://www.nytimes.com/2026/05/20/technology/ai-financing.html",
+      snippet: "A New York Times technology report. ".repeat(40),
+    });
+
+    expect(quality.sourceType).toBe("reputable_media");
   });
 
   test("assigns internal citation levels from evidence reliability", () => {
@@ -308,7 +351,7 @@ describe("normalizeEvidencePack", () => {
       }),
     ).toEqual(
       expect.objectContaining({
-        sourceType: "community",
+        sourceType: "social_forum",
         reliability: "low",
       }),
     );
@@ -320,7 +363,7 @@ describe("normalizeEvidencePack", () => {
       }),
     ).toEqual(
       expect.objectContaining({
-        sourceType: "video",
+        sourceType: "video_platform",
         reliability: "low",
       }),
     );
@@ -332,8 +375,8 @@ describe("normalizeEvidencePack", () => {
       }),
     ).toEqual(
       expect.objectContaining({
-        sourceType: "social",
-        reliability: "very_low",
+        sourceType: "social_forum",
+        reliability: "low",
       }),
     );
   });
@@ -407,7 +450,7 @@ describe("normalizeEvidencePack", () => {
         {
           title: "Official report",
           url: "https://openai.com/research/report",
-          snippet: `Official evidence. ${"A".repeat(500)}`,
+          snippet: `Official evidence. ${"A".repeat(900)}`,
         },
         {
           title: "Community discussion with enough context",
@@ -509,6 +552,116 @@ describe("normalizeEvidencePack", () => {
           filteredReason: "very_low_quality",
         }),
       ]),
+    );
+  });
+
+  test("summarizes evidence hit rate, extraction rate, and degrade reasons for debug", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      searchProcess: {
+        executedQueries: ["AI financing"],
+        extractAttempted: 5,
+        extractSucceededCount: 3,
+      },
+      items: [
+        {
+          title: "Official financing announcement",
+          url: "https://openai.com/news/financing",
+          snippet: "AI financing official announcement. ".repeat(40),
+        },
+        {
+          title: "Reuters financing report",
+          url: "https://reuters.com/technology/artificial-intelligence/financing",
+          snippet: "AI financing Reuters report. ".repeat(40),
+        },
+        {
+          title: "Short official search result",
+          url: "https://openai.com/news/short-financing",
+          snippet: "Official snippet only. ".repeat(4),
+        },
+        {
+          title: "Short Reuters search result",
+          url: "https://reuters.com/technology/artificial-intelligence/short",
+          snippet: "Reuters snippet only. ".repeat(4),
+        },
+        {
+          title: "Short unknown search result",
+          url: "https://example.com/short",
+          snippet: "Unknown snippet only. ".repeat(4),
+        },
+        {
+          title: "Reddit financing discussion",
+          url: "https://reddit.com/r/artificial/comments/financing",
+          snippet: "Community discussion. ".repeat(40),
+        },
+        {
+          title: "YouTube financing analysis",
+          url: "https://youtube.com/watch?v=financing",
+          snippet: "Video discussion. ".repeat(70),
+        },
+        {
+          title: "LinkedIn financing post",
+          url: "https://linkedin.com/posts/example-financing",
+          snippet: "Social post. ".repeat(70),
+        },
+        {
+          title: "Instagram financing post",
+          url: "https://instagram.com/p/financing",
+          snippet: "Instagram reaction. ".repeat(40),
+        },
+        {
+          title: "Unknown short mention",
+          url: "https://unknown.example/financing",
+          snippet: "short clue",
+        },
+      ],
+    });
+
+    expect(pack.searchProcess?.debugSummary).toEqual(
+      expect.objectContaining({
+        evidenceHitRate: {
+          candidateCount: 10,
+          coreEvidenceCount: 2,
+          evidenceHitRate: 0.2,
+        },
+        extractionSuccessRate: {
+          extractAttemptCount: 5,
+          extractSuccessCount: 3,
+          extractionSuccessRate: 0.6,
+        },
+        degradeReasonsSummary: expect.objectContaining({
+          snippetOnly: 5,
+        }),
+      }),
+    );
+  });
+
+  test("records multiple low-evidence trigger reasons at the same time", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      searchProcess: {
+        executedQueries: ["social dominated AI financing"],
+        targetedSearchRetryTriggered: true,
+        targetedSearchRetryReason: "social_video_ratio_above_threshold",
+      },
+      items: Array.from({ length: 10 }, (_, index) => ({
+        title: `Social clue ${index + 1}`,
+        url:
+          index < 6
+            ? `https://reddit.com/r/artificial/comments/${index + 1}`
+            : `https://example.com/short-${index + 1}`,
+        snippet: `Short low evidence clue ${index + 1}.`,
+      })),
+    });
+
+    expect(pack.searchProcess?.debugSummary?.lowEvidenceTriggerReasons).toEqual(
+      expect.objectContaining({
+        coreEvidenceLessThan3: true,
+        highMediumLessThan3: true,
+        shortTextRatioTooHigh: true,
+        socialVideoRatioTooHigh: true,
+        searchFailed: false,
+      }),
     );
   });
 

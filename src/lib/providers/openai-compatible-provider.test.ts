@@ -325,7 +325,7 @@ describe("OpenAICompatibleProvider", () => {
               textLength: 3,
               wasTruncated: false,
               warnings: ["仅有标题或极短摘要，不能作为事实依据"],
-              sourceType: "community",
+              sourceType: "social_forum",
               reliability: "very_low",
               score: 0,
             },
@@ -341,6 +341,9 @@ describe("OpenAICompatibleProvider", () => {
 
     expect(promptText).toContain("low / very_low 可信度资料只能作为社区观点");
     expect(promptText).toContain("禁止基于 low / very_low 资料使用");
+    expect(promptText).toContain("低可信资料声称");
+    expect(promptText).toContain("融资额");
+    expect(promptText).toContain("不能作为结论依据");
     expect(promptText).toContain("可确认事实");
     expect(promptText).toContain("不足以确认");
   });

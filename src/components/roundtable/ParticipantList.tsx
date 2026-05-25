@@ -4,6 +4,7 @@ import type {
   RoundtableMode,
 } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
+import { formatModelDisplayName } from "@/lib/models/model-display-name";
 import { getUnsupportedCapabilityNotes } from "@/lib/providers/model-capabilities";
 
 type ParticipantListProps = {
@@ -111,7 +112,7 @@ function ParticipantCard({
           />
           <span className="min-w-0">
             <span className="block break-words font-medium text-zinc-950">
-              {participant.model}
+              {formatModelDisplayName(participant.model)}
               {capabilityNotes.length > 0 ? (
                 <span className="ml-1 whitespace-nowrap text-xs font-normal leading-5 text-amber-700">
                   （{capabilityNotes.join("、")}）
