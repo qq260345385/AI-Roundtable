@@ -13,13 +13,23 @@ type FetchLike = typeof fetch;
 
 type TavilySearchOptions = {
   apiKey?: string;
+  autoParameters?: boolean;
+  chunksPerSource?: number;
+  country?: string;
   endpoint?: string;
+  exactMatch?: boolean;
+  excludeDomains?: string[];
   fetchImpl?: FetchLike;
   freshness?: SearchFreshness;
+  includeDomains?: string[];
+  includeRawContent?: boolean | "markdown" | "text";
+  includeUsage?: boolean;
   maxResults?: number;
   onCacheEvent?: (event: TavilySearchCacheEvent) => void;
+  onResponseMetadata?: (metadata: TavilySearchResponseMetadata) => void;
   searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
   signal?: AbortSignal;
+  timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";
   timeoutMs?: number;
   topic?: "general" | "news" | "finance";
 };
@@ -27,16 +37,28 @@ type TavilySearchOptions = {
 type TavilySearchResult = {
   content?: unknown;
   published_date?: unknown;
+  raw_content?: unknown;
+  score?: unknown;
   title?: unknown;
   url?: unknown;
 };
 
 type TavilySearchResponse = {
+  auto_parameters?: unknown;
+  request_id?: unknown;
+  response_time?: unknown;
   results?: unknown;
+  usage?: unknown;
 };
 
 export type TavilyEvidenceDraft = Omit<SearchEvidence, "id" | "quality">;
 export type TavilySearchCacheEvent = SearchCacheEvent;
+export type TavilySearchResponseMetadata = {
+  autoParameters?: unknown;
+  requestId?: string;
+  responseTime?: number;
+  usage?: unknown;
+};
 export type SearchDedupeRemoval = {
   title: string;
   url?: string;
@@ -85,7 +107,10 @@ export type SafeTavilyDiagnostics = {
 
 const DEFAULT_TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const DEFAULT_MAX_RESULTS = 20;
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_COUNTRY = "china";
+const DEFAULT_CHUNKS_PER_SOURCE = 5;
+const DEFAULT_INCLUDE_RAW_CONTENT = "text";
 const REALTIME_CACHE_TTL_MS = 30 * 60 * 1000;
 const STANDARD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const STABLE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -120,6 +145,14 @@ const MEDIA_DOMAINS = new Set([
   "theverge.com",
   "techcrunch.com",
   "36kr.com",
+  "people.com.cn",
+  "people.cn",
+  "stcn.com",
+  "globaltimes.cn",
+  "yahoo.com",
+  "finance.yahoo.com",
+  "tw.stock.yahoo.com",
+  "gasgoo.com",
 ]);
 const tavilySearchCache = new Map<
   string,
@@ -162,12 +195,25 @@ export class TavilySearchProvider implements SearchProvider {
     request: SearchProviderRequest,
   ): Promise<SearchProviderResponse> {
     const cacheEvents: SearchCacheEvent[] = [];
+    let metadata: TavilySearchResponseMetadata | undefined;
     const results = await searchTavilyEvidence(request.query, {
+      chunksPerSource: request.chunksPerSource,
+      country: request.country,
+      exactMatch: request.exactMatch,
+      excludeDomains: request.excludeDomains,
       freshness: request.freshness,
+      includeDomains: request.includeDomains,
+      includeRawContent: request.includeRawContent,
+      includeUsage: request.includeUsage,
       maxResults: request.maxResults,
       onCacheEvent: (event) => cacheEvents.push(event),
+      onResponseMetadata: (event) => {
+        metadata = event;
+      },
       searchDepth: request.searchDepth,
       signal: request.signal,
+      timeRange: request.timeRange,
+      topic: request.searchTopic,
     });
 
     return {
@@ -178,6 +224,9 @@ export class TavilySearchProvider implements SearchProvider {
         content: result.snippet,
         snippet: result.snippet,
         ...(result.publishedAt ? { publishedDate: result.publishedAt } : {}),
+        ...(typeof result.providerScore === "number"
+          ? { providerScore: result.providerScore }
+          : {}),
         sourceQuery: request.query,
         provider: this.id,
       })),
@@ -187,6 +236,22 @@ export class TavilySearchProvider implements SearchProvider {
         searchDepth: request.searchDepth,
         maxResults: request.maxResults,
         freshness: request.freshness,
+        ...(request.searchTopic ? { topic: request.searchTopic } : {}),
+        ...(request.timeRange ? { timeRange: request.timeRange } : {}),
+        ...(request.country ? { country: request.country } : {}),
+        ...(request.includeDomains
+          ? { includeDomains: request.includeDomains }
+          : {}),
+        ...(request.excludeDomains
+          ? { excludeDomains: request.excludeDomains }
+          : {}),
+        ...(request.includeRawContent
+          ? { includeRawContent: request.includeRawContent }
+          : {}),
+        ...(request.chunksPerSource
+          ? { chunksPerSource: request.chunksPerSource }
+          : {}),
+        ...(metadata ? { tavily: metadata } : {}),
       },
     };
   }
@@ -230,10 +295,23 @@ export async function searchTavilyEvidence(
   }
 
   const effectiveOptions = {
+    autoParameters: options.autoParameters,
+    chunksPerSource:
+      normalizeChunksPerSource(options.chunksPerSource) ??
+      DEFAULT_CHUNKS_PER_SOURCE,
+    exactMatch: options.exactMatch,
+    excludeDomains: normalizeDomains(options.excludeDomains),
+    includeDomains: normalizeDomains(options.includeDomains),
+    includeRawContent: normalizeIncludeRawContent(
+      options.includeRawContent ?? DEFAULT_INCLUDE_RAW_CONTENT,
+    ),
+    includeUsage: options.includeUsage,
     maxResults: options.maxResults ?? getEnvMaxResults(),
     searchDepth: options.searchDepth ?? getEnvSearchDepth(),
+    timeRange: options.timeRange,
     topic: options.topic ?? getEnvTopic(),
   };
+  const country = getEffectiveCountry(options.country);
   const cacheKey = getTavilyCacheKey(query, effectiveOptions, options.freshness);
   const ttlMs = getTavilyCacheTtlMs(query, options.freshness);
   const cached = tavilySearchCache.get(cacheKey);
@@ -264,10 +342,8 @@ export async function searchTavilyEvidence(
   });
 
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  const timeoutMs = options.timeoutMs ?? getTavilySearchTimeoutMs();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const requestSignal = createCombinedAbortSignal(
     options.signal,
     controller.signal,
@@ -282,15 +358,12 @@ export async function searchTavilyEvidence(
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          include_answer: false,
-          include_images: false,
-          include_raw_content: false,
-          max_results: effectiveOptions.maxResults,
-          query,
-          search_depth: effectiveOptions.searchDepth,
-          topic: effectiveOptions.topic,
-        }),
+        body: JSON.stringify(
+          buildTavilySearchRequestBody(query, {
+            ...effectiveOptions,
+            country,
+          }),
+        ),
         signal: requestSignal,
       },
     );
@@ -313,21 +386,38 @@ export async function searchTavilyEvidence(
     }
 
     let data: unknown;
+    let responseText = "";
 
     try {
-      data = await response.json();
+      responseText = await response.text();
+      data = JSON.parse(responseText);
     } catch {
       throw new TavilySearchError("invalid_response", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/search",
+          errorKind: "invalid_response",
+          responseTextSnippet: responseText,
+          safeMessage: "Search response was not valid JSON.",
+        }),
         reason: "invalid_response",
       });
     }
 
     if (!isObject(data) || !Array.isArray(data.results)) {
       throw new TavilySearchError("invalid_response", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/search",
+          errorKind: "invalid_response",
+          responseTextSnippet: safeJsonSnippet(data),
+          safeMessage: "Search response did not include a results array.",
+        }),
         reason: "invalid_response",
       });
     }
 
+    options.onResponseMetadata?.(extractTavilyResponseMetadata(data));
     const drafts = normalizeTavilySearchResponse(data, effectiveOptions.maxResults);
 
     tavilySearchCache.set(cacheKey, {
@@ -373,6 +463,12 @@ export function clearTavilySearchCache() {
   tavilySearchCache.clear();
 }
 
+export function getTavilySearchTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return normalizeTimeoutMs(env.TAVILY_SEARCH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+}
+
 export function getTavilyCacheTtlMs(
   query: string,
   freshness: SearchFreshness | undefined,
@@ -412,6 +508,73 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   }
 
   return "unknown_error";
+}
+
+function buildTavilySearchRequestBody(
+  query: string,
+  options: {
+    autoParameters?: boolean;
+    chunksPerSource?: number;
+    country?: string;
+    exactMatch?: boolean;
+    excludeDomains: string[];
+    includeDomains: string[];
+    includeRawContent: false | true | "markdown" | "text";
+    includeUsage?: boolean;
+    maxResults: number;
+    searchDepth: NonNullable<TavilySearchOptions["searchDepth"]>;
+    timeRange?: TavilySearchOptions["timeRange"];
+  },
+) {
+  return {
+    include_answer: false,
+    include_images: false,
+    include_raw_content: options.includeRawContent,
+    max_results: options.maxResults,
+    query,
+    search_depth: options.searchDepth,
+    ...(options.autoParameters !== undefined
+      ? { auto_parameters: options.autoParameters }
+      : {}),
+    ...(options.chunksPerSource !== undefined
+      ? { chunks_per_source: options.chunksPerSource }
+      : {}),
+    ...(options.timeRange ? { time_range: options.timeRange } : {}),
+    ...(options.country ? { country: options.country } : {}),
+    ...(options.includeDomains.length > 0
+      ? { include_domains: options.includeDomains }
+      : {}),
+    ...(options.excludeDomains.length > 0
+      ? { exclude_domains: options.excludeDomains }
+      : {}),
+    ...(options.exactMatch !== undefined ? { exact_match: options.exactMatch } : {}),
+    ...(options.includeUsage !== undefined
+      ? { include_usage: options.includeUsage }
+      : {}),
+  };
+}
+
+function extractTavilyResponseMetadata(
+  data: TavilySearchResponse,
+): TavilySearchResponseMetadata {
+  const responseTime =
+    typeof data.response_time === "number"
+      ? data.response_time
+      : typeof data.response_time === "string"
+        ? Number(data.response_time)
+        : undefined;
+  const requestId = stringFrom(data.request_id).trim();
+
+  return {
+    ...(Number.isFinite(responseTime)
+      ? { responseTime: Number(responseTime) }
+      : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(data.usage !== undefined ? { usage: data.usage } : {}),
+    ...(data.auto_parameters !== undefined
+      ? { autoParameters: data.auto_parameters }
+      : {}),
+  };
 }
 
 function createCombinedAbortSignal(
@@ -493,6 +656,14 @@ async function readSafeResponseTextSnippet(response: Response) {
   }
 }
 
+function safeJsonSnippet(value: unknown): string {
+  try {
+    return sanitizeSearchText(JSON.stringify(value)).slice(0, 300);
+  } catch {
+    return "";
+  }
+}
+
 export function normalizeTavilySearchResponse(
   response: TavilySearchResponse,
   maxResults = DEFAULT_MAX_RESULTS,
@@ -537,6 +708,64 @@ function getEnvMaxResults() {
   return Math.min(Math.max(Math.trunc(value), 1), DEFAULT_MAX_RESULTS);
 }
 
+function normalizeTimeoutMs(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(parsed), 1000), 120000);
+}
+
+function normalizeChunksPerSource(value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.min(Math.max(Math.trunc(value), 1), 5);
+}
+
+function normalizeDomains(values: string[] | undefined) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      values
+        .map((value) =>
+          normalizeOptionalSearchText(value)
+            .toLowerCase()
+            .replace(/^https?:\/\//, "")
+            .replace(/^www\./, "")
+            .replace(/\/+$/, ""),
+        )
+        .filter(Boolean),
+    ),
+  ).slice(0, 300);
+}
+
+function normalizeIncludeRawContent(
+  value: TavilySearchOptions["includeRawContent"],
+) {
+  return value === "markdown" || value === "text" || value === true
+    ? value
+    : false;
+}
+
+function getEffectiveCountry(
+  explicitCountry: string | undefined,
+) {
+  return normalizeOptionalSearchText(explicitCountry) || DEFAULT_COUNTRY;
+}
+
+function normalizeOptionalSearchText(value: string | undefined) {
+  return typeof value === "string"
+    ? sanitizeSearchText(value).replace(/\s+/g, " ").trim()
+    : "";
+}
+
 function getEnvSearchDepth(): NonNullable<TavilySearchOptions["searchDepth"]> {
   const value = process.env.TAVILY_SEARCH_DEPTH;
 
@@ -570,7 +799,9 @@ function normalizeTavilyResult(
   }
 
   const tavilyResult = result as TavilySearchResult;
-  const snippet = sanitizeSearchText(stringFrom(tavilyResult.content)).trim();
+  const snippet = sanitizeSearchText(
+    stringFrom(tavilyResult.raw_content) || stringFrom(tavilyResult.content),
+  ).trim();
 
   const url = normalizeUrl(tavilyResult.url);
   if (!snippet && !url) {
@@ -582,10 +813,15 @@ function normalizeTavilyResult(
   const publishedAt = sanitizeSearchText(
     stringFrom(tavilyResult.published_date),
   ).trim();
+  const providerScore =
+    typeof tavilyResult.score === "number" && Number.isFinite(tavilyResult.score)
+      ? tavilyResult.score
+      : undefined;
 
   return {
     title: title || source || "Web search result",
     snippet,
+    ...(providerScore !== undefined ? { providerScore } : {}),
     ...(source ? { source } : {}),
     ...(url ? { url } : {}),
     ...(publishedAt ? { publishedAt } : {}),
@@ -765,8 +1001,17 @@ function getSourceFromUrl(url: string) {
 function getTavilyCacheKey(
   query: string,
   options: {
+    autoParameters?: boolean;
+    chunksPerSource?: number;
+    country?: string;
+    exactMatch?: boolean;
+    excludeDomains: string[];
+    includeDomains: string[];
+    includeRawContent: false | true | "markdown" | "text";
+    includeUsage?: boolean;
     maxResults: number;
     searchDepth: NonNullable<TavilySearchOptions["searchDepth"]>;
+    timeRange?: TavilySearchOptions["timeRange"];
     topic: NonNullable<TavilySearchOptions["topic"]>;
   },
   freshness: SearchFreshness | undefined,
@@ -777,6 +1022,15 @@ function getTavilyCacheKey(
     searchDepth: options.searchDepth,
     maxResults: options.maxResults,
     topic: options.topic,
+    autoParameters: options.autoParameters ?? false,
+    chunksPerSource: options.chunksPerSource ?? 0,
+    country: options.country ?? "",
+    exactMatch: options.exactMatch ?? false,
+    excludeDomains: options.excludeDomains,
+    includeDomains: options.includeDomains,
+    includeRawContent: options.includeRawContent,
+    includeUsage: options.includeUsage ?? false,
+    timeRange: options.timeRange ?? "",
     freshness: freshness ?? "any",
   });
 }

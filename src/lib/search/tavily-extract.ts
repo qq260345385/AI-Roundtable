@@ -26,7 +26,7 @@ type TavilyExtractResult = {
 };
 
 const DEFAULT_TAVILY_EXTRACT_ENDPOINT = "https://api.tavily.com/extract";
-const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_TIMEOUT_MS = 45000;
 
 export class TavilyExtractProvider implements ExtractProvider {
   id = "tavily";
@@ -70,10 +70,8 @@ export async function extractTavilyUrls(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  const timeoutMs = options.timeoutMs ?? getTavilyExtractTimeoutMs();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const requestSignal = createCombinedAbortSignal(
     request.signal,
     controller.signal,
@@ -117,17 +115,33 @@ export async function extractTavilyUrls(
     }
 
     let data: unknown;
+    let responseText = "";
 
     try {
-      data = await response.json();
+      responseText = await response.text();
+      data = JSON.parse(responseText);
     } catch {
       throw new TavilySearchError("invalid_response", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/extract",
+          errorKind: "invalid_response",
+          responseTextSnippet: responseText,
+          safeMessage: "Extract response was not valid JSON.",
+        }),
         reason: "invalid_response",
       });
     }
 
     if (!isObject(data) || !Array.isArray(data.results)) {
       throw new TavilySearchError("invalid_response", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/extract",
+          errorKind: "invalid_response",
+          responseTextSnippet: safeJsonSnippet(data),
+          safeMessage: "Extract response did not include a results array.",
+        }),
         reason: "invalid_response",
       });
     }
@@ -211,6 +225,22 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   return "unknown_error";
 }
 
+export function getTavilyExtractTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return normalizeTimeoutMs(env.TAVILY_EXTRACT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+}
+
+function normalizeTimeoutMs(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(parsed), 1000), 180000);
+}
+
 function createCombinedAbortSignal(
   externalSignal: AbortSignal | undefined,
   timeoutSignal: AbortSignal,
@@ -248,7 +278,15 @@ function createCombinedAbortSignal(
 
 async function readSafeResponseTextSnippet(response: Response) {
   try {
-    return (await response.text()).slice(0, 300);
+    return sanitizeExtractText(await response.text()).slice(0, 300);
+  } catch {
+    return "";
+  }
+}
+
+function safeJsonSnippet(value: unknown): string {
+  try {
+    return sanitizeExtractText(JSON.stringify(value)).slice(0, 300);
   } catch {
     return "";
   }

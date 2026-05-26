@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
   formatEvidencePackForPrompt,
+  isCoreEvidenceItem,
   normalizeEvidencePack,
   resolveEvidencePackDelivery,
   scoreEvidence,
+  summarizeEvidenceQuality,
 } from "./evidence-pack";
 
 describe("normalizeEvidencePack", () => {
@@ -116,6 +118,214 @@ describe("normalizeEvidencePack", () => {
           item.quality?.reliability === "low",
       ),
     ).toBe(true);
+  });
+
+  test("does not treat long technical background as core evidence for company competition topics", () => {
+    const topic = "OpenAI 和 Anthropic 哪个公司会笑到最后";
+    const technicalBackground = {
+      id: "S1",
+      title: "OpenAI model safety evaluation and benchmark update",
+      url: "https://openai.com/index/model-safety-evaluations",
+      snippet:
+        "OpenAI publishes a long technical safety and benchmark evaluation describing model capability, alignment evaluation, red teaming, benchmark design, product release details, and safety mitigations. ".repeat(
+          12,
+        ),
+    };
+    const quality = scoreEvidence({
+      ...technicalBackground,
+      topic,
+    });
+
+    expect(quality.topicRelevanceScore).toBeLessThan(60);
+    expect(quality.coverageDimension).toBe("safety_alignment");
+    expect(quality.matchedQuestionAspects).toEqual(["technical_capability"]);
+    expect(
+      isCoreEvidenceItem({
+        ...technicalBackground,
+        quality,
+      }),
+    ).toBe(false);
+  });
+
+  test("uses domain only for source identity and source credibility, not topic relevance or coverage", () => {
+    const topic = "比较两家企业的长期竞争格局";
+    const sharedEvidence = {
+      title: "Enterprise adoption and funding analysis",
+      snippet:
+        "The article compares enterprise customer adoption, revenue quality, funding capacity, market share, governance risks, and long-term competitive position. ".repeat(
+          10,
+        ),
+    };
+    const official = scoreEvidence({
+      ...sharedEvidence,
+      url: "https://openai.com/news/company-analysis",
+      topic,
+    });
+    const unknown = scoreEvidence({
+      ...sharedEvidence,
+      url: "https://example-research.test/company-analysis",
+      topic,
+    });
+
+    expect(official.sourceType).not.toBe(unknown.sourceType);
+    expect(official.score).not.toBe(unknown.score);
+    expect(official.topicType).toBe(unknown.topicType);
+    expect(official.coverageDimension).toBe(unknown.coverageDimension);
+    expect(official.topicRelevanceScore).toBe(unknown.topicRelevanceScore);
+    expect(official.matchedQuestionAspects).toEqual(
+      unknown.matchedQuestionAspects,
+    );
+    expect(official.relevanceReason).toBe(unknown.relevanceReason);
+  });
+
+  test("scores Chinese title keyword matches as relevant instead of zero", () => {
+    const quality = scoreEvidence({
+      title: "甲方科技发布本地化战略更新",
+      url: "https://example.com/news/local-strategy",
+      snippet: "这是一条较短的新闻摘要，提到企业战略和市场竞争。",
+      topic: "怎么看甲方科技最近发布的本地化战略",
+    });
+
+    expect(quality.topicRelevanceScore).toBeGreaterThan(0);
+    expect(quality.relevanceScore).toBeGreaterThan(0);
+  });
+
+  test("scores strongly matching Chinese title and body as topic relevant", () => {
+    const quality = scoreEvidence({
+      title: "甲方科技本地化战略发布，覆盖市场竞争和客户采用",
+      url: "https://stcn.com/article/local-strategy",
+      snippet:
+        "甲方科技本地化战略发布后，文章持续讨论甲方科技、本地化战略、市场竞争、客户采用、商业化收入和产业合作。".repeat(
+          20,
+        ),
+      topic: "怎么看甲方科技最近发布的本地化战略",
+    });
+
+    expect(quality.topicRelevanceScore).toBeGreaterThanOrEqual(60);
+    expect(quality.relevanceScore).toBeGreaterThanOrEqual(60);
+  });
+
+  test("does not treat weak downgraded coverage as complete coverage", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "甲方科技融资和市场竞争线索",
+            url: "https://example.com/short-note",
+            snippet: "甲方科技融资、市场竞争、客户采用、监管政策。",
+          },
+        ],
+      },
+      { topic: "甲方科技 与 乙方科技 谁更有长期竞争优势" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBe(0);
+    expect(overview.coverageCompleteness).toBeLessThan(1);
+    expect(overview.weakCoveredDimensions.length).toBeGreaterThan(0);
+    expect(overview.strongCoveredDimensions).toHaveLength(0);
+  });
+
+  test("classifies localized Chinese media domains instead of unknown", () => {
+    expect(
+      scoreEvidence({
+        title: "本地媒体报道",
+        url: "https://people.com.cn/n1/test.html",
+        snippet: "市场和产业新闻正文。".repeat(80),
+      }).sourceType,
+    ).toBe("reputable_media");
+    expect(
+      scoreEvidence({
+        title: "证券时报报道",
+        url: "https://stcn.com/article/detail/123.html",
+        snippet: "金融市场和公司新闻正文。".repeat(80),
+      }).sourceType,
+    ).toBe("reputable_media");
+    expect(
+      scoreEvidence({
+        title: "行业媒体报道",
+        url: "https://gasgoo.com/news/123.html",
+        snippet: "汽车产业链和行业分析正文。".repeat(80),
+      }).sourceType,
+    ).toBe("industry_report");
+  });
+
+  test("resolves official domains from generic topic entities without changing relevance or coverage", () => {
+    const topic = "Acme Robotics 与 Beta Labs 谁更有长期竞争优势";
+    const sharedEvidence = {
+      title: "Acme Robotics enterprise adoption and market strategy",
+      snippet:
+        "Acme Robotics discusses enterprise adoption, customer contracts, revenue quality, governance, market strategy, and long-term competition. ".repeat(
+          10,
+        ),
+      topic,
+    };
+    const official = scoreEvidence({
+      ...sharedEvidence,
+      url: "https://acme-robotics.com/news/company-update",
+    });
+    const mirror = scoreEvidence({
+      ...sharedEvidence,
+      url: "https://example-research.test/company-update",
+    });
+
+    expect(["official_statement", "official_blog", "official_docs"]).toContain(
+      official.sourceType,
+    );
+    expect(mirror.sourceType).toBe("unknown");
+    expect(official.topicRelevanceScore).toBe(mirror.topicRelevanceScore);
+    expect(official.coverageDimension).toBe(mirror.coverageDimension);
+  });
+
+  test("caps company competition reliability when business capital and market dimensions are missing", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "OpenAI model card and safety evaluation",
+            url: "https://openai.com/index/model-card",
+            snippet:
+              "OpenAI describes model capability, benchmark evaluations, safety alignment, red teaming, and product release behavior. ".repeat(
+                16,
+              ),
+          },
+          {
+            title: "Anthropic safety alignment research update",
+            url: "https://anthropic.com/news/safety-update",
+            snippet:
+              "Anthropic describes constitutional AI, safety alignment, model evaluations, benchmark analysis, and product safety practices. ".repeat(
+                16,
+              ),
+          },
+          {
+            title: "AI benchmark comparison",
+            url: "https://semianalysis.com/2026/ai-benchmark-comparison",
+            snippet:
+              "This industry analysis compares model benchmark performance, technical capability, latency, product behavior, safety evaluations, and model release cadence. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "OpenAI 和 Anthropic 哪个公司会笑到最后" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBe(0);
+    expect(overview.coveredDimensions).toEqual(
+      expect.arrayContaining(["technical_capability", "safety_alignment"]),
+    );
+    expect(overview.missingDimensions).toEqual(
+      expect.arrayContaining([
+        "business_revenue_or_enterprise_adoption",
+        "funding_capital_or_market_analysis",
+        "regulation_governance_or_legal_lawsuit",
+      ]),
+    );
+    expect(overview.coverageCompleteness).toBeLessThan(1);
+    expect(overview.overallReliability).not.toBe("高");
   });
 
   test("keeps the best low quality evidence only as a fallback when no usable candidates exist", () => {

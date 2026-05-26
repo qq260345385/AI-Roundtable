@@ -59,9 +59,12 @@ describe("POST /api/meeting/live", () => {
       Response.json({
         results: [
           {
-            title: "Official source",
+            title: "DeepSeek 全球 AI 大模型实力官方资料",
             url: "https://openai.com/research/test",
-            content: `Official search result. ${"A".repeat(500)}`,
+            content:
+              "目前 DeepSeek 在全球 AI 大模型里面是什么实力。DeepSeek AI 大模型能力、评测、发布和技术报告。".repeat(
+                50,
+              ),
           },
         ],
       }),
@@ -113,6 +116,74 @@ describe("POST /api/meeting/live", () => {
     expect(JSON.stringify(events)).not.toContain("sourceQueries");
   });
 
+  test("returns an error instead of streaming a meeting when web search fails", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+
+    const request = new Request("http://localhost/api/meeting/live", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "如何判断一家公司的长期竞争力？",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(body.error).toContain("联网资料搜索失败，会议已终止");
+    expect(body.error).toContain("网络连接失败");
+    expect(body.errorType).toBe("network");
+    expect(body.failedStage).toBe("search_pass");
+    expect(body.meeting).toBeUndefined();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[api/meeting/live] request failed",
+      expect.objectContaining({
+        errorType: "network",
+        failedStage: "search_pass",
+        hasTavilyApiKey: true,
+        provider: "tavily",
+        retryCount: 0,
+        searchStrategy: "multi_pass",
+        statusCode: 502,
+      }),
+    );
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain("tvly-test-key");
+  });
+
+  test("returns a parse_error when the search provider response shape is invalid", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", async () => Response.json({ unexpected: true }));
+
+    const request = new Request("http://localhost/api/meeting/live", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "如何判断一家公司的长期竞争力？",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.errorType).toBe("parse_error");
+    expect(body.safeErrorMessage).toContain("搜索结果解析失败");
+    expect(body.error).toBe(body.safeErrorMessage);
+  });
+
   test("streams debugSearchProcess only in non-production server debug mode", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
     process.env.SEARCH_DEBUG_ENABLED = "true";
@@ -121,9 +192,12 @@ describe("POST /api/meeting/live", () => {
       Response.json({
         results: [
           {
-            title: "Official source",
+            title: "DeepSeek current AI model benchmark official source",
             url: "https://openai.com/research/test",
-            content: `Official search result. ${"A".repeat(500)}`,
+            content:
+              "current DeepSeek AI model benchmark official release technical report capability evaluation. ".repeat(
+                50,
+              ),
           },
         ],
       }),

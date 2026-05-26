@@ -487,7 +487,7 @@ function buildTargetedRetryQueries(topic: string): string[] {
   return [
     `${topic} official reputable media industry report -linkedin -instagram -reddit -youtube -tiktok -twitter -x.com`,
     `${topic} Reuters Bloomberg NYTimes WSJ FT The Information TechCrunch`,
-    `${topic} official announcement report site:openai.com OR site:anthropic.com`,
+    `${topic} official announcement report source primary`,
   ].map((query) => query.slice(0, 160));
 }
 

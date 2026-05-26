@@ -37,9 +37,12 @@ export function prepareLiveMeetingEventForClient(
 ): LiveMeetingEvent {
   if (event.type === "meeting_started") {
     const debugSearchProcess = getDebugSearchProcess(event.evidencePack, env);
+    const safeEvent = { ...event };
+
+    delete safeEvent.debugSearchProcess;
 
     return {
-      ...event,
+      ...safeEvent,
       evidencePack: sanitizeEvidencePackForClient(event.evidencePack),
       searchSummary: createSearchSummary(
         event.evidencePack,
@@ -222,6 +225,19 @@ function sanitizeEvidenceQualityForClient(
     reliability: quality.reliability,
     score: quality.score,
     ...(quality.snippetOnly ? { snippetOnly: true } : {}),
+    ...(typeof quality.topicRelevanceScore === "number"
+      ? { topicRelevanceScore: quality.topicRelevanceScore }
+      : {}),
+    ...(quality.relevanceReason
+      ? { relevanceReason: quality.relevanceReason }
+      : {}),
+    ...(quality.matchedQuestionAspects
+      ? { matchedQuestionAspects: quality.matchedQuestionAspects }
+      : {}),
+    ...(quality.coverageDimension
+      ? { coverageDimension: quality.coverageDimension }
+      : {}),
+    ...(quality.topicType ? { topicType: quality.topicType } : {}),
   };
 }
 

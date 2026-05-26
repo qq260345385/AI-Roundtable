@@ -7,7 +7,10 @@ import {
 import type { SearchIntentRecord } from "./evidence-pack";
 import type { ExtractProvider } from "./extract-provider";
 import type { SearchProvider } from "./search-provider";
-import { TavilySearchError } from "./tavily-search";
+import {
+  createSafeTavilyDiagnostics,
+  TavilySearchError,
+} from "./tavily-search";
 
 const participant: ModelParticipant = {
   id: "deepseek-flash",
@@ -218,8 +221,8 @@ describe("buildModelDrivenWebEvidencePack", () => {
 
     expect(searchedQueries[0]).toContain("official");
     expect(searchedQueries[0]).toContain("DeepSeek V3");
+    expect(searchedQueries).toHaveLength(3);
     expect(searchedQueries.some((query) => query.includes("Reuters"))).toBe(true);
-    expect(searchedQueries.some((query) => query.includes("SemiAnalysis"))).toBe(true);
     expect(pack.enabled).toBe(true);
     expect(pack.searchQueries).toEqual(searchedQueries);
     expect(pack.searchProcess).toEqual(
@@ -331,8 +334,19 @@ describe("buildModelDrivenWebEvidencePack", () => {
         };
       },
     };
+    const extractProvider: ExtractProvider = {
+      id: "test-extract",
+      displayName: "Test Extract",
+      async extract() {
+        return {
+          provider: "test-extract",
+          results: [],
+        };
+      },
+    };
 
     const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider,
       participants: [participant],
       provider,
       signal: controller.signal,
@@ -340,9 +354,10 @@ describe("buildModelDrivenWebEvidencePack", () => {
       topic: "latest search provider architecture",
     });
 
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(3);
     expect(intentSignal).toBe(controller.signal);
-    expect(searchSignal).toBe(controller.signal);
+    expect(searchSignal).toBeInstanceOf(AbortSignal);
+    expect(searchSignal?.aborted).toBe(false);
     expect(pack.items[0]).toEqual(
       expect.objectContaining({
         title: "Provider result",
@@ -358,6 +373,128 @@ describe("buildModelDrivenWebEvidencePack", () => {
             diagnostics: { requestFreshness: "latest" },
           }),
         ]),
+      }),
+    );
+  });
+
+  test("passes structured Tavily-style options to each search pass", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Array<Parameters<SearchProvider["search"]>[0]> = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+
+        return {
+          provider: "test-search",
+          results: [],
+        };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "Acme 融资 市场",
+    });
+
+    const official = requests.find((request) =>
+      request.query.includes("official statement"),
+    );
+    const reputable = requests.find((request) =>
+      request.query.includes("Reuters"),
+    );
+    const localized = requests.find((request) =>
+      request.query.includes("本地媒体"),
+    );
+    const social = requests.find((request) =>
+      request.query.includes("Reddit"),
+    );
+
+    expect(official).toEqual(
+      expect.objectContaining({
+        searchDepth: "basic",
+        includeDomains: expect.arrayContaining(["acme.com"]),
+        excludeDomains: expect.arrayContaining(["reddit.com", "youtube.com"]),
+      }),
+    );
+    expect(reputable).toEqual(
+      expect.objectContaining({
+        searchTopic: "news",
+        timeRange: "month",
+        includeDomains: expect.arrayContaining(["reuters.com", "bloomberg.com"]),
+        excludeDomains: expect.arrayContaining(["reddit.com", "youtube.com"]),
+      }),
+    );
+    expect(localized).toEqual(
+      expect.objectContaining({
+        country: "china",
+        searchTopic: "general",
+        timeRange: "month",
+      }),
+    );
+    expect(social).toEqual(
+      undefined,
+    );
+    expect(requests).toHaveLength(3);
+    expect(requests.every((request) => request.maxResults === 20)).toBe(true);
+  });
+
+  test("runs three model-driven keyword searches and keeps the best twelve articles", async () => {
+    const provider = createNoIntentProvider();
+    const searchedQueries: string[] = [];
+    const maxResultsRequests: number[] = [];
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI market analysis",
+      searcher: async (query, options) => {
+        searchedQueries.push(query);
+        maxResultsRequests.push(options?.maxResults ?? 0);
+
+        const domains = [
+          "reuters.com",
+          "bloomberg.com",
+          "ft.com",
+          "wsj.com",
+          "nytimes.com",
+          "theinformation.com",
+          "techcrunch.com",
+          "theverge.com",
+          "wired.com",
+          "engadget.com",
+          "arstechnica.com",
+          "semianalysis.com",
+          "epoch.ai",
+          "stanford.edu",
+          "arxiv.org",
+          "mlcommons.org",
+          "people.com.cn",
+          "stcn.com",
+          "globaltimes.cn",
+          "gasgoo.com",
+        ];
+
+        return Array.from({ length: options?.maxResults ?? 20 }, (_, index) => ({
+          title: `Reuters quality article ${searchedQueries.length}-${index + 1}`,
+          url: `https://${domains[index % domains.length]}/technology/quality-${searchedQueries.length}-${index + 1}`,
+          snippet: `AI market analysis revenue customers regulation quality article ${index + 1}. ${"A".repeat(
+            900 + index,
+          )}`,
+        }));
+      },
+    });
+
+    expect(searchedQueries).toHaveLength(3);
+    expect(maxResultsRequests).toEqual([20, 20, 20]);
+    expect(pack.items).toHaveLength(12);
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        rawCandidateCount: 60,
+        finalEvidenceCount: 12,
       }),
     );
   });
@@ -481,6 +618,95 @@ describe("buildModelDrivenWebEvidencePack", () => {
         ],
       }),
     );
+  });
+
+  test("records a timed-out pass and continues when later passes return results", async () => {
+    const provider = createNoIntentProvider();
+    const timeoutError = new TavilySearchError("network_error", {
+      reason: "network_error",
+      status: 504,
+      diagnostics: createSafeTavilyDiagnostics({
+        apiKey: "tvly-test-key",
+        endpoint: "/search",
+        error: new DOMException("The operation was aborted.", "AbortError"),
+        errorKind: "network_error",
+      }),
+    });
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI company financing market analysis",
+      searcher: async (query) => {
+        if (query.includes("official statement")) {
+          throw timeoutError;
+        }
+
+        if (query.includes("Reuters")) {
+          return [
+            {
+              title: "Reuters market analysis",
+              url: "https://reuters.com/technology/ai-company-market-analysis",
+              snippet:
+                "AI company financing revenue enterprise adoption market analysis. ".repeat(
+                  40,
+                ),
+            },
+          ];
+        }
+
+        return [];
+      },
+    });
+
+    expect(pack.searchProcess?.evidenceMode).not.toBe("search_failed");
+    expect(pack.items.some((item) => item.source === "reuters.com")).toBe(true);
+    expect(pack.searchProcess?.debugSummary?.passStats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          passName: "official",
+          timedOut: true,
+          errorType: "pass_timeout",
+          resultCount: 0,
+        }),
+        expect.objectContaining({
+          passName: "reputable_media",
+          resultCount: 1,
+        }),
+      ]),
+    );
+  });
+
+  test("enters search failed mode only when every key pass fails", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI company financing market analysis",
+      searcher: async () => {
+        throw new TavilySearchError("network_error", {
+          reason: "network_error",
+          status: 504,
+          diagnostics: createSafeTavilyDiagnostics({
+            apiKey: "tvly-test-key",
+            endpoint: "/search",
+            error: new DOMException("The operation was aborted.", "AbortError"),
+            errorKind: "network_error",
+          }),
+        });
+      },
+    });
+
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        evidenceMode: "search_failed",
+        failedStage: "search_pass",
+        failureReason: "network_error",
+      }),
+    );
+    expect(pack.searchProcess?.debugSummary?.passStats.every((stat) => stat.timedOut))
+      .toBe(true);
   });
 
   test("triggers extract rescue when fewer than three usable web results survive preflight", async () => {
@@ -676,7 +902,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       topic: "OpenAI company strategy",
       extractProvider,
       searcher: async (query) => {
-        if (!query.includes("site:openai.com")) {
+        if (!query.includes("official statement")) {
           return [];
         }
 
@@ -958,7 +1184,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       searcher: async (query) => {
         searchedQueries.push(query);
 
-        if (query.includes("site:openai.com")) {
+        if (query.includes("official statement")) {
           return [
             {
               title: "OpenAI model update",
@@ -972,7 +1198,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
-    expect(searchedQueries[0]).toContain("site:openai.com");
+    expect(searchedQueries[0]).toContain("official statement");
     expect(pack.items[0].url).toBe("https://openai.com/news/model-update");
     expect(pack.searchProcess?.debugSummary?.passStats[0]).toEqual(
       expect.objectContaining({
@@ -1050,7 +1276,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       searcher: async (query) => {
         searchedQueries.push(query);
 
-        if (query.includes("site:openai.com")) {
+        if (query.includes("official statement")) {
           return [
             {
               title: "Official financing note",
@@ -1188,7 +1414,10 @@ describe("buildModelDrivenWebEvidencePack", () => {
 
     expect(pack.searchProcess?.debugSummary?.evidenceHitRate.coreEvidenceCount)
       .toBe(0);
-    expect(socialClueItems).toHaveLength(2);
+    expect(socialClueItems).toHaveLength(0);
+    expect(pack.searchProcess?.debugSummary?.skippedPasses).toContain(
+      "social_clue",
+    );
   });
 
   test("dedupes the same URL across passes and records all seen passes", async () => {
@@ -1199,7 +1428,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       provider,
       topic: "AI model release",
       searcher: async (query) => {
-        if (query.includes("site:openai.com")) {
+        if (query.includes("official statement")) {
           return [
             {
               title: "Model release short official",
@@ -1242,7 +1471,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       provider,
       topic: "AI benchmark report",
       searcher: async (query) => {
-        if (query.includes("site:openai.com")) {
+        if (query.includes("official statement")) {
           return [
             {
               title: "Official benchmark note",
@@ -1301,6 +1530,94 @@ describe("buildModelDrivenWebEvidencePack", () => {
         { passName: "reputable_media", count: 1 },
         { passName: "industry_report", count: 1 },
       ]),
+    );
+  });
+
+  test("enables localized media pass for Chinese topics and keeps original Chinese query first", async () => {
+    const provider = createNoIntentProvider();
+    const searchedQueries: string[] = [];
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "怎么看甲方科技最近发布的本地化战略",
+      searcher: async (query) => {
+        searchedQueries.push(query);
+
+        return [];
+      },
+    });
+
+    expect(searchedQueries.some((query) => query.includes("甲方科技"))).toBe(true);
+    expect(searchedQueries.some((query) => query.includes("本地媒体"))).toBe(true);
+    expect(searchedQueries.some((query) => query.includes("人民"))).toBe(true);
+  });
+
+  test("writes long extracted content back to evidence and records extract success", async () => {
+    const provider = createNoIntentProvider();
+    const longChineseBody =
+      "甲方科技本地化战略发布，正文持续讨论甲方科技、本地化战略、市场竞争、客户采用、商业化收入、监管政策和产业合作。".repeat(
+        80,
+      );
+    const extractProvider: ExtractProvider = {
+      id: "test-extract",
+      displayName: "Test Extract",
+      async extract(request) {
+        return {
+          provider: "test-extract",
+          results: [
+            {
+              title: "甲方科技本地化战略发布",
+              url: request.urls[0],
+              content: longChineseBody,
+              sourceQuery: request.query,
+              provider: "test-extract",
+            },
+          ],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider,
+      participants: [participant],
+      provider,
+      topic: "怎么看甲方科技最近发布的本地化战略",
+      searcher: async (query) => {
+        if (query.includes("本地媒体")) {
+          return [
+            {
+              title: "甲方科技本地化战略发布",
+              url: "https://stcn.com/article/local-strategy",
+              snippet: "甲方科技本地化战略发布。",
+            },
+          ];
+        }
+
+        return [];
+      },
+    });
+
+    const item = pack.items.find((entry) =>
+      entry.url?.includes("stcn.com/article/local-strategy"),
+    );
+
+    expect(item?.snippet.length).toBeGreaterThanOrEqual(800);
+    expect(item?.quality?.snippetOnly).not.toBe(true);
+    expect(pack.searchProcess?.extractAttempted).toBeGreaterThan(0);
+    expect(pack.searchProcess?.extractSucceededCount).toBe(1);
+    expect(pack.searchProcess?.debugSummary?.extractionSuccessRate).toEqual(
+      expect.objectContaining({
+        extractSuccessCount: 1,
+      }),
+    );
+    expect(pack.searchProcess?.extractAttempts?.[0]).toEqual(
+      expect.objectContaining({
+        passName: "localized_media",
+        provider: "test-extract",
+        returnedTextLength: longChineseBody.length,
+        success: true,
+      }),
     );
   });
 });

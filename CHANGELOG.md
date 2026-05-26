@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.0 internal alpha
+
+- Added user-selectable search driver and summary model controls for web-enabled roundtables.
+- Updated Tavily search defaults for China-oriented, text raw-content searches with larger candidate pools and best-evidence selection.
+- Hardened evidence search debugging, timeout handling, localized Chinese source handling, and low-evidence meeting discipline.
+
+## v0.5.3 internal alpha
+
+- Added multi-pass Evidence Search diagnostics for localized Chinese sources, extraction attempts, and safer live-meeting search failure reporting.
+- Improved Chinese topic relevance scoring, localized media source classification, and strong/weak coverage accounting.
+- Added a minimal evidence-search debug endpoint for checking search health without starting a full meeting.
+
 ## v0.5.2 internal alpha
 
 - Added an Evidence Rescue flow inspired by search-then-fetch patterns: broad search results now enter an internal candidate pool, sparse result sets can trigger Tavily Extract, and extracted content is rescored before Evidence Pack selection.

@@ -91,6 +91,11 @@ export default function Home() {
   const [evidenceImportMessage, setEvidenceImportMessage] = useState("");
   const [isEvidenceImporting, setIsEvidenceImporting] = useState(false);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
+  const [searchDriverParticipantId, setSearchDriverParticipantId] =
+    useState("");
+  const [summaryParticipantId, setSummaryParticipantId] = useState("");
+  const [isSearchDriverDialogOpen, setIsSearchDriverDialogOpen] =
+    useState(false);
   const [isBriefMode, setIsBriefMode] = useState(false);
   const [locale, setLocale] = useState<Locale>(() => {
     if (typeof window === "undefined") {
@@ -127,6 +132,12 @@ export default function Home() {
         setMode(data.mode);
         setParticipants(data.models);
         setSelectedParticipantIds(data.models.map((model) => model.id));
+        setSearchDriverParticipantId(data.models[0]?.id ?? "");
+        setSummaryParticipantId((currentId) =>
+          currentId && data.models.some((model) => model.id === currentId)
+            ? currentId
+            : "",
+        );
         setUnavailableProviders(data.unavailableProviders);
         setModelLoadStatus("success");
       } catch (error) {
@@ -152,6 +163,16 @@ export default function Home() {
 
     return () => window.clearTimeout(timer);
   }, [copyMessage]);
+
+  function changeWebSearchEnabled(enabled: boolean) {
+    setIsWebSearchEnabled(enabled);
+    setEvidenceImportMessage("");
+
+    if (enabled && participants.length > 0) {
+      setSearchDriverParticipantId((currentId) => currentId || participants[0].id);
+      setIsSearchDriverDialogOpen(true);
+    }
+  }
 
   async function startMeeting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -227,7 +248,11 @@ export default function Home() {
           isBriefMode,
           participantIds: selectedParticipantIds,
           question: trimmedQuestion,
+          searchDriverParticipantId: isWebSearchEnabled
+            ? searchDriverParticipantId || undefined
+            : undefined,
           searchMode: "deep",
+          summaryParticipantId: summaryParticipantId || undefined,
           webSearchEnabled: isWebSearchEnabled,
         }),
         signal: meetingAbortController.signal,
@@ -236,7 +261,11 @@ export default function Home() {
       if (!response.ok) {
         const data = (await response.json()) as MeetingApiResponse;
 
-        throw new Error(data.error || uiText.meetingForm.messages.meetingFailed);
+        throw new Error(
+          data.safeErrorMessage ||
+            data.error ||
+            uiText.meetingForm.messages.meetingFailed,
+        );
       }
 
       await readLiveMeetingEvents(response, (event) => {
@@ -481,10 +510,9 @@ export default function Home() {
                   checked={isWebSearchEnabled}
                   className="mt-1 h-4 w-4 accent-emerald-700"
                   disabled={status === "loading"}
-                  onChange={(event) => {
-                    setIsWebSearchEnabled(event.target.checked);
-                    setEvidenceImportMessage("");
-                  }}
+                  onChange={(event) =>
+                    changeWebSearchEnabled(event.target.checked)
+                  }
                   type="checkbox"
                 />
                 <span>
@@ -494,6 +522,17 @@ export default function Home() {
                   </span>
                 </span>
               </label>
+              {isWebSearchEnabled ? (
+                <ModelSelectField
+                  disabled={status === "loading"}
+                  label={uiText.evidence.searchDriverModelLabel}
+                  onChange={setSearchDriverParticipantId}
+                  participants={participants}
+                  placeholder={uiText.evidence.searchDriverModelPlaceholder}
+                  text={uiText}
+                  value={searchDriverParticipantId}
+                />
+              ) : null}
               <EvidencePackEditor
                 disabled={status === "loading"}
                 drafts={evidenceDrafts}
@@ -530,6 +569,16 @@ export default function Home() {
                   </span>
                 </span>
               </label>
+              <ModelSelectField
+                allowAuto
+                disabled={status === "loading"}
+                label={uiText.meetingForm.summaryModelLabel}
+                onChange={setSummaryParticipantId}
+                participants={participants}
+                placeholder={uiText.meetingForm.summaryModelAuto}
+                text={uiText}
+                value={summaryParticipantId}
+              />
               {isEvidencePackEnabled && hasEvidenceWarnings ? (
                 <p className="border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
                   {uiText.meetingForm.evidenceWarning}
@@ -549,6 +598,16 @@ export default function Home() {
           <EmptyMeetingState text={uiText} />
         </div>
       </main>
+      <ModelChoiceDialog
+        isOpen={isSearchDriverDialogOpen}
+        onClose={() => setIsSearchDriverDialogOpen(false)}
+        onConfirm={() => setIsSearchDriverDialogOpen(false)}
+        onSelect={setSearchDriverParticipantId}
+        participants={participants}
+        selectedParticipantId={searchDriverParticipantId}
+        text={uiText}
+        title={uiText.evidence.searchDriverDialogTitle}
+      />
     </div>
   );
 }
@@ -556,6 +615,135 @@ export default function Home() {
 type TextProps = {
   text: ReturnType<typeof getUiText>;
 };
+
+type ModelSelectFieldProps = {
+  allowAuto?: boolean;
+  disabled: boolean;
+  label: string;
+  onChange: (participantId: string) => void;
+  participants: ModelParticipant[];
+  placeholder: string;
+  text: ReturnType<typeof getUiText>;
+  value: string;
+};
+
+function ModelSelectField({
+  allowAuto = false,
+  disabled,
+  label,
+  onChange,
+  participants,
+  placeholder,
+  text,
+  value,
+}: ModelSelectFieldProps) {
+  return (
+    <label className="block border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-800">
+      <span>{label}</span>
+      <select
+        className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-emerald-600 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+        disabled={disabled || participants.length === 0}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {allowAuto ? <option value="">{placeholder}</option> : null}
+        {!allowAuto && participants.length === 0 ? (
+          <option value="">{placeholder}</option>
+        ) : null}
+        {participants.map((participant) => (
+          <option key={participant.id} value={participant.id}>
+            {participant.name} · {participant.provider}
+          </option>
+        ))}
+      </select>
+      <span className="mt-1 block text-xs font-normal leading-5 text-zinc-500">
+        {participants.length === 0
+          ? text.meetingForm.messages.realNoModels
+          : placeholder}
+      </span>
+    </label>
+  );
+}
+
+type ModelChoiceDialogProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  onSelect: (participantId: string) => void;
+  participants: ModelParticipant[];
+  selectedParticipantId: string;
+  text: ReturnType<typeof getUiText>;
+  title: string;
+};
+
+function ModelChoiceDialog({
+  isOpen,
+  onClose,
+  onConfirm,
+  onSelect,
+  participants,
+  selectedParticipantId,
+  text,
+  title,
+}: ModelChoiceDialogProps) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 px-4"
+      role="dialog"
+    >
+      <section className="w-full max-w-md border border-zinc-200 bg-white p-5 shadow-xl">
+        <h2 className="text-lg font-semibold text-zinc-950">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-zinc-600">
+          {text.evidence.searchDriverDialogDescription}
+        </p>
+        <div className="mt-4 space-y-2">
+          {participants.map((participant) => (
+            <label
+              className="flex cursor-pointer items-center gap-3 border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-800 hover:border-emerald-300"
+              key={participant.id}
+            >
+              <input
+                checked={selectedParticipantId === participant.id}
+                className="h-4 w-4 accent-emerald-700"
+                name="search-driver-model"
+                onChange={() => onSelect(participant.id)}
+                type="radio"
+              />
+              <span>
+                <span className="block font-medium">{participant.name}</span>
+                <span className="block text-xs text-zinc-500">
+                  {participant.provider} · {participant.model}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            className="border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            onClick={onClose}
+            type="button"
+          >
+            {text.common.cancel}
+          </button>
+          <button
+            className="border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300"
+            disabled={participants.length === 0}
+            onClick={onConfirm}
+            type="button"
+          >
+            {text.common.confirm}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function FactHygieneNotice({ text }: TextProps) {
   return (

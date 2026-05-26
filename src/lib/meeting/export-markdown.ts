@@ -4,6 +4,7 @@ import {
   isCoreEvidenceItem,
   isPublicOpinionEvidenceItem,
   summarizeEvidenceQuality,
+  type SearchEvidence,
 } from "../search/evidence-pack";
 
 type ExportMarkdownOptions = {
@@ -113,13 +114,9 @@ function appendEvidenceDebug(
   meeting: MeetingResult,
   options: ExportMarkdownOptions,
 ) {
-  const process = meeting.debugSearchProcess ?? meeting.evidencePack?.searchProcess;
+  const process = meeting.debugSearchProcess;
 
   if (options.includeEvidenceDebug !== true && !process) {
-    return;
-  }
-
-  if (options.includeEvidenceDebug !== true && !meeting.debugSearchProcess) {
     return;
   }
 
@@ -266,9 +263,18 @@ function appendEvidencePack(lines: string[], meeting: MeetingResult) {
     const publicOpinionEvidence = meeting.evidencePack.items.filter(
       isPublicOpinionEvidenceItem,
     );
+    const technicalProductEvidence = meeting.evidencePack.items.filter(
+      isTechnicalProductEvidenceItem,
+    );
+    const relatedBackgroundEvidence = meeting.evidencePack.items.filter(
+      isRelatedBackgroundEvidenceItem,
+    );
     const downgradedEvidence = meeting.evidencePack.items.filter(
       (item) =>
-        !isCoreEvidenceItem(item) && !isPublicOpinionEvidenceItem(item),
+        !isCoreEvidenceItem(item) &&
+        !isPublicOpinionEvidenceItem(item) &&
+        !isTechnicalProductEvidenceItem(item) &&
+        !isRelatedBackgroundEvidenceItem(item),
     );
 
     if (coreEvidence.length < 3) {
@@ -287,6 +293,8 @@ function appendEvidencePack(lines: string[], meeting: MeetingResult) {
     );
     lines.push("");
     appendEvidenceSection(lines, "核心证据", coreEvidence, "无。当前资料不足以形成核心证据。");
+    appendEvidenceSection(lines, "相关背景资料", relatedBackgroundEvidence, "无。");
+    appendEvidenceSection(lines, "技术/产品线索", technicalProductEvidence, "无。");
     appendEvidenceSection(lines, "舆论线索", publicOpinionEvidence, "无。");
     appendEvidenceSection(lines, "被降级资料", downgradedEvidence, "无。");
   } else {
@@ -343,6 +351,15 @@ function appendEvidenceItem(
   lines.push(
     `  - 可信度：${formatReliability(item.quality.reliability)}（${formatScore(item.quality.score)}）`,
   );
+  if (item.quality.coverageDimension) {
+    lines.push(`  - 覆盖维度：${formatCoverageDimension(item.quality.coverageDimension)}`);
+  }
+  if (typeof item.quality.topicRelevanceScore === "number") {
+    lines.push(`  - 议题相关度：${item.quality.topicRelevanceScore}/100`);
+  }
+  if (item.quality.relevanceReason) {
+    lines.push(`  - 相关性说明：${sanitizeMarkdownText(item.quality.relevanceReason)}`);
+  }
 
   if (item.quality.snippetOnly) {
     lines.push("  - 状态：仅搜索摘要或正文不足");
@@ -410,8 +427,49 @@ function appendEvidenceQualityOverview(lines: string[], meeting: MeetingResult) 
   lines.push(`- 核心证据数量：${overview.coreEvidenceCount}`);
   lines.push(`- 内容过短资料数量：${overview.shortContentCount}`);
   lines.push(`- 标题党风险资料数量：${overview.clickbaitRiskCount}`);
+  lines.push(`- 覆盖维度：${formatOverviewList(overview.coveredDimensions)}`);
+  lines.push(`- 缺失维度：${formatOverviewList(overview.missingDimensions)}`);
+  lines.push(`- 覆盖度评分：${overview.coverageCompleteness}`);
   lines.push(`- 本轮结论可靠性：${overview.overallReliability}`);
   lines.push("");
+}
+
+function isTechnicalProductEvidenceItem(item: SearchEvidence): boolean {
+  const dimension = item.quality?.coverageDimension;
+
+  return (
+    !isCoreEvidenceItem(item) &&
+    !isPublicOpinionEvidenceItem(item) &&
+    (dimension === "technical_capability" ||
+      dimension === "product_release" ||
+      dimension === "safety_alignment")
+  );
+}
+
+function isRelatedBackgroundEvidenceItem(item: SearchEvidence): boolean {
+  if (
+    isCoreEvidenceItem(item) ||
+    isPublicOpinionEvidenceItem(item) ||
+    isTechnicalProductEvidenceItem(item)
+  ) {
+    return false;
+  }
+
+  const quality = item.quality;
+
+  return (
+    Boolean(quality) &&
+    (quality?.sourceType === "official_statement" ||
+      quality?.sourceType === "official_blog" ||
+      quality?.sourceType === "official_docs" ||
+      quality?.sourceType === "reputable_media" ||
+      quality?.sourceType === "industry_report") &&
+    (quality?.topicRelevanceScore ?? quality?.relevanceScore ?? 0) >= 40
+  );
+}
+
+function formatOverviewList(items: readonly string[]): string {
+  return items.length > 0 ? items.join("、") : "无";
 }
 
 function formatDocumentInputStrategy(strategy: string | undefined): string {
@@ -440,6 +498,24 @@ function formatSourceType(sourceType: string): string {
   };
 
   return labels[sourceType] ?? "未知";
+}
+
+function formatCoverageDimension(dimension: string): string {
+  const labels: Record<string, string> = {
+    technical_capability: "技术能力",
+    product_release: "产品发布",
+    safety_alignment: "安全与对齐",
+    business_revenue: "商业与收入",
+    enterprise_adoption: "企业采用",
+    funding_capital: "融资与资本",
+    regulation_governance: "监管与治理",
+    ecosystem_developer: "生态与开发者",
+    legal_lawsuit: "法律与诉讼",
+    market_analysis: "市场分析",
+    unknown: "未知",
+  };
+
+  return labels[dimension] ?? dimension;
 }
 
 function formatScore(score: unknown): string {

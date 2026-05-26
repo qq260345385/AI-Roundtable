@@ -206,6 +206,120 @@ describe("runMeeting", () => {
     expect(focuses.join("\n")).not.toContain("分析师");
   });
 
+  test("keeps debugSearchProcess from the evidence pack on the meeting result", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView() {
+        return "独立观点";
+      },
+      async generateResponse() {
+        return "自由回应";
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        return {
+          consensus: ["共识"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const result = await runMeeting(
+      {
+        topic: "OpenAI 和 Anthropic 哪个公司会笑到最后",
+        participants: [gptParticipant],
+        evidencePack: {
+          enabled: true,
+          searchProcess: {
+            evidenceMode: "low_evidence",
+            searchStrategy: "multi_pass",
+            searchIntents: [],
+            executedQueries: ["OpenAI Anthropic company competition"],
+            queryPlans: [],
+            intentDecisions: [],
+            qualityOverview: {
+              totalResults: 0,
+              includedCount: 0,
+              filteredCount: 0,
+              lowEvidenceCount: 0,
+              byReliability: {
+                high: 0,
+                medium: 0,
+                low: 0,
+                very_low: 0,
+              },
+              bySourceType: {
+                official_statement: 0,
+                official_blog: 0,
+                official_docs: 0,
+                official_community: 0,
+                reputable_media: 0,
+                industry_report: 0,
+                social_forum: 0,
+                video_platform: 0,
+                unknown: 0,
+              },
+            },
+            filteredReasons: [],
+            results: [],
+            warnings: [],
+          },
+          items: [
+            {
+              id: "S1",
+              title: "Long media analysis",
+              url: "https://nytimes.com/2026/05/ai-company-competition",
+              snippet: "Business market capital analysis. ".repeat(40),
+            },
+          ],
+        },
+      },
+      provider,
+    );
+
+    expect(result.debugSearchProcess?.searchStrategy).toBe("multi_pass");
+    expect(result.debugSearchProcess?.executedQueries).toEqual([
+      "OpenAI Anthropic company competition",
+    ]);
+  });
+
+  test("removes fixed analyst self-introductions from generated turns", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView() {
+        return "作为商业与融资分析师，我更关注商业化这个变量。";
+      },
+      async generateResponse() {
+        return "我是风险与监管分析师，我想补充监管不确定性。";
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        return {
+          consensus: ["共识"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    const result = await runMeeting(
+      {
+        topic: "角色泄漏检查",
+        participants: [gptParticipant],
+      },
+      provider,
+    );
+    const contents = result.phases.flatMap((phase) =>
+      phase.turns.map((turn) => turn.content),
+    );
+
+    expect(contents.join("\n")).not.toMatch(/我是.*分析师|作为.*分析师/);
+    expect(contents[0]).toContain("我更关注商业化这个变量");
+    expect(contents[1]).toContain("我想补充监管不确定性");
+  });
+
   test("adds citation check results after the meeting is generated", async () => {
     const provider: ModelProvider = {
       name: "TestProvider",
@@ -494,6 +608,45 @@ describe("runMeeting", () => {
         stage: "summary",
       }),
     ]);
+  });
+
+  test("uses the requested summary participant before fallback participants", async () => {
+    const summaryAttempts: string[] = [];
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView(participant) {
+        return `${participant.name} independent`;
+      },
+      async generateResponse(participant) {
+        return `${participant.name} response`;
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        throw new Error("default summary should not be used");
+      },
+      async generateSummaryForParticipant(participant): Promise<MeetingSummary> {
+        summaryAttempts.push(participant.id);
+
+        return {
+          consensus: [`${participant.name} summary`],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    const result = await runMeeting(
+      {
+        topic: "summary model selection",
+        participants: [gptParticipant, claudeParticipant],
+        summaryParticipant: claudeParticipant,
+      },
+      provider,
+    );
+
+    expect(summaryAttempts).toEqual(["claude"]);
+    expect(result.summary.consensus).toEqual(["Claude Mock summary"]);
   });
 
   test("returns fallback summary when every summary provider fails", async () => {

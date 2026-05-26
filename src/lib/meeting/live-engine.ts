@@ -16,6 +16,7 @@ import { checkEvidenceCitations } from "../search/evidence-citations";
 import { resolveEvidencePackDelivery } from "../search/evidence-pack";
 import { AllProvidersFailedError } from "./engine";
 import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
+import { sanitizeRoleLeak } from "./role-leak";
 
 type EmitLiveMeetingEvent = (event: LiveMeetingEvent) => void | Promise<void>;
 
@@ -45,6 +46,7 @@ export async function runLiveMeeting(
     topic: meetingRequest.topic,
     participants: meetingRequest.participants,
     evidencePack: meetingRequest.evidencePack,
+    debugSearchProcess: meetingRequest.evidencePack?.searchProcess,
     isBriefMode: request.isBriefMode === true,
     isTimeSensitive,
     factCheckNotice: isTimeSensitive ? FACT_HYGIENE_NOTICE : undefined,
@@ -119,6 +121,7 @@ export async function runLiveMeeting(
     ],
     summary,
     evidencePack: meetingRequest.evidencePack,
+    debugSearchProcess: meetingRequest.evidencePack?.searchProcess,
     citationCheck,
     failures,
     hasPartialFailures: failures.length > 0,
@@ -235,7 +238,10 @@ async function generateSummaryWithFallback(
   failures: MeetingProviderFailure[],
   emit: EmitLiveMeetingEvent,
 ): Promise<MeetingSummary> {
-  for (const participant of successfulParticipants) {
+  for (const participant of getSummaryParticipants(
+    request,
+    successfulParticipants,
+  )) {
     throwIfAborted(request.signal);
     await emitParticipantStarted("summary", participant, emit);
 
@@ -269,6 +275,22 @@ async function generateSummaryWithFallback(
   }
 
   return createFallbackSummary();
+}
+
+function getSummaryParticipants(
+  request: MeetingRequest,
+  successfulParticipants: ModelParticipant[],
+): ModelParticipant[] {
+  if (!request.summaryParticipant) {
+    return successfulParticipants;
+  }
+
+  return [
+    request.summaryParticipant,
+    ...successfulParticipants.filter(
+      (participant) => participant.id !== request.summaryParticipant?.id,
+    ),
+  ];
 }
 
 function getMeetingPromptOptions(
@@ -342,7 +364,7 @@ function createTurn(
     speakerName: participant.name,
     provider: participant.provider,
     model: participant.model,
-    content,
+    content: sanitizeRoleLeak(content),
   };
 }
 

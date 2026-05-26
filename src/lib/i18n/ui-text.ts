@@ -12,6 +12,10 @@ export function getUiText(locale: Locale) {
 
 export const UI_TEXT = {
   zh: {
+    common: {
+      cancel: "取消",
+      confirm: "确认",
+    },
     settings: {
       title: "设置",
       open: "设置",
@@ -93,6 +97,8 @@ export const UI_TEXT = {
       briefMode: "启用简要会议模式",
       briefModeDescription:
         "开启后，各模型发言和自由回应会尽量控制在 200 字左右，只保留关键观点。",
+      summaryModelLabel: "第三阶段总结模型",
+      summaryModelAuto: "自动选择可用的参会模型进行总结。",
       evidenceWarning:
         "部分资料存在解析或截断提示，建议检查资料预览后再开始会议。",
       start: "开始圆桌会议",
@@ -167,6 +173,11 @@ export const UI_TEXT = {
       webSearchTitle: "启用联网搜索",
       webSearchDescription:
         "勾选后，系统会让参会模型先提出搜索方向，再联网检索资料并提供给所有模型。",
+      searchDriverModelLabel: "搜索驱动模型",
+      searchDriverModelPlaceholder: "该模型会主导联网搜索关键词和资料方向。",
+      searchDriverDialogTitle: "选择搜索驱动模型",
+      searchDriverDialogDescription:
+        "联网搜索会先由你选择的模型规划关键词，再从结果中筛选证据资料。",
       webSearching: "正在搜索联网资料...",
       webSearchCompleted: "联网搜索已完成，会议开始发言。",
       webSearchImported: "已导入联网资料",
@@ -287,6 +298,10 @@ export const UI_TEXT = {
     },
   },
   en: {
+    common: {
+      cancel: "Cancel",
+      confirm: "Confirm",
+    },
     settings: {
       title: "Settings",
       open: "Settings",
@@ -371,6 +386,8 @@ export const UI_TEXT = {
       briefMode: "Enable brief meeting mode",
       briefModeDescription:
         "When enabled, model turns and responses stay around 200 Chinese characters and focus on key points.",
+      summaryModelLabel: "Stage 3 summary model",
+      summaryModelAuto: "Automatically use an available meeting model for summary.",
       evidenceWarning:
         "Some evidence has parsing or truncation warnings. Review the preview before starting.",
       start: "Start Roundtable",
@@ -445,6 +462,12 @@ export const UI_TEXT = {
       webSearchTitle: "Enable web search",
       webSearchDescription:
         "When enabled, participants first plan useful search queries, then the server searches the web and shares selected evidence with all models.",
+      searchDriverModelLabel: "Search driver model",
+      searchDriverModelPlaceholder:
+        "This model will guide web search keywords and evidence direction.",
+      searchDriverDialogTitle: "Choose Search Driver Model",
+      searchDriverDialogDescription:
+        "Web search first asks the selected model to plan keywords, then filters the results into evidence.",
       webSearching: "Searching web evidence...",
       webSearchCompleted: "Web search completed. The meeting has started.",
       webSearchImported: "Imported web evidence",

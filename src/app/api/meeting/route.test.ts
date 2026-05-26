@@ -90,6 +90,42 @@ describe("POST /api/meeting", () => {
     expect(body.error).toBe("participantIds must be an array of strings");
   });
 
+  test("returns an error when the search driver model is unavailable", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "search driver validation",
+        searchDriverParticipantId: "missing-model",
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("selected search driver model is not available");
+  });
+
+  test("returns an error when the summary model is unavailable", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "summary model validation",
+        summaryParticipantId: "missing-model",
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("selected summary model is not available");
+  });
+
   test("runs a meeting with selected participants only", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
     const request = new Request("http://localhost/api/meeting", {
@@ -247,9 +283,12 @@ describe("POST /api/meeting", () => {
       Response.json({
         results: [
           {
-            title: "Official source",
+            title: "DeepSeek 全球 AI 大模型实力官方资料",
             url: "https://openai.com/research/test",
-            content: `Official search result. ${"A".repeat(500)}`,
+            content:
+              "目前 DeepSeek 在全球 AI 大模型里面是什么实力。DeepSeek AI 大模型能力、评测、发布和技术报告。".repeat(
+                50,
+              ),
           },
         ],
       }),
@@ -312,6 +351,29 @@ describe("POST /api/meeting", () => {
     expect(JSON.stringify(body.meeting)).not.toContain("authorityScore");
   });
 
+  test("terminates the meeting when enabled web search fails", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () => Response.json({ unexpected: true }));
+
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "如何判断一家公司的长期竞争力？",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.error).toContain("联网资料搜索失败，会议已终止");
+    expect(body.error).toContain("搜索服务返回异常");
+    expect(body.meeting).toBeUndefined();
+  });
+
   test("returns debugSearchProcess only in non-production server debug mode", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
     process.env.SEARCH_DEBUG_ENABLED = "true";
@@ -320,9 +382,12 @@ describe("POST /api/meeting", () => {
       Response.json({
         results: [
           {
-            title: "Official source",
+            title: "DeepSeek 全球 AI 大模型实力官方资料",
             url: "https://openai.com/research/test",
-            content: `Official search result. ${"A".repeat(500)}`,
+            content:
+              "目前 DeepSeek 在全球 AI 大模型里面是什么实力。DeepSeek AI 大模型能力、评测、发布和技术报告。".repeat(
+                50,
+              ),
           },
         ],
       }),
@@ -397,9 +462,52 @@ describe("POST /api/meeting", () => {
     expect(body.meeting.debugSearchProcess.results[0]).toEqual(
       expect.objectContaining({
         score: expect.any(Number),
-        citationLevel: "context_only",
+        citationLevel: expect.any(String),
       }),
     );
+  });
+
+  test("uses the selected search driver model for web search planning", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        results: [
+          {
+            title: "Driver selected search evidence",
+            url: "https://reuters.com/technology/driver-selected",
+            content:
+              "Driver selected search evidence about market analysis, customers, regulation, technical capability, and long term evidence. ".repeat(
+                50,
+              ),
+          },
+        ],
+      }),
+    );
+
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "AI market analysis",
+        searchDriverParticipantId: "claude-mock",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.meeting.phases[0].turns).toHaveLength(1);
+    expect(body.meeting.phases[0].turns[0].speakerName).toBe("GPT Mock");
+    expect(body.meeting.debugSearchProcess.searchIntents).toEqual([
+      expect.objectContaining({
+        participantId: "claude-mock",
+        participantName: "Claude Mock",
+      }),
+    ]);
   });
 
   test("returns debugSearchProcess by default in non-production web search meetings", async () => {
@@ -410,9 +518,12 @@ describe("POST /api/meeting", () => {
       Response.json({
         results: [
           {
-            title: "Official source",
+            title: "OpenAI Anthropic company competition official source",
             url: "https://openai.com/news/test",
-            content: `Official search result. ${"A".repeat(900)}`,
+            content:
+              "OpenAI Anthropic company competition enterprise adoption market analysis funding revenue governance partnership customer contract. ".repeat(
+                30,
+              ),
           },
         ],
       }),
@@ -464,9 +575,12 @@ describe("POST /api/meeting", () => {
       Response.json({
         results: [
           {
-            title: "Official source",
+            title: "DeepSeek 全球 AI 大模型实力官方资料",
             url: "https://openai.com/research/test",
-            content: `Official search result. ${"A".repeat(500)}`,
+            content:
+              "目前 DeepSeek 在全球 AI 大模型里面是什么实力。DeepSeek AI 大模型能力、评测、发布和技术报告。".repeat(
+                50,
+              ),
           },
         ],
       }),

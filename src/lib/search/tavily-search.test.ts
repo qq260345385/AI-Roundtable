@@ -209,6 +209,154 @@ describe("Tavily evidence search", () => {
     );
   });
 
+  test("sends structured Tavily parameters and preserves provider metadata", async () => {
+    const metadataEvents: unknown[] = [];
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Structured source",
+            url: "https://example.com/structured",
+            content: "Short summary",
+            raw_content: "Long raw extracted content from Tavily search.",
+            published_date: "2026-05-20",
+            score: 0.91,
+          },
+        ],
+        response_time: 1.23,
+        request_id: "req-test-123",
+        usage: { credits: 2 },
+        auto_parameters: {
+          topic: "news",
+          search_depth: "advanced",
+        },
+      }),
+    );
+
+    const drafts = await searchTavilyEvidence("structured topic", {
+      apiKey: "tvly-test-key",
+      chunksPerSource: 5,
+      country: "china",
+      excludeDomains: ["reddit.com", "youtube.com"],
+      fetchImpl: fetchMock,
+      includeDomains: ["example.com"],
+      includeRawContent: "text",
+      includeUsage: true,
+      maxResults: 5,
+      onResponseMetadata: (metadata) => metadataEvents.push(metadata),
+      searchDepth: "advanced",
+      timeRange: "month",
+      topic: "general",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      unknown,
+      RequestInit,
+    ];
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody).toEqual(
+      expect.objectContaining({
+        chunks_per_source: 5,
+        country: "china",
+        exclude_domains: ["reddit.com", "youtube.com"],
+        include_domains: ["example.com"],
+        include_raw_content: "text",
+        include_usage: true,
+        max_results: 5,
+        query: "structured topic",
+        search_depth: "advanced",
+        time_range: "month",
+      }),
+    );
+    expect(requestBody).not.toHaveProperty("topic");
+    expect(drafts[0]).toEqual(
+      expect.objectContaining({
+        providerScore: 0.91,
+        snippet: "Long raw extracted content from Tavily search.",
+      }),
+    );
+    expect(metadataEvents).toEqual([
+      expect.objectContaining({
+        responseTime: 1.23,
+        requestId: "req-test-123",
+        usage: { credits: 2 },
+        autoParameters: {
+          topic: "news",
+          search_depth: "advanced",
+        },
+      }),
+    ]);
+  });
+
+  test("defaults general Tavily searches to China region and text raw content", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Regional source",
+            url: "https://example.com/china-region",
+            content: "Regional source content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("regional technology topic", {
+      apiKey: "tvly-test-key",
+      fetchImpl: fetchMock,
+      maxResults: 3,
+      topic: "general",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      unknown,
+      RequestInit,
+    ];
+
+    expect(JSON.parse(String(init.body))).toEqual(
+      expect.objectContaining({
+        chunks_per_source: 5,
+        country: "china",
+        include_raw_content: "text",
+      }),
+    );
+    expect(JSON.parse(String(init.body))).not.toHaveProperty("topic");
+  });
+
+  test("omits Tavily topic so country can still be applied", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "News source",
+            url: "https://example.com/news",
+            content: "News source content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("regional news topic", {
+      apiKey: "tvly-test-key",
+      country: "china",
+      fetchImpl: fetchMock,
+      maxResults: 3,
+      topic: "news",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      unknown,
+      RequestInit,
+    ];
+
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody).toEqual(
+      expect.objectContaining({
+        country: "china",
+      }),
+    );
+    expect(requestBody).not.toHaveProperty("topic");
+  });
+
   test("uses Tavily cache for identical query options", async () => {
     const fetchMock = vi.fn(async () =>
       Response.json({

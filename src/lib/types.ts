@@ -49,6 +49,7 @@ export type MeetingRequest = {
   evidencePack?: EvidencePack;
   isBriefMode?: boolean;
   signal?: AbortSignal;
+  summaryParticipant?: ModelParticipant;
 };
 
 export type MeetingTurn = {
@@ -207,4 +208,7 @@ export type MeetingApiResponse = {
   mode: RoundtableMode;
   meeting: MeetingResult;
   error?: string;
+  errorType?: string;
+  failedStage?: string;
+  safeErrorMessage?: string;
 };

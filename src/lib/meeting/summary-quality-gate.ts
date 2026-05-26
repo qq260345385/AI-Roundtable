@@ -1,12 +1,18 @@
 import type { MeetingSummary } from "../types";
-import type { EvidencePack } from "../search/evidence-pack";
+import {
+  summarizeEvidenceQuality,
+  type EvidencePack,
+} from "../search/evidence-pack";
 import { extractCitationIds } from "../search/evidence-citations";
 
 export function applyEvidenceQualityGateToSummary(
   summary: MeetingSummary,
   evidencePack: EvidencePack | undefined,
 ): MeetingSummary {
-  const dedupedSummary = dedupeSummaryUncertainty(summary);
+  const dedupedSummary = applyCoverageNoticeToConfirmableFacts(
+    dedupeSummaryUncertainty(summary),
+    evidencePack,
+  );
 
   if (!evidencePack?.enabled || evidencePack.items.length === 0) {
     return dedupedSummary;
@@ -44,6 +50,42 @@ export function applyEvidenceQualityGateToSummary(
       ...downgradedFacts.map(markAsInsufficientlyConfirmed),
     ],
   });
+}
+
+function applyCoverageNoticeToConfirmableFacts(
+  summary: MeetingSummary,
+  evidencePack: EvidencePack | undefined,
+): MeetingSummary {
+  if (!evidencePack?.enabled || evidencePack.items.length === 0) {
+    return summary;
+  }
+
+  const overview = summarizeEvidenceQuality(evidencePack);
+
+  if (
+    overview.coverageCompleteness >= 0.75 ||
+    !overview.missingDimensions.some((dimension) =>
+      [
+        "business_revenue_or_enterprise_adoption",
+        "funding_capital_or_market_analysis",
+      ].includes(dimension),
+    )
+  ) {
+    return summary;
+  }
+
+  const notice =
+    "当前可确认事实主要集中在技术与安全评估，尚不足以确认两家公司长期竞争胜负。";
+  const confirmableFacts = summary.confirmableFacts ?? [];
+
+  if (confirmableFacts.some((fact) => normalizeSummaryPoint(fact) === normalizeSummaryPoint(notice))) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    confirmableFacts: [notice, ...confirmableFacts],
+  };
 }
 
 function downgradeWeakConfirmableFacts(

@@ -1,6 +1,7 @@
 import type {
   EvidencePack,
   EvidenceSearchPassStats,
+  ExtractAttemptRecord,
   SearchEvidence,
   SearchCacheEvent,
   SearchFreshness,
@@ -14,6 +15,7 @@ import type {
 } from "./evidence-pack";
 import {
   createSearchFailureProcess,
+  classifyEvidenceTopic,
   isPublicOpinionEvidenceItem,
   isStrongOfficialSource,
   normalizeEvidencePack,
@@ -39,7 +41,7 @@ import type {
 } from "../types";
 
 const MAX_MODEL_DRIVEN_QUERIES = 8;
-const WEB_SEARCH_RESULTS_PER_QUERY = 5;
+const WEB_SEARCH_RESULTS_PER_QUERY = 20;
 const RESCUE_TRIGGER_USABLE_THRESHOLD = 3;
 const RESCUE_TRIGGER_RELIABLE_THRESHOLD = 3;
 const MAX_TAVILY_QUERY_LENGTH = 160;
@@ -63,9 +65,54 @@ const MARKETING_TERMS = new Set([
 ]);
 const CORE_EVIDENCE_TARGET = 3;
 const SOCIAL_CLUE_FINAL_LIMIT = 2;
+const DEFAULT_EVIDENCE_OVERALL_TIMEOUT_MS = 90000;
+const DEFAULT_EVIDENCE_PASS_TIMEOUT_MS = 30000;
+const MODEL_DRIVEN_SEARCH_PASS_LIMIT = 3;
+const MODEL_DRIVEN_FINAL_EVIDENCE_LIMIT = 12;
+const TRUSTED_MEDIA_DOMAINS = [
+  "reuters.com",
+  "bloomberg.com",
+  "ft.com",
+  "wsj.com",
+  "nytimes.com",
+  "theinformation.com",
+  "techcrunch.com",
+  "theverge.com",
+  "wired.com",
+  "engadget.com",
+  "arstechnica.com",
+];
+const LOCALIZED_MEDIA_DOMAINS = [
+  "people.com.cn",
+  "people.cn",
+  "stcn.com",
+  "globaltimes.cn",
+  "gasgoo.com",
+  "finance.yahoo.com",
+  "tw.stock.yahoo.com",
+  "36kr.com",
+];
+const INDUSTRY_REPORT_DOMAINS = [
+  "semianalysis.com",
+  "epoch.ai",
+  "stanford.edu",
+  "arxiv.org",
+  "mlcommons.org",
+];
+const SOCIAL_VIDEO_DOMAINS = [
+  "reddit.com",
+  "linkedin.com",
+  "youtube.com",
+  "youtu.be",
+  "x.com",
+  "twitter.com",
+  "instagram.com",
+  "tiktok.com",
+];
 
 type SearchPassName =
   | "official"
+  | "localized_media"
   | "reputable_media"
   | "industry_report"
   | "social_clue"
@@ -75,6 +122,14 @@ type SearchPassSpec = {
   name: SearchPassName;
   query: string;
   freshness: SearchFreshness;
+  chunksPerSource?: number;
+  country?: string;
+  excludeDomains?: string[];
+  includeDomains?: string[];
+  includeRawContent?: boolean | "markdown" | "text";
+  searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
+  searchTopic?: "general" | "news" | "finance";
+  timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";
 };
 
 type SearchModeConfig = {
@@ -136,6 +191,7 @@ export async function buildModelDrivenWebEvidencePack({
   const providerDiagnostics: SearchProviderDiagnostic[] = [];
   const passStats: EvidenceSearchPassStats[] = [];
   const skippedPasses: string[] = [];
+  const shouldUseHtmlExtractFallback = !searcher && extractProvider.id === "tavily";
   let dedupeStats: ReturnType<typeof dedupeSearchResults>["stats"] | undefined;
   let webDrafts: TavilyEvidenceDraft[];
   let rawCandidateCount = 0;
@@ -146,11 +202,29 @@ export async function buildModelDrivenWebEvidencePack({
   let extractSucceededCount = 0;
   let officialExtractFailed = false;
   let extractErrorType: string | undefined;
+  const extractAttempts: ExtractAttemptRecord[] = [];
   let targetedSearchRetryTriggered = false;
   let targetedSearchRetryReason: string | undefined;
+  let activeSearchPassName: SearchPassName | undefined;
+  const overallStartedAt = Date.now();
+  const overallTimeoutMs = getEvidenceOverallTimeoutMs();
+  const passTimeoutMs = getEvidencePassTimeoutMs();
+  let keyPassCount = 0;
+  let failedKeyPassCount = 0;
+  let firstFailedPassName: SearchPassName | undefined;
+  let firstFailureReason: ReturnType<typeof getTavilyFailureReason> | undefined;
 
   try {
-    const searchPasses = buildSearchPasses(topic, searchPlan.queries);
+    const allSearchPasses = buildSearchPasses(topic, searchPlan.queries);
+    const searchPasses = allSearchPasses.slice(0, MODEL_DRIVEN_SEARCH_PASS_LIMIT);
+    skippedPasses.push(
+      ...allSearchPasses
+        .slice(MODEL_DRIVEN_SEARCH_PASS_LIMIT)
+        .map((pass) => pass.name),
+    );
+    keyPassCount = searchPasses.filter((pass) =>
+      isKeySearchPass(pass.name),
+    ).length;
     const maxResultsPerQuery = getMaxResultsPerQuery(
       modeConfig.candidateLimit,
       searchPasses.length,
@@ -172,31 +246,175 @@ export async function buildModelDrivenWebEvidencePack({
       }
 
       searchQueries.push(searchPass.query);
-      const response = await searchWithConfiguredProvider({
-        freshness: searchPass.freshness,
-        maxResults: maxResultsPerQuery,
-        provider: searchProvider,
-        query: searchPass.query,
-        searcher,
-        signal,
-        topic,
-      });
-      cacheEvents.push(...(response.cacheEvents ?? []));
-      providerDiagnostics.push(createProviderDiagnostic(response));
-      const passDrafts = response.results.map((result) => ({
-        title: result.title,
-        url: result.url,
-        snippet: result.content ?? result.snippet ?? "",
-        publishedAt: result.publishedDate,
-        query: searchPass.query,
-        seenInPasses: [searchPass.name],
-      }));
-
-      passStats.push(
-        createPassStats(searchPass.name, searchPass.query, passDrafts, topic),
+      activeSearchPassName = searchPass.name;
+      const passStartedAt = Date.now();
+      const remainingTimeoutMs = getRemainingTimeoutMs(
+        overallStartedAt,
+        overallTimeoutMs,
       );
-      rawWebDrafts.push(...passDrafts);
+      const effectivePassTimeoutMs = Math.min(
+        passTimeoutMs,
+        remainingTimeoutMs,
+      );
+
+      if (effectivePassTimeoutMs <= 0) {
+        const errorType = "evidence_overall_timeout";
+
+        passStats.push(
+          createFailedPassStats(
+            searchPass.name,
+            searchPass.query,
+            Date.now() - passStartedAt,
+            errorType,
+            true,
+          ),
+        );
+        if (isKeySearchPass(searchPass.name)) {
+          failedKeyPassCount += 1;
+          firstFailedPassName ??= searchPass.name;
+          firstFailureReason ??= "network_error";
+        }
+        logSearchPassFailure({
+          durationMs: Date.now() - passStartedAt,
+          errorType,
+          passName: searchPass.name,
+          provider: searchProvider.id,
+          query: searchPass.query,
+          timeoutMs: overallTimeoutMs,
+        });
+        activeSearchPassName = undefined;
+        break;
+      }
+
+      const passAbort = createTimedAbortSignal(signal, effectivePassTimeoutMs);
+
+      try {
+        const response = await searchWithConfiguredProvider({
+          chunksPerSource: searchPass.chunksPerSource,
+          country: searchPass.country,
+          excludeDomains: searchPass.excludeDomains,
+          freshness: searchPass.freshness,
+          includeDomains: searchPass.includeDomains,
+          includeRawContent: searchPass.includeRawContent,
+          maxResults: maxResultsPerQuery,
+          provider: searchProvider,
+          query: searchPass.query,
+          searchDepth: searchPass.searchDepth,
+          searchTopic: searchPass.searchTopic,
+          searcher,
+          signal: passAbort.signal,
+          timeRange: searchPass.timeRange,
+          topic,
+        });
+        cacheEvents.push(...(response.cacheEvents ?? []));
+        providerDiagnostics.push(createProviderDiagnostic(response));
+        const passDrafts = response.results.map((result) => ({
+          title: result.title,
+          url: result.url,
+          snippet: result.content ?? result.snippet ?? "",
+          publishedAt: result.publishedDate,
+          providerScore: result.providerScore,
+          query: searchPass.query,
+          seenInPasses: [searchPass.name],
+        }));
+
+        passStats.push(
+          createPassStats(
+            searchPass.name,
+            searchPass.query,
+            passDrafts,
+            topic,
+            { durationMs: Date.now() - passStartedAt },
+          ),
+        );
+        rawWebDrafts.push(...passDrafts);
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error;
+        }
+
+        const durationMs = Date.now() - passStartedAt;
+        const errorType = getSearchPassErrorType(
+          error,
+          durationMs,
+          effectivePassTimeoutMs,
+        );
+        const timedOut = isSearchPassTimeout(errorType);
+
+        passStats.push(
+          createFailedPassStats(
+            searchPass.name,
+            searchPass.query,
+            durationMs,
+            errorType,
+            timedOut,
+          ),
+        );
+        providerDiagnostics.push(
+          createFailedProviderDiagnostic(searchProvider, error, errorType),
+        );
+
+        if (isKeySearchPass(searchPass.name)) {
+          failedKeyPassCount += 1;
+          firstFailedPassName ??= searchPass.name;
+          firstFailureReason ??= getTavilyFailureReason(error);
+        }
+
+        logSearchPassFailure({
+          durationMs,
+          errorType,
+          passName: searchPass.name,
+          provider: searchProvider.id,
+          query: searchPass.query,
+          timeoutMs: effectivePassTimeoutMs,
+        });
+      } finally {
+        passAbort.clear();
+        activeSearchPassName = undefined;
+      }
     }
+
+    if (
+      rawWebDrafts.length === 0 &&
+      keyPassCount > 0 &&
+      failedKeyPassCount >= keyPassCount
+    ) {
+      return normalizeEvidencePack(
+        {
+          enabled: true,
+          evidenceStatus: "none",
+          evidenceWarnings: [
+            ...(baseEvidencePack?.evidenceWarnings ?? []),
+            "Tavily search failed; the meeting should treat real-time facts as manually unverified.",
+          ],
+          items: baseItems,
+          searchProcess: createSearchFailureProcess({
+            cacheEvents,
+            dedupeStats,
+            executedQueries: searchQueries,
+            failureReason: firstFailureReason ?? "network_error",
+            provider: searchProvider.id,
+            providerDiagnostics,
+            searchIntents: searchPlan.searchIntents,
+            queryPlans: searchPlan.queryPlans,
+            intentDecisions: searchPlan.intentDecisions,
+            searchStrategy: "multi_pass",
+            failedStage: "search_pass",
+            failedPassName: firstFailedPassName,
+            passStats,
+            skippedPasses,
+            retryCount: 0,
+            warnings: ["all_key_passes_failed"],
+          }),
+          searchQueries,
+          strategy: baseEvidencePack?.strategy ?? "text_pack",
+        },
+        {
+          topic,
+        },
+      );
+    }
+
     rawCandidateCount = rawWebDrafts.length;
     const deduped = dedupeSearchResults(rawWebDrafts);
 
@@ -218,43 +436,112 @@ export async function buildModelDrivenWebEvidencePack({
       targetedSearchRetryTriggered = true;
       targetedSearchRetryReason = "social_video_ratio_above_threshold";
       const targetedQueries = buildTargetedRetryQueries(topic);
-      const targetedDrafts = (
-        await Promise.all(
-          targetedQueries.map((query) =>
-            searchWithConfiguredProvider({
-              freshness: "latest",
-              maxResults: Math.max(2, Math.ceil(modeConfig.extractLimit / 3)),
-              provider: searchProvider,
-              query,
-              searcher,
-              signal,
-              topic,
-            }).then((response) => {
-              cacheEvents.push(...(response.cacheEvents ?? []));
-              providerDiagnostics.push(createProviderDiagnostic(response));
+      const targetedDrafts: TavilyEvidenceDraft[] = [];
 
-              return response.results.map((result) => ({
-                title: result.title,
-                url: result.url,
-                snippet: result.content ?? result.snippet ?? "",
-                publishedAt: result.publishedDate,
-                query,
-                seenInPasses: ["targeted_retry"],
-              }));
-            }),
-          ),
-        )
-      ).flat();
-      passStats.push(
-        ...targetedQueries.map((query) =>
-          createPassStats(
-            "targeted_retry",
+      for (const query of targetedQueries) {
+        activeSearchPassName = "targeted_retry";
+        searchQueries.push(query);
+        const passStartedAt = Date.now();
+        const remainingTimeoutMs = getRemainingTimeoutMs(
+          overallStartedAt,
+          overallTimeoutMs,
+        );
+        const effectivePassTimeoutMs = Math.min(
+          passTimeoutMs,
+          remainingTimeoutMs,
+        );
+
+        if (effectivePassTimeoutMs <= 0) {
+          passStats.push(
+            createFailedPassStats(
+              "targeted_retry",
+              query,
+              Date.now() - passStartedAt,
+              "evidence_overall_timeout",
+              true,
+            ),
+          );
+          activeSearchPassName = undefined;
+          break;
+        }
+
+        const passAbort = createTimedAbortSignal(signal, effectivePassTimeoutMs);
+
+        try {
+          const response = await searchWithConfiguredProvider({
+            chunksPerSource: 3,
+            excludeDomains: SOCIAL_VIDEO_DOMAINS,
+            freshness: "latest",
+            includeDomains: [
+              ...TRUSTED_MEDIA_DOMAINS,
+              ...INDUSTRY_REPORT_DOMAINS,
+            ],
+            includeRawContent: "text",
+            maxResults: Math.max(2, Math.ceil(modeConfig.extractLimit / 3)),
+            provider: searchProvider,
             query,
-            targetedDrafts.filter((draft) => draft.query === query),
+            searchDepth: "advanced",
+            searchTopic: "news",
+            searcher,
+            signal: passAbort.signal,
+            timeRange: "month",
             topic,
-          ),
-        ),
-      );
+          });
+          cacheEvents.push(...(response.cacheEvents ?? []));
+          providerDiagnostics.push(createProviderDiagnostic(response));
+          const queryDrafts = response.results.map((result) => ({
+            title: result.title,
+            url: result.url,
+            snippet: result.content ?? result.snippet ?? "",
+            publishedAt: result.publishedDate,
+            providerScore: result.providerScore,
+            query,
+            seenInPasses: ["targeted_retry"],
+          }));
+
+          targetedDrafts.push(...queryDrafts);
+          passStats.push(
+            createPassStats("targeted_retry", query, queryDrafts, topic, {
+              durationMs: Date.now() - passStartedAt,
+            }),
+          );
+        } catch (error) {
+          if (signal?.aborted) {
+            throw error;
+          }
+
+          const durationMs = Date.now() - passStartedAt;
+          const errorType = getSearchPassErrorType(
+            error,
+            durationMs,
+            effectivePassTimeoutMs,
+          );
+
+          passStats.push(
+            createFailedPassStats(
+              "targeted_retry",
+              query,
+              durationMs,
+              errorType,
+              isSearchPassTimeout(errorType),
+            ),
+          );
+          providerDiagnostics.push(
+            createFailedProviderDiagnostic(searchProvider, error, errorType),
+          );
+          logSearchPassFailure({
+            durationMs,
+            errorType,
+            passName: "targeted_retry",
+            provider: searchProvider.id,
+            query,
+            timeoutMs: effectivePassTimeoutMs,
+          });
+        } finally {
+          passAbort.clear();
+          activeSearchPassName = undefined;
+        }
+      }
       const targetedDeduped = dedupeSearchResults([
         ...webDrafts,
         ...targetedDrafts,
@@ -272,7 +559,6 @@ export async function buildModelDrivenWebEvidencePack({
           topic,
         },
       );
-      searchQueries.push(...targetedQueries);
     }
 
     const rescueDecision = getExtractRescueDecision(preflightPack, searchMode);
@@ -310,7 +596,8 @@ export async function buildModelDrivenWebEvidencePack({
             extractDepth: searchMode === "deep" ? "advanced" : "basic",
             signal,
           });
-          const extractedDrafts = extractResponse.results.map((result) => ({
+          let extractedDrafts: TavilyEvidenceDraft[] =
+            extractResponse.results.map((result) => ({
             title: result.title,
             url: result.url,
             snippet: result.content,
@@ -320,17 +607,54 @@ export async function buildModelDrivenWebEvidencePack({
               result.url,
             ),
           }));
+          const extractedByUrl = new Map(
+            extractedDrafts.map((draft) => [
+              getCanonicalSearchUrl(draft.url),
+              draft,
+            ]),
+          );
+
+          for (const candidate of fallbackRescueCandidates) {
+            const extracted = extractedByUrl.get(
+              getCanonicalSearchUrl(candidate.url),
+            );
+
+            extractAttempts.push({
+              url: candidate.url,
+              provider: extractResponse.provider,
+              passName: getPrimarySeenInPass(candidate),
+              returnedTextLength: extracted?.snippet.trim().length ?? 0,
+              success: (extracted?.snippet.trim().length ?? 0) >= 800,
+              ...(!(extracted?.snippet.trim())
+                ? { errorType: "empty_extract_result" }
+                : {}),
+            });
+          }
+
+          const fallbackExtractedDrafts =
+            shouldUseHtmlExtractFallback
+              ? await extractFallbackDraftsForCandidates({
+                  candidates: fallbackRescueCandidates,
+                  currentDrafts: extractedDrafts,
+                  extractAttempts,
+                  signal,
+                })
+              : [];
+
+          extractedDrafts = [...extractedDrafts, ...fallbackExtractedDrafts];
 
           extractedCandidateCount = extractedDrafts.length;
           extractSucceededCount = Math.min(
             fallbackRescueCandidates.length,
-            extractedDrafts.filter((draft) => draft.snippet.trim()).length,
+            extractedDrafts.filter((draft) => draft.snippet.trim().length >= 800)
+              .length,
           );
           officialExtractFailed =
             officialRetryUrls.size > 0 &&
             !extractedDrafts.some(
               (draft) =>
-                officialRetryUrls.has(draft.url) && draft.snippet.trim().length >= 800,
+                officialRetryUrls.has(draft.url ?? "") &&
+                draft.snippet.trim().length >= 800,
             );
           if (officialExtractFailed) {
             extractErrorType = "empty_official_extract";
@@ -353,9 +677,62 @@ export async function buildModelDrivenWebEvidencePack({
           });
           recordExtractedCountsByPass(passStats, extractedDrafts);
         } catch (error) {
-          extractErrorType = getTavilyFailureReason(error);
+          extractErrorType = getExtractErrorType(error);
           rescueReason = `extract_failed:${extractErrorType}`;
-          officialExtractFailed = officialRetryUrls.size > 0;
+          extractAttempts.push(
+            ...fallbackRescueCandidates.map((candidate) => ({
+              url: candidate.url,
+              provider: extractProvider.id,
+              passName: getPrimarySeenInPass(candidate),
+              returnedTextLength: 0,
+              success: false,
+              errorType: extractErrorType,
+              errorMessageSafe: getSafeExtractErrorMessage(error),
+            })),
+          );
+          const fallbackExtractedDrafts =
+            shouldUseHtmlExtractFallback
+              ? await extractFallbackDraftsForCandidates({
+                  candidates: fallbackRescueCandidates,
+                  currentDrafts: [],
+                  extractAttempts,
+                  signal,
+                })
+              : [];
+
+          extractedCandidateCount = fallbackExtractedDrafts.length;
+          extractSucceededCount = Math.min(
+            fallbackRescueCandidates.length,
+            fallbackExtractedDrafts.filter(
+              (draft) => draft.snippet.trim().length >= 800,
+            ).length,
+          );
+          officialExtractFailed =
+            officialRetryUrls.size > 0 &&
+            !fallbackExtractedDrafts.some(
+              (draft) =>
+                officialRetryUrls.has(draft.url ?? "") &&
+                draft.snippet.trim().length >= 800,
+            );
+
+          if (fallbackExtractedDrafts.length > 0) {
+            const rescuedDeduped = dedupeSearchResults([
+              ...webDrafts,
+              ...fallbackExtractedDrafts,
+            ]);
+
+            webDrafts = rescuedDeduped.items.slice(0, modeConfig.candidateLimit);
+            dedupeStats = mergeDedupeStats(dedupeStats, rescuedDeduped.stats);
+            providerDiagnostics.push({
+              provider: "html_fetch",
+              displayName: "HTML fetch fallback",
+              diagnostics: {
+                requestedUrlCount: fallbackRescueCandidates.length,
+                resultCount: fallbackExtractedDrafts.length,
+              },
+            });
+            recordExtractedCountsByPass(passStats, fallbackExtractedDrafts);
+          }
         }
       }
     }
@@ -396,6 +773,11 @@ export async function buildModelDrivenWebEvidencePack({
           queryPlans: searchPlan.queryPlans,
           intentDecisions: searchPlan.intentDecisions,
           searchStrategy: "multi_pass",
+          failedStage: "search_pass",
+          failedPassName: activeSearchPassName,
+          passStats,
+          skippedPasses,
+          retryCount: 0,
           warnings: [failureReason],
         }),
         searchQueries,
@@ -442,6 +824,7 @@ export async function buildModelDrivenWebEvidencePack({
         executedQueries: searchQueries,
         extractAttempted,
         extractErrorType,
+        extractAttempts,
         extractedCandidateCount,
         extractSucceededCount,
         finalEvidenceCount: preflightPack.items.length,
@@ -473,12 +856,20 @@ export async function buildModelDrivenWebEvidencePack({
 }
 
 async function searchWithConfiguredProvider(input: {
+  chunksPerSource?: number;
+  country?: string;
+  excludeDomains?: string[];
   freshness: SearchFreshness;
+  includeDomains?: string[];
+  includeRawContent?: boolean | "markdown" | "text";
   maxResults: number;
   provider: SearchProvider;
   query: string;
+  searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
+  searchTopic?: "general" | "news" | "finance";
   searcher?: Searcher;
   signal?: AbortSignal;
+  timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";
   topic: string;
 }): Promise<SearchProviderResponse> {
   if (input.searcher) {
@@ -498,6 +889,9 @@ async function searchWithConfiguredProvider(input: {
         content: draft.snippet,
         snippet: draft.snippet,
         ...(draft.publishedAt ? { publishedDate: draft.publishedAt } : {}),
+        ...(typeof draft.providerScore === "number"
+          ? { providerScore: draft.providerScore }
+          : {}),
         sourceQuery: input.query,
         provider: input.provider.id,
       })),
@@ -510,11 +904,19 @@ async function searchWithConfiguredProvider(input: {
   }
 
   return input.provider.search({
+    chunksPerSource: input.chunksPerSource,
+    country: input.country,
+    excludeDomains: input.excludeDomains,
     freshness: input.freshness,
+    includeDomains: input.includeDomains,
+    includeRawContent: input.includeRawContent,
+    includeUsage: true,
     maxResults: input.maxResults,
     query: input.query,
-    searchDepth: "basic",
+    searchDepth: input.searchDepth ?? "basic",
+    searchTopic: input.searchTopic,
     signal: input.signal,
+    timeRange: input.timeRange,
     topic: input.topic,
   });
 }
@@ -523,26 +925,38 @@ function buildSearchPasses(
   topic: string,
   plannedQueries: string[],
 ): SearchPassSpec[] {
-  if (isCompanyCompetitionTopic(topic)) {
-    return buildCompanyCompetitionSearchPasses(topic);
+  if (classifyEvidenceTopic(topic) === "entity_competition") {
+    return buildEntityCompetitionSearchPasses(topic);
   }
 
   const baseQuery = plannedQueries.find(Boolean) ?? topic;
+  const localizedPasses = buildLocalizedMediaPasses(topic);
 
   return [
     {
       name: "official",
       query: trimQueryToLength(
-        `site:openai.com site:anthropic.com site:ai.googleblog.com site:microsoft.com site:amazon.com official report ${baseQuery}`,
+        `${baseQuery} official statement official blog official docs announcement report`,
       ),
       freshness: "latest",
+      includeDomains: buildOfficialDomainCandidates(topic),
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("latest"),
     },
+    ...localizedPasses,
     {
       name: "reputable_media",
       query: trimQueryToLength(
         `Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch ${baseQuery}`,
       ),
       freshness: "latest",
+      includeDomains: TRUSTED_MEDIA_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "news",
+      timeRange: getTavilyTimeRange("latest"),
     },
     {
       name: "industry_report",
@@ -550,6 +964,11 @@ function buildSearchPasses(
         `SemiAnalysis Epoch AI Stanford arxiv MLCommons industry report ${baseQuery}`,
       ),
       freshness: "recent",
+      includeDomains: INDUSTRY_REPORT_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("recent"),
     },
     {
       name: "social_clue",
@@ -557,62 +976,203 @@ function buildSearchPasses(
         `Reddit LinkedIn YouTube X discussion ${baseQuery}`,
       ),
       freshness: "recent",
+      includeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "fast",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("recent"),
     },
   ];
 }
 
-function buildCompanyCompetitionSearchPasses(topic: string): SearchPassSpec[] {
-  const companyQuery = getCompanyCompetitionQuery(topic);
+function buildEntityCompetitionSearchPasses(topic: string): SearchPassSpec[] {
+  const localizedPasses = buildLocalizedMediaPasses(topic);
 
   return [
     {
       name: "official",
       query: trimQueryToLength(
-        `${companyQuery} funding revenue governance business model official site:openai.com site:anthropic.com`,
+        `${topic} official statement funding revenue governance business model partnership customer contract`,
       ),
       freshness: "latest",
+      includeDomains: buildOfficialDomainCandidates(topic),
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("latest"),
     },
+    ...localizedPasses,
     {
       name: "reputable_media",
       query: trimQueryToLength(
-        `${companyQuery} enterprise customers market share funding revenue Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch`,
+        `${topic} enterprise customers market share funding revenue Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch`,
       ),
       freshness: "latest",
+      includeDomains: TRUSTED_MEDIA_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "news",
+      timeRange: getTavilyTimeRange("latest"),
     },
     {
       name: "industry_report",
       query: trimQueryToLength(
-        `${companyQuery} strategic partnership cloud partnership regulation government contracts industry report SemiAnalysis Stanford Epoch AI`,
+        `${topic} strategic partnership regulation government contracts market analysis industry report`,
       ),
       freshness: "recent",
+      includeDomains: INDUSTRY_REPORT_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("recent"),
     },
     {
       name: "social_clue",
       query: trimQueryToLength(
-        `${companyQuery} discussion sentiment Reddit LinkedIn YouTube X -instagram -tiktok`,
+        `${topic} discussion sentiment Reddit LinkedIn YouTube X -instagram -tiktok`,
       ),
       freshness: "recent",
+      includeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "fast",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("recent"),
     },
   ];
 }
 
-function isCompanyCompetitionTopic(topic: string): boolean {
-  const normalized = topic.toLowerCase();
-
-  return (
-    (/openai/.test(normalized) && /anthropic/.test(normalized)) ||
-    /公司|company|business|竞争|竞争力|笑到最后|长期|长期竞争|winner|wins|win/.test(
-      normalized,
-    )
-  );
-}
-
-function getCompanyCompetitionQuery(topic: string): string {
-  if (/openai/i.test(topic) && /anthropic/i.test(topic)) {
-    return "OpenAI Anthropic company competition";
+function buildLocalizedMediaPasses(topic: string): SearchPassSpec[] {
+  if (!isPrimaryChineseTopic(topic)) {
+    return [];
   }
 
-  return topic;
+  const variants = buildLocalizedQueryVariants(topic);
+  const localMediaQuery = trimQueryToLength(
+    [
+      variants.originalLanguageQuery,
+      variants.normalizedOriginalQuery,
+      variants.aliasQuery,
+      "本地媒体 人民网 证券时报 环球时报 行业媒体 财经",
+      "-linkedin -instagram -reddit -youtube -tiktok -twitter -x.com",
+    ].filter(Boolean).join(" "),
+  );
+
+  return [
+    {
+      name: "localized_media",
+      query: localMediaQuery,
+      freshness: "latest",
+      country: "china",
+      includeDomains: LOCALIZED_MEDIA_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("latest"),
+    },
+  ];
+}
+
+function buildLocalizedQueryVariants(topic: string): {
+  originalLanguageQuery: string;
+  normalizedOriginalQuery: string;
+  translatedQuery: string;
+  aliasQuery: string;
+  officialSourceQuery: string;
+  localMediaQuery: string;
+} {
+  const normalizedOriginalQuery = normalizeLocalizedQueryText(topic);
+  const aliasQuery = buildSymbolAliasQuery(topic);
+
+  return {
+    originalLanguageQuery: topic.trim(),
+    normalizedOriginalQuery,
+    translatedQuery: "",
+    aliasQuery,
+    officialSourceQuery: trimQueryToLength(`${topic} 官网 官方 公告 声明`),
+    localMediaQuery: trimQueryToLength(`${topic} 本地媒体 财经 行业 报道`),
+  };
+}
+
+function normalizeLocalizedQueryText(topic: string): string {
+  return topic
+    .normalize("NFKC")
+    .replace(/[()（）［］【】「」『』"'“”‘’]/g, " ")
+    .replace(/[·•・]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildSymbolAliasQuery(topic: string): string {
+  const aliases = new Set<string>();
+  const normalized = normalizeLocalizedQueryText(topic);
+
+  aliases.add(normalized);
+  aliases.add(normalized.replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, ""));
+  aliases.add(
+    normalized
+      .replace(/[αΑ]/g, "alpha")
+      .replace(/[βΒ]/g, "beta")
+      .replace(/[γΓ]/g, "gamma"),
+  );
+
+  return Array.from(aliases)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ");
+}
+
+function isPrimaryChineseTopic(topic: string): boolean {
+  const cjkCount = (topic.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  const latinCount = (topic.match(/[a-z]/gi) ?? []).length;
+
+  return cjkCount >= 2 && cjkCount >= latinCount;
+}
+
+function buildOfficialDomainCandidates(topic: string): string[] | undefined {
+  const matches =
+    topic.match(/\b[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*){0,3}\b/g) ?? [];
+  const candidates = new Set<string>();
+
+  for (const match of matches) {
+    if (/^(AI|API|LLM|GDP|IPO)$/i.test(match.trim())) {
+      continue;
+    }
+
+    const words = match
+      .toLowerCase()
+      .split(/\s+/)
+      .map((word) => word.replace(/[^a-z0-9-]/g, ""))
+      .filter((word) => word.length >= 2);
+
+    if (words.length === 0) {
+      continue;
+    }
+
+    candidates.add(`${words.join("-")}.com`);
+    candidates.add(`${words.join("")}.com`);
+
+    if (words.length > 1) {
+      candidates.add(`${words[0]}.com`);
+    }
+  }
+
+  const values = Array.from(candidates).filter(
+    (domain) => !SOCIAL_VIDEO_DOMAINS.includes(domain),
+  );
+
+  return values.length > 0 ? values.slice(0, 12) : undefined;
+}
+
+function getTavilyTimeRange(
+  freshness: SearchFreshness,
+): SearchPassSpec["timeRange"] | undefined {
+  if (freshness === "latest") {
+    return "month";
+  }
+
+  if (freshness === "recent") {
+    return "year";
+  }
+
+  return undefined;
 }
 
 function createPassStats(
@@ -620,6 +1180,9 @@ function createPassStats(
   query: string,
   drafts: TavilyEvidenceDraft[],
   topic: string,
+  meta: {
+    durationMs?: number;
+  } = {},
 ): EvidenceSearchPassStats {
   const pack = normalizeEvidencePack(
     {
@@ -647,7 +1210,202 @@ function createPassStats(
     unknownCount: pack.enabled
       ? pack.items.filter((item) => item.quality?.sourceType === "unknown").length
       : 0,
+    ...(meta.durationMs !== undefined
+      ? { durationMs: Math.max(0, Math.trunc(meta.durationMs)) }
+      : {}),
   };
+}
+
+function createFailedPassStats(
+  passName: SearchPassName,
+  query: string,
+  durationMs: number,
+  errorType: string,
+  timedOut: boolean,
+): EvidenceSearchPassStats {
+  return {
+    passName,
+    query,
+    resultCount: 0,
+    extractedCount: 0,
+    coreEvidenceCount: 0,
+    socialVideoCount: 0,
+    unknownCount: 0,
+    durationMs: Math.max(0, Math.trunc(durationMs)),
+    timedOut,
+    errorType,
+  };
+}
+
+function isKeySearchPass(passName: SearchPassName) {
+  return passName !== "social_clue" && passName !== "targeted_retry";
+}
+
+function getSearchPassErrorType(
+  error: unknown,
+  durationMs: number,
+  timeoutMs: number,
+) {
+  if (
+    error instanceof TavilySearchError &&
+    (error.status === 504 || error.diagnostics?.isAbortError === true)
+  ) {
+    return "pass_timeout";
+  }
+
+  if (durationMs >= timeoutMs) {
+    return "pass_timeout";
+  }
+
+  return getTavilyFailureReason(error);
+}
+
+function isSearchPassTimeout(errorType: string) {
+  return (
+    errorType === "pass_timeout" ||
+    errorType === "tavily_search_timeout" ||
+    errorType === "evidence_overall_timeout"
+  );
+}
+
+function getExtractErrorType(error: unknown) {
+  if (
+    error instanceof TavilySearchError &&
+    error.diagnostics?.endpoint === "/extract" &&
+    (error.status === 504 || error.diagnostics.isAbortError === true)
+  ) {
+    return "tavily_extract_timeout";
+  }
+
+  return getTavilyFailureReason(error);
+}
+
+function createFailedProviderDiagnostic(
+  provider: SearchProvider,
+  error: unknown,
+  errorType: string,
+): SearchProviderDiagnostic {
+  const diagnostics =
+    error instanceof TavilySearchError && error.diagnostics
+      ? (error.diagnostics as unknown as Record<string, unknown>)
+      : {};
+
+  return {
+    provider: provider.id,
+    displayName: provider.displayName,
+    diagnostics: {
+      ...diagnostics,
+      errorType,
+    },
+  };
+}
+
+function logSearchPassFailure(input: {
+  durationMs: number;
+  errorType: string;
+  passName: string;
+  provider: string;
+  query: string;
+  timeoutMs: number;
+}) {
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
+
+  console.error("[evidence-search] search pass failed", {
+    passName: input.passName,
+    query: input.query,
+    durationMs: Math.max(0, Math.trunc(input.durationMs)),
+    timeoutMs: Math.max(0, Math.trunc(input.timeoutMs)),
+    provider: input.provider,
+    errorType: input.errorType,
+  });
+}
+
+function getEvidenceOverallTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return normalizeTimeoutMs(
+    env.EVIDENCE_OVERALL_TIMEOUT_MS,
+    DEFAULT_EVIDENCE_OVERALL_TIMEOUT_MS,
+    300000,
+  );
+}
+
+function getEvidencePassTimeoutMs(env: NodeJS.ProcessEnv = process.env) {
+  return normalizeTimeoutMs(
+    env.EVIDENCE_PASS_TIMEOUT_MS,
+    DEFAULT_EVIDENCE_PASS_TIMEOUT_MS,
+    120000,
+  );
+}
+
+function normalizeTimeoutMs(
+  value: string | undefined,
+  fallback: number,
+  max: number,
+) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(parsed), 1000), max);
+}
+
+function getRemainingTimeoutMs(startedAt: number, timeoutMs: number) {
+  return timeoutMs - (Date.now() - startedAt);
+}
+
+function createTimedAbortSignal(
+  externalSignal: AbortSignal | undefined,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException("Search pass timed out.", "AbortError"));
+  }, timeoutMs);
+
+  return {
+    signal: combineAbortSignals(externalSignal, controller.signal),
+    clear: () => clearTimeout(timeout),
+  };
+}
+
+function combineAbortSignals(
+  externalSignal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal,
+) {
+  if (!externalSignal) {
+    return timeoutSignal;
+  }
+
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([externalSignal, timeoutSignal]);
+  }
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal.reason);
+    }
+  };
+
+  if (externalSignal.aborted) {
+    abort(externalSignal);
+  } else if (timeoutSignal.aborted) {
+    abort(timeoutSignal);
+  } else {
+    externalSignal.addEventListener("abort", () => abort(externalSignal), {
+      once: true,
+    });
+    timeoutSignal.addEventListener("abort", () => abort(timeoutSignal), {
+      once: true,
+    });
+  }
+
+  return controller.signal;
 }
 
 function countCoreEvidenceDrafts(
@@ -670,6 +1428,8 @@ function isCoreEvidenceCandidate(item: SearchEvidence): boolean {
       quality.sourceType === "industry_report") &&
     quality.textLength >= 800 &&
     quality.snippetOnly !== true &&
+    (quality.topicType !== "entity_competition" ||
+      (quality.topicRelevanceScore ?? quality.relevanceScore ?? 0) >= 60) &&
     (quality.reliability === "high" || quality.reliability === "medium")
   );
 }
@@ -684,6 +1444,120 @@ function getSeenInPassesForUrl(
     .flatMap((draft) => draft.seenInPasses ?? []);
 
   return Array.from(new Set(passes));
+}
+
+function getPrimarySeenInPass(draft: TavilyEvidenceDraft): string | undefined {
+  return draft.seenInPasses?.[0];
+}
+
+async function extractFallbackDraftsForCandidates(input: {
+  candidates: (TavilyEvidenceDraft & { url: string })[];
+  currentDrafts: TavilyEvidenceDraft[];
+  extractAttempts: ExtractAttemptRecord[];
+  signal?: AbortSignal;
+}): Promise<TavilyEvidenceDraft[]> {
+  const currentByUrl = new Map(
+    input.currentDrafts.map((draft) => [
+      getCanonicalSearchUrl(draft.url),
+      draft.snippet.trim().length,
+    ]),
+  );
+  const drafts: TavilyEvidenceDraft[] = [];
+
+  for (const candidate of input.candidates) {
+    const currentLength =
+      currentByUrl.get(getCanonicalSearchUrl(candidate.url)) ?? 0;
+
+    if (currentLength >= 800) {
+      continue;
+    }
+
+    try {
+      const fallbackText = await fetchReadableText(candidate.url, input.signal);
+
+      input.extractAttempts.push({
+        url: candidate.url,
+        provider: "html_fetch",
+        passName: getPrimarySeenInPass(candidate),
+        returnedTextLength: fallbackText.length,
+        success: fallbackText.length >= 800,
+        ...(fallbackText.length < 800 ? { errorType: "text_too_short" } : {}),
+      });
+
+      if (fallbackText.length >= 800) {
+        drafts.push({
+          title: candidate.title,
+          url: candidate.url,
+          snippet: fallbackText,
+          query: candidate.query,
+          seenInPasses: candidate.seenInPasses,
+        });
+      }
+    } catch (error) {
+      input.extractAttempts.push({
+        url: candidate.url,
+        provider: "html_fetch",
+        passName: getPrimarySeenInPass(candidate),
+        returnedTextLength: 0,
+        success: false,
+        errorType: "html_fetch_failed",
+        errorMessageSafe: getSafeExtractErrorMessage(error),
+      });
+    }
+  }
+
+  return drafts;
+}
+
+async function fetchReadableText(
+  url: string,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "AI Roundtable Evidence Extractor",
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+
+  return extractReadableTextFromHtml(html);
+}
+
+function extractReadableTextFromHtml(html: string): string {
+  return decodeHtmlEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<(?:p|br|div|section|article|h[1-6]|li|tr)[^>]*>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'");
+}
+
+function getSafeExtractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message.slice(0, 180);
+  }
+
+  return "unknown extract error";
 }
 
 function recordExtractedCountsByPass(
@@ -756,16 +1630,16 @@ function getSearchModeConfig(searchMode: SearchMode): SearchModeConfig {
     return {
       candidateLimit: 60,
       extractLimit: 18,
-      finalLimit: 10,
-      chunksPerSource: 3,
+      finalLimit: MODEL_DRIVEN_FINAL_EVIDENCE_LIMIT,
+      chunksPerSource: 5,
     };
   }
 
   return {
-    candidateLimit: 20,
+    candidateLimit: 60,
     extractLimit: 8,
-    finalLimit: 8,
-    chunksPerSource: 2,
+    finalLimit: MODEL_DRIVEN_FINAL_EVIDENCE_LIMIT,
+    chunksPerSource: 5,
   };
 }
 
@@ -828,7 +1702,7 @@ function buildTargetedRetryQueries(topic: string): string[] {
   return [
     `${topic} official reputable media industry report -linkedin -instagram -reddit -youtube -tiktok -twitter -x.com`,
     `${topic} Reuters Bloomberg NYTimes WSJ FT The Information TechCrunch`,
-    `${topic} official announcement report site:openai.com OR site:anthropic.com`,
+    `${topic} official announcement report source primary`,
   ].map((query) => trimQueryToLength(query));
 }
 
@@ -884,7 +1758,9 @@ function getMaxResultsPerQuery(candidateLimit: number, queryCount: number) {
     return WEB_SEARCH_RESULTS_PER_QUERY;
   }
 
-  return Math.max(1, Math.ceil(candidateLimit / queryCount));
+  void candidateLimit;
+
+  return WEB_SEARCH_RESULTS_PER_QUERY;
 }
 
 function selectRescueCandidates(

@@ -14,7 +14,7 @@ AI Roundtable 是一个“多大模型圆桌会议系统”的第一版原型。
 
 ## Project Status
 
-当前版本：`v0.5.2 internal alpha`
+当前版本：`v0.6.0 internal alpha`
 
 项目处于 internal alpha / pre-release 阶段，暂不建议打 tag 或写 GitHub Release。当前重点是验证“平等多模型圆桌会议”的前后端核心体验和真实模型讨论质量。
 

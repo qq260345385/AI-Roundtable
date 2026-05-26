@@ -9,7 +9,16 @@ export type SearchProviderRequest = {
   maxResults: number;
   searchDepth: "basic" | "advanced" | "fast" | "ultra-fast";
   freshness: SearchFreshness;
+  chunksPerSource?: number;
+  country?: string;
+  exactMatch?: boolean;
+  excludeDomains?: string[];
+  includeDomains?: string[];
+  includeRawContent?: boolean | "markdown" | "text";
+  includeUsage?: boolean;
+  searchTopic?: "general" | "news" | "finance";
   signal?: AbortSignal;
+  timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";
 };
 
 export type SearchProviderResult = {
@@ -20,6 +29,7 @@ export type SearchProviderResult = {
   publishedDate?: string;
   sourceQuery: string;
   provider: string;
+  providerScore?: number;
   raw?: unknown;
 };
 

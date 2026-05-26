@@ -9,6 +9,15 @@ import {
   normalizeEvidencePack,
   type SearchMode,
 } from "../../../../lib/search/evidence-pack";
+import {
+  assertMeetingSearchSucceeded,
+  MeetingSearchFailedError,
+} from "../../../../lib/search/meeting-search-failure";
+import {
+  createSafeRouteErrorDiagnostic,
+  createSafeRouteErrorPayload,
+  logSafeRouteError,
+} from "../../../../lib/search/search-error-diagnostics";
 import { prepareLiveMeetingEventForClient } from "../../../../lib/search/search-response";
 import { TavilySearchError } from "../../../../lib/search/tavily-search";
 import type {
@@ -22,13 +31,18 @@ type MeetingRequestBody = {
   participantIds?: unknown;
   question?: unknown;
   searchMode?: unknown;
+  searchDriverParticipantId?: unknown;
+  summaryParticipantId?: unknown;
   webSearchEnabled?: unknown;
 };
 
 const encoder = new TextEncoder();
 
 export async function POST(request: Request) {
+  let failedStage = "request";
+
   try {
+    failedStage = "read_request";
     const body = await readRequestBody(request);
     const question = getQuestion(body);
     const isBriefMode = body.isBriefMode === true;
@@ -45,10 +59,21 @@ export async function POST(request: Request) {
       );
     }
 
+    failedStage = "provider_registry";
     const registry = await createProviderRegistry();
     const participants = selectParticipants(
       registry.participants,
       participantIds,
+    );
+    const searchDriverParticipant = selectOptionalParticipant(
+      registry.participants,
+      body.searchDriverParticipantId,
+      "selected search driver model is not available",
+    );
+    const summaryParticipant = selectOptionalParticipant(
+      registry.participants,
+      body.summaryParticipantId,
+      "selected summary model is not available",
     );
 
     if (participants.length === 0) {
@@ -61,14 +86,18 @@ export async function POST(request: Request) {
     }
 
     if (body.webSearchEnabled === true) {
+      failedStage = "evidence_search";
       evidencePack = await buildModelDrivenWebEvidencePack({
         baseEvidencePack: evidencePack,
-        participants,
+        participants: searchDriverParticipant
+          ? [searchDriverParticipant]
+          : participants,
         provider: registry.provider,
         searchMode,
         signal: request.signal,
         topic: question,
       });
+      assertMeetingSearchSucceeded(evidencePack);
     }
 
     const stream = new ReadableStream<Uint8Array>({
@@ -88,6 +117,7 @@ export async function POST(request: Request) {
         }
 
         try {
+          failedStage = "meeting_stream";
           await runLiveMeeting(
             {
               topic: question,
@@ -95,6 +125,7 @@ export async function POST(request: Request) {
               evidencePack,
               isBriefMode,
               signal: request.signal,
+              summaryParticipant,
             },
             registry.provider,
             emit,
@@ -104,10 +135,15 @@ export async function POST(request: Request) {
             return;
           }
 
+          const diagnostic = createSafeRouteErrorDiagnostic(error, {
+            failedStage,
+            statusCode: getErrorStatus(error),
+          });
+          logSafeRouteError("[api/meeting/live] stream failed", diagnostic);
           await emit({
             type: "error",
-            error: getErrorMessage(error),
-            status: getErrorStatus(error),
+            error: diagnostic.safeErrorMessage,
+            status: diagnostic.statusCode,
           });
         } finally {
           isClosed = true;
@@ -128,11 +164,26 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    const status = getErrorStatus(error);
+
+    if (status < 500) {
+      return NextResponse.json(
+        {
+          error: getErrorMessage(error),
+        },
+        { status },
+      );
+    }
+
+    const diagnostic = createSafeRouteErrorDiagnostic(error, {
+      failedStage,
+      statusCode: status,
+    });
+    logSafeRouteError("[api/meeting/live] request failed", diagnostic);
+
     return NextResponse.json(
-      {
-        error: getErrorMessage(error),
-      },
-      { status: getErrorStatus(error) },
+      createSafeRouteErrorPayload(diagnostic),
+      { status: diagnostic.statusCode },
     );
   }
 }
@@ -209,6 +260,34 @@ function selectParticipants(
   return participants.filter((participant) => selectedIds.has(participant.id));
 }
 
+function selectOptionalParticipant(
+  participants: ModelParticipant[],
+  participantId: unknown,
+  errorMessage: string,
+): ModelParticipant | undefined {
+  if (participantId === undefined || participantId === null) {
+    return undefined;
+  }
+
+  if (typeof participantId !== "string") {
+    throw new BadRequestError(errorMessage);
+  }
+
+  const trimmedId = participantId.trim();
+
+  if (!trimmedId) {
+    return undefined;
+  }
+
+  const participant = participants.find((item) => item.id === trimmedId);
+
+  if (!participant) {
+    throw new BadRequestError(errorMessage);
+  }
+
+  return participant;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -227,6 +306,10 @@ function getErrorStatus(error: unknown): number {
   }
 
   if (error instanceof TavilySearchError) {
+    return error.status;
+  }
+
+  if (error instanceof MeetingSearchFailedError) {
     return error.status;
   }
 

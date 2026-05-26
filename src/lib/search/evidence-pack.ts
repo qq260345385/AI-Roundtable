@@ -7,6 +7,7 @@ export type SearchEvidence = {
   url?: string;
   source?: string;
   publishedAt?: string;
+  providerScore?: number;
   snippet: string;
   quality?: EvidenceQuality;
 };
@@ -49,6 +50,11 @@ export type EvidenceQuality = {
   citationLevel?: EvidenceCitationLevel;
   citationGuidance?: string;
   relevanceScore?: number;
+  topicRelevanceScore?: number;
+  relevanceReason?: string;
+  matchedQuestionAspects?: string[];
+  coverageDimension?: EvidenceCoverageDimension;
+  topicType?: EvidenceTopicType;
   authorityScore?: number;
   freshnessScore?: number;
   contentScore?: number;
@@ -137,11 +143,17 @@ export type SearchProcessResult = {
   source?: string;
   sourceQueries?: string[];
   seenInPasses?: string[];
+  providerScore?: number;
   sourceType: EvidenceSourceType;
   reliability: EvidenceReliability;
   score: number;
   textLength?: number;
   snippetOnly?: boolean;
+  topicRelevanceScore?: number;
+  relevanceReason?: string;
+  matchedQuestionAspects?: string[];
+  coverageDimension?: EvidenceCoverageDimension;
+  topicType?: EvidenceTopicType;
   citationLevel: EvidenceCitationLevel;
   citationGuidance: string;
   qualityWarnings: string[];
@@ -197,6 +209,16 @@ export type EvidenceDebugSummary = {
   skippedPasses: string[];
 };
 
+export type ExtractAttemptRecord = {
+  url: string;
+  provider: string;
+  passName?: string;
+  returnedTextLength: number;
+  success: boolean;
+  errorType?: string;
+  errorMessageSafe?: string;
+};
+
 export type EvidenceSearchPassStats = {
   passName: string;
   query: string;
@@ -205,6 +227,9 @@ export type EvidenceSearchPassStats = {
   coreEvidenceCount: number;
   socialVideoCount: number;
   unknownCount: number;
+  durationMs?: number;
+  timedOut?: boolean;
+  errorType?: string;
 };
 
 export type SearchProcess = {
@@ -215,6 +240,9 @@ export type SearchProcess = {
   providerDiagnostics?: SearchProviderDiagnostic[];
   cacheEvents?: SearchCacheEvent[];
   searchMode?: SearchMode;
+  failedStage?: string;
+  failedPassName?: string;
+  retryCount?: number;
   rawCandidateCount?: number;
   dedupedCandidateCount?: number;
   extractAttempted?: number;
@@ -225,6 +253,7 @@ export type SearchProcess = {
   rescueReason?: string;
   officialExtractFailed?: boolean;
   extractErrorType?: string;
+  extractAttempts?: ExtractAttemptRecord[];
   targetedSearchRetryTriggered?: boolean;
   targetedSearchRetryReason?: string;
   passStats?: EvidenceSearchPassStats[];
@@ -308,6 +337,33 @@ export type EvidenceSourceType =
   | "video_platform"
   | "unknown";
 
+export type EvidenceCoverageDimension =
+  | "technical_capability"
+  | "benchmark_evaluation"
+  | "product_release"
+  | "safety_alignment"
+  | "business_revenue"
+  | "enterprise_adoption"
+  | "funding_capital"
+  | "regulation_governance"
+  | "ecosystem_developer"
+  | "legal_lawsuit"
+  | "market_analysis"
+  | "user_feedback"
+  | "expert_opinion"
+  | "official_position"
+  | "unknown";
+
+export type EvidenceTopicType =
+  | "entity_competition"
+  | "capability_comparison"
+  | "market_outlook"
+  | "policy_regulation"
+  | "product_release_analysis"
+  | "investment_business_analysis"
+  | "technical_research_analysis"
+  | "general_discussion";
+
 export type EvidenceReliability = "high" | "medium" | "low" | "very_low";
 export type EvidenceCitationLevel =
   | "fact"
@@ -325,6 +381,11 @@ export type EvidenceQualityOverview = {
   shortContentCount: number;
   coreEvidenceCount: number;
   clickbaitRiskCount: number;
+  coveredDimensions: EvidenceCoverageDimension[];
+  strongCoveredDimensions: EvidenceCoverageDimension[];
+  weakCoveredDimensions: EvidenceCoverageDimension[];
+  missingDimensions: string[];
+  coverageCompleteness: number;
   overallReliability: "高" | "中" | "低";
 };
 
@@ -429,8 +490,16 @@ export function createSearchFailureProcess(input: {
   queryPlans?: SearchQueryPlan[];
   intentDecisions?: SearchIntentDecision[];
   searchStrategy?: "multi_pass";
+  failedStage?: string;
+  failedPassName?: string;
+  passStats?: EvidenceSearchPassStats[];
+  retryCount?: number;
+  skippedPasses?: string[];
   warnings?: string[];
 }): SearchProcess {
+  const passStats = normalizeEvidenceSearchPassStats(input.passStats);
+  const skippedPasses = normalizeStringArray(input.skippedPasses);
+
   return {
     evidenceMode: "search_failed",
     ...(input.searchStrategy ? { searchStrategy: input.searchStrategy } : {}),
@@ -439,6 +508,15 @@ export function createSearchFailureProcess(input: {
       : {}),
     ...(normalizeOptionalText(input.provider, 80)
       ? { provider: normalizeOptionalText(input.provider, 80) }
+      : {}),
+    ...(normalizeOptionalText(input.failedStage, 80)
+      ? { failedStage: normalizeOptionalText(input.failedStage, 80) }
+      : {}),
+    ...(normalizeOptionalText(input.failedPassName, 80)
+      ? { failedPassName: normalizeOptionalText(input.failedPassName, 80) }
+      : {}),
+    ...(typeof input.retryCount === "number"
+      ? { retryCount: Math.max(0, Math.trunc(input.retryCount)) }
       : {}),
     ...(input.providerDiagnostics && input.providerDiagnostics.length > 0
       ? { providerDiagnostics: input.providerDiagnostics }
@@ -451,6 +529,8 @@ export function createSearchFailureProcess(input: {
     queryPlans: normalizeSearchQueryPlans(input.queryPlans),
     intentDecisions: normalizeSearchIntentDecisions(input.intentDecisions),
     ...(input.dedupeStats ? { dedupeStats: input.dedupeStats } : {}),
+    ...(passStats.length > 0 ? { passStats } : {}),
+    ...(skippedPasses.length > 0 ? { skippedPasses } : {}),
     qualityOverview: createEmptySearchQualityOverview(),
     debugSummary: createEvidenceDebugSummary({
       evidenceMode: "search_failed",
@@ -458,9 +538,9 @@ export function createSearchFailureProcess(input: {
       results: [],
       extractAttempted: 0,
       extractSucceededCount: 0,
-      passStats: [],
+      passStats,
       selectedItems: [],
-      skippedPasses: [],
+      skippedPasses,
     }),
     filteredReasons: [],
     results: [],
@@ -500,6 +580,10 @@ export function formatEvidencePackForPrompt(
     "- 如果一个结论只被 low / very_low 资料支持，必须使用“有资料声称”“社区讨论认为”“尚未核验”“不能据此确认”等措辞。",
     "- 禁止基于 low / very_low 资料使用“证明”“显示”“已经超越”“确定领先”“吊打”“追平”“实锤”等强断言。",
     "- 如果资料质量整体较低，必须主动提醒“当前资料不足以支持强结论”。",
+    "- 不得用技术、产品、benchmark、model card 或安全评估资料支撑商业、融资、营收、资本效率、企业合同等结论。",
+    "- 商业结论必须由 business_revenue / enterprise_adoption / funding_capital / market_analysis 维度资料支撑；如果资料未覆盖该维度，必须说“当前资料未覆盖该维度，不能判断”。",
+    "",
+    formatCoverageForPrompt(evidencePack),
     "",
     "## 外部资料包",
     "",
@@ -586,8 +670,15 @@ export function scoreEvidence(input: {
   const warnings: string[] = [];
   const title = input.title?.trim() ?? "";
   const snippet = input.snippet.trim();
-  const sourceType = detectEvidenceSourceType(input.url, input.source);
-  const relevanceScore = getRelevanceScore(input.topic, title, snippet);
+  const sourceType = detectEvidenceSourceType(input.url, input.source, input.topic);
+  // Evidence boundary:
+  // domain -> sourceType/source credibility only;
+  // content -> coverageDimension;
+  // question/topic -> topicType and topicRelevanceScore;
+  // coverage profile -> reliability ceiling for broad conclusions.
+  const keywordRelevanceScore = getRelevanceScore(input.topic, title, snippet);
+  const topicCoverage = analyzeEvidenceTopicCoverage(input.topic, title, snippet);
+  const topicRelevanceScore = topicCoverage.topicRelevanceScore;
   const authorityScore = getAuthorityScore(sourceType);
   const freshnessScore = getFreshnessScore(input.publishedAt);
   const contentScore = getContentScore(snippet);
@@ -595,7 +686,7 @@ export function scoreEvidence(input: {
   const snippetOnly = snippet.length < 800;
   let score = Math.round(
     authorityScore * 0.35 +
-      relevanceScore * 0.25 +
+      topicRelevanceScore * 0.25 +
       freshnessScore * 0.15 +
       contentScore * 0.15 +
       diversityScore * 0.1,
@@ -642,7 +733,7 @@ export function scoreEvidence(input: {
   if (
     sourceType === "unknown" &&
     snippet.length >= SHORT_SNIPPET_WARNING_LENGTH &&
-    relevanceScore >= 50 &&
+    keywordRelevanceScore >= 50 &&
     !isClearlyUnusableEvidence(title, snippet)
   ) {
     clampedScore = Math.max(clampedScore, 25);
@@ -661,7 +752,12 @@ export function scoreEvidence(input: {
     ...(snippetOnly ? { snippetOnly: true } : {}),
     citationLevel: citationPolicy.level,
     citationGuidance: citationPolicy.guidance,
-    relevanceScore,
+    relevanceScore: keywordRelevanceScore,
+    topicRelevanceScore,
+    relevanceReason: topicCoverage.relevanceReason,
+    matchedQuestionAspects: topicCoverage.matchedQuestionAspects,
+    coverageDimension: topicCoverage.coverageDimension,
+    topicType: topicCoverage.topicType,
     authorityScore,
     freshnessScore,
     contentScore,
@@ -709,6 +805,13 @@ export function summarizeEvidenceQuality(
     item.quality?.reliability === "medium",
   ).length;
   const hasMedium = items.some((item) => item.quality?.reliability === "medium");
+  const coverage = summarizeCoverage(items);
+  const baseReliability =
+    highOrMediumCount >= 2 && hasCoreEvidence
+      ? "高"
+      : hasMedium
+        ? "中"
+        : "低";
 
   return {
     strongOfficialCount,
@@ -719,13 +822,149 @@ export function summarizeEvidenceQuality(
     shortContentCount,
     coreEvidenceCount,
     clickbaitRiskCount,
-    overallReliability:
-      highOrMediumCount >= 2 && hasCoreEvidence
-        ? "高"
-        : hasMedium
-          ? "中"
-          : "低",
+    coveredDimensions: coverage.coveredDimensions,
+    strongCoveredDimensions: coverage.strongCoveredDimensions,
+    weakCoveredDimensions: coverage.weakCoveredDimensions,
+    missingDimensions: coverage.missingDimensions,
+    coverageCompleteness: coverage.coverageCompleteness,
+    overallReliability: capReliabilityByCoverage(baseReliability, coverage),
   };
+}
+
+function summarizeCoverage(items: SearchEvidence[]): {
+  coveredDimensions: EvidenceCoverageDimension[];
+  strongCoveredDimensions: EvidenceCoverageDimension[];
+  weakCoveredDimensions: EvidenceCoverageDimension[];
+  missingDimensions: string[];
+  coverageCompleteness: number;
+  isEntityCompetitionCoverage: boolean;
+} {
+  const strongCoveredDimensions = getCoveredDimensionsForItems(
+    items.filter(isCoreEvidenceItem),
+  );
+  const weakCoveredDimensions = getCoveredDimensionsForItems(
+    items.filter((item) => !isCoreEvidenceItem(item)),
+  ).filter((dimension) => !strongCoveredDimensions.includes(dimension));
+  const coveredDimensions = Array.from(
+    new Set([...strongCoveredDimensions, ...weakCoveredDimensions]),
+  );
+  const isEntityCompetitionCoverage = items.some(
+    (item) => item.quality?.topicType === "entity_competition",
+  );
+
+  if (!isEntityCompetitionCoverage) {
+    return {
+      coveredDimensions,
+      strongCoveredDimensions,
+      weakCoveredDimensions,
+      missingDimensions: [],
+      coverageCompleteness: strongCoveredDimensions.length > 0 ? 1 : 0,
+      isEntityCompetitionCoverage,
+    };
+  }
+
+  const requiredGroups = [
+    {
+      label: "technical_capability_or_product_release",
+      dimensions: ["technical_capability", "product_release"] as const,
+    },
+    {
+      label: "business_revenue_or_enterprise_adoption",
+      dimensions: ["business_revenue", "enterprise_adoption"] as const,
+    },
+    {
+      label: "funding_capital_or_market_analysis",
+      dimensions: ["funding_capital", "market_analysis"] as const,
+    },
+    {
+      label: "regulation_governance_or_legal_lawsuit",
+      dimensions: ["regulation_governance", "legal_lawsuit"] as const,
+    },
+  ];
+  const coveredSet = new Set(strongCoveredDimensions);
+  const missingDimensions = requiredGroups
+    .filter(
+      (group) =>
+        !group.dimensions.some((dimension) => coveredSet.has(dimension)),
+    )
+    .map((group) => group.label);
+
+  return {
+    coveredDimensions,
+    strongCoveredDimensions,
+    weakCoveredDimensions,
+    missingDimensions,
+    coverageCompleteness: divideForDebug(
+      requiredGroups.length - missingDimensions.length,
+      requiredGroups.length,
+    ),
+    isEntityCompetitionCoverage,
+  };
+}
+
+function getCoveredDimensionsForItems(
+  items: SearchEvidence[],
+): EvidenceCoverageDimension[] {
+  return Array.from(
+    new Set(
+      items.flatMap((item) => [
+        item.quality?.coverageDimension,
+        ...(item.quality?.matchedQuestionAspects ?? []),
+      ]).filter(
+        (dimension): dimension is EvidenceCoverageDimension =>
+          isEvidenceCoverageDimension(dimension) && dimension !== "unknown",
+      ),
+    ),
+  );
+}
+
+function isEvidenceCoverageDimension(
+  value: unknown,
+): value is EvidenceCoverageDimension {
+  return (
+    value === "technical_capability" ||
+    value === "benchmark_evaluation" ||
+    value === "product_release" ||
+    value === "safety_alignment" ||
+    value === "business_revenue" ||
+    value === "enterprise_adoption" ||
+    value === "funding_capital" ||
+    value === "regulation_governance" ||
+    value === "ecosystem_developer" ||
+    value === "legal_lawsuit" ||
+    value === "market_analysis" ||
+    value === "user_feedback" ||
+    value === "expert_opinion" ||
+    value === "official_position" ||
+    value === "unknown"
+  );
+}
+
+function capReliabilityByCoverage(
+  reliability: EvidenceQualityOverview["overallReliability"],
+  coverage: ReturnType<typeof summarizeCoverage>,
+): EvidenceQualityOverview["overallReliability"] {
+  if (!coverage.isEntityCompetitionCoverage) {
+    return reliability;
+  }
+
+  const missingBusinessCapitalMarket =
+    coverage.missingDimensions.includes("business_revenue_or_enterprise_adoption") &&
+    coverage.missingDimensions.includes("funding_capital_or_market_analysis");
+
+  if (missingBusinessCapitalMarket) {
+    return reliability === "低" ? "低" : "中";
+  }
+
+  if (coverage.coverageCompleteness < 0.75 && reliability === "高") {
+    return "中";
+  }
+
+  if (coverage.coverageCompleteness < 0.5) {
+    return "低";
+  }
+
+  return reliability;
 }
 
 export function normalizeDocumentInputStrategy(
@@ -761,8 +1000,23 @@ export function isCoreEvidenceItem(item: SearchEvidence): boolean {
       quality.sourceType === "industry_report") &&
     quality.textLength >= 800 &&
     quality.snippetOnly !== true &&
+    isTopicRelevantEnoughForCoreEvidence(quality) &&
     (quality.reliability === "high" || quality.reliability === "medium")
   );
+}
+
+function isTopicRelevantEnoughForCoreEvidence(quality: EvidenceQuality): boolean {
+  if (quality.topicType === undefined) {
+    return typeof quality.topicRelevanceScore === "number"
+      ? quality.topicRelevanceScore >= 60
+      : true;
+  }
+
+  if (quality.topicType !== "entity_competition") {
+    return true;
+  }
+
+  return (quality.topicRelevanceScore ?? quality.relevanceScore ?? 0) >= 60;
 }
 
 export function isPublicOpinionEvidenceItem(item: SearchEvidence): boolean {
@@ -834,6 +1088,7 @@ function normalizeEvidenceItem(
   const query = normalizeOptionalText(input.query, 240);
   const sourceQueries = normalizeStringArray(input.sourceQueries);
   const seenInPasses = normalizeStringArray(input.seenInPasses);
+  const providerScore = normalizeOptionalNumber(input.providerScore);
   const url = normalizeOptionalUrl(input.url);
   const quality = createEvidenceQuality({
     rawSnippet,
@@ -853,6 +1108,7 @@ function normalizeEvidenceItem(
     ...(query ? { query } : {}),
     ...(sourceQueries.length > 0 ? { sourceQueries } : {}),
     ...(seenInPasses.length > 0 ? { seenInPasses } : {}),
+    ...(providerScore !== undefined ? { providerScore } : {}),
     ...(url ? { url } : {}),
     ...(source ? { source } : {}),
     ...(publishedAt ? { publishedAt } : {}),
@@ -881,6 +1137,18 @@ function formatEvidenceItemForPrompt(item: SearchEvidence): string {
     item.quality
       ? `资料质量：${item.quality.reliability} / ${item.quality.sourceType} / ${item.quality.score}`
       : "",
+    item.quality?.coverageDimension
+      ? `覆盖维度：${item.quality.coverageDimension}`
+      : "",
+    typeof item.quality?.topicRelevanceScore === "number"
+      ? `议题相关度：${item.quality.topicRelevanceScore}/100`
+      : "",
+    item.quality?.relevanceReason
+      ? `相关性说明：${item.quality.relevanceReason}`
+      : "",
+    item.quality?.matchedQuestionAspects?.length
+      ? `匹配议题方面：${item.quality.matchedQuestionAspects.join("、")}`
+      : "",
     item.quality?.warnings.length
       ? `质量提示：${item.quality.warnings.join("；")}`
       : "",
@@ -889,6 +1157,22 @@ function formatEvidenceItemForPrompt(item: SearchEvidence): string {
   ]
     .filter((line) => line !== "")
     .join("\n");
+}
+
+function formatCoverageForPrompt(evidencePack: EvidencePack): string {
+  const overview = summarizeEvidenceQuality(evidencePack);
+
+  return [
+    "议题覆盖纪律：",
+    `- 已覆盖维度：${formatListForPrompt(overview.coveredDimensions)}`,
+    `- 缺失维度：${formatListForPrompt(overview.missingDimensions)}`,
+    `- 覆盖度评分：${overview.coverageCompleteness}`,
+    "- 只能用相同覆盖维度的资料支撑对应结论；维度缺失时不要把局部技术事实升级为综合胜负判断。",
+  ].join("\n");
+}
+
+function formatListForPrompt(items: readonly string[]): string {
+  return items.length > 0 ? items.join("、") : "无";
 }
 
 function shouldSuppressEvidenceDetailsForPrompt(item: SearchEvidence): boolean {
@@ -908,7 +1192,10 @@ function sanitizeLowEvidenceTextForPrompt(value: string): string {
     .replace(/\$?\b\d+(?:\.\d+)?\s*(?:billion|million|bn|m)\b/gi, "[待核验数字]")
     .replace(/\b\d+(?:\.\d+)?\s*(?:亿美元|亿元|万亿|亿|万)\b/g, "[待核验数字]")
     .replace(/\b\d+(?:\.\d+)?\s*(?:points?|分|score)\b/gi, "[待核验数字]")
-    .replace(/\b(?:GPT|Claude|Gemini|DeepSeek|Llama|Qwen|Grok)[-\s]?\d+(?:\.\d+)?[A-Za-z-]*\b/g, "[待核验模型版本]");
+    .replace(
+      /\b[A-Z][A-Za-z]{1,}(?:[-\s]?\d+(?:\.\d+)?[A-Za-z-]*)\b/g,
+      "[待核验模型版本]",
+    );
 }
 
 function createDisabledEvidencePack(input?: unknown): EvidencePack {
@@ -954,6 +1241,12 @@ function createSearchProcess(input: {
   const cacheEvents = normalizeSearchCacheEvents(input.input.cacheEvents);
   const dedupeStats = normalizeSearchDedupeStats(input.input.dedupeStats);
   const searchMode = normalizeSearchMode(input.input.searchMode);
+  const failedStage = normalizeOptionalText(input.input.failedStage, 80);
+  const failedPassName = normalizeOptionalText(input.input.failedPassName, 80);
+  const retryCount =
+    input.input.retryCount !== undefined
+      ? normalizeNonNegativeInteger(input.input.retryCount)
+      : undefined;
   const searchStrategy =
     input.input.searchStrategy === "multi_pass" ? "multi_pass" : undefined;
   const provider = normalizeOptionalText(input.input.provider, 80);
@@ -972,11 +1265,27 @@ function createSearchProcess(input: {
       ...(item.source ? { source: item.source } : {}),
       ...(item.sourceQueries ? { sourceQueries: item.sourceQueries } : {}),
       ...(item.seenInPasses ? { seenInPasses: item.seenInPasses } : {}),
+      ...(typeof item.providerScore === "number"
+        ? { providerScore: item.providerScore }
+        : {}),
       sourceType: quality?.sourceType ?? "unknown",
       reliability: quality?.reliability ?? "very_low",
       score: quality?.score ?? 0,
       textLength: quality?.textLength ?? 0,
       ...(quality?.snippetOnly ? { snippetOnly: true } : {}),
+      ...(typeof quality?.topicRelevanceScore === "number"
+        ? { topicRelevanceScore: quality.topicRelevanceScore }
+        : {}),
+      ...(quality?.relevanceReason
+        ? { relevanceReason: quality.relevanceReason }
+        : {}),
+      ...(quality?.matchedQuestionAspects
+        ? { matchedQuestionAspects: quality.matchedQuestionAspects }
+        : {}),
+      ...(quality?.coverageDimension
+        ? { coverageDimension: quality.coverageDimension }
+        : {}),
+      ...(quality?.topicType ? { topicType: quality.topicType } : {}),
       citationLevel: quality?.citationLevel ?? "not_citable",
       citationGuidance:
         quality?.citationGuidance ??
@@ -990,6 +1299,7 @@ function createSearchProcess(input: {
   const qualityOverview = summarizeSearchProcessResults(results);
   const rescueStats = normalizeRescueStats(input.input);
   const passStats = normalizeEvidenceSearchPassStats(input.input.passStats);
+  const extractAttempts = normalizeExtractAttempts(input.input.extractAttempts);
   const skippedPasses = normalizeStringArray(input.input.skippedPasses);
   const evidenceMode =
     normalizeEvidenceMode(input.input.evidenceMode) ??
@@ -1014,7 +1324,11 @@ function createSearchProcess(input: {
     ...(dedupeStats ? { dedupeStats } : {}),
     ...(searchStrategy ? { searchStrategy } : {}),
     ...(searchMode ? { searchMode } : {}),
+    ...(failedStage ? { failedStage } : {}),
+    ...(failedPassName ? { failedPassName } : {}),
+    ...(retryCount !== undefined ? { retryCount } : {}),
     ...rescueStats,
+    ...(extractAttempts.length > 0 ? { extractAttempts } : {}),
     ...(passStats.length > 0 ? { passStats } : {}),
     ...(skippedPasses.length > 0 ? { skippedPasses } : {}),
     qualityOverview,
@@ -1278,10 +1592,52 @@ function normalizeEvidenceSearchPassStats(value: unknown): EvidenceSearchPassSta
         coreEvidenceCount: normalizeNonNegativeInteger(item.coreEvidenceCount),
         socialVideoCount: normalizeNonNegativeInteger(item.socialVideoCount),
         unknownCount: normalizeNonNegativeInteger(item.unknownCount),
+        ...(item.durationMs !== undefined
+          ? { durationMs: normalizeNonNegativeInteger(item.durationMs) }
+          : {}),
+        ...(typeof item.timedOut === "boolean" ? { timedOut: item.timedOut } : {}),
+        ...(normalizeText(item.errorType, 120)
+          ? { errorType: normalizeText(item.errorType, 120) }
+          : {}),
       };
     })
     .filter((item): item is EvidenceSearchPassStats => item !== null)
     .slice(0, 24);
+}
+
+function normalizeExtractAttempts(value: unknown): ExtractAttemptRecord[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const url = normalizeOptionalUrl(item.url);
+      const provider = normalizeText(item.provider, 80);
+
+      if (!url || !provider || typeof item.success !== "boolean") {
+        return null;
+      }
+
+      return {
+        url,
+        provider,
+        ...(normalizeText(item.passName, 80)
+          ? { passName: normalizeText(item.passName, 80) }
+          : {}),
+        returnedTextLength: normalizeNonNegativeInteger(item.returnedTextLength),
+        success: item.success,
+        ...(normalizeText(item.errorType, 120)
+          ? { errorType: normalizeText(item.errorType, 120) }
+          : {}),
+        ...(normalizeText(item.errorMessageSafe, 240)
+          ? { errorMessageSafe: normalizeText(item.errorMessageSafe, 240) }
+          : {}),
+      };
+    })
+    .filter((item): item is ExtractAttemptRecord => item !== null)
+    .slice(0, 80);
 }
 
 function normalizeSearchDedupeStats(value: unknown): SearchDedupeStats | undefined {
@@ -1359,6 +1715,10 @@ function normalizeNonNegativeInteger(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(0, Math.trunc(value))
     : 0;
+}
+
+function normalizeOptionalNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function normalizeSearchFreshness(value: unknown): SearchFreshness {
@@ -1566,8 +1926,25 @@ function isCoreEvidenceResult(result: SearchProcessResult): boolean {
       result.sourceType === "industry_report") &&
     (result.textLength ?? 0) >= 800 &&
     result.snippetOnly !== true &&
+    isSearchResultTopicRelevantEnoughForCoreEvidence(result) &&
     (result.reliability === "high" || result.reliability === "medium")
   );
+}
+
+function isSearchResultTopicRelevantEnoughForCoreEvidence(
+  result: SearchProcessResult,
+): boolean {
+  if (result.topicType === undefined) {
+    return typeof result.topicRelevanceScore === "number"
+      ? result.topicRelevanceScore >= 60
+      : true;
+  }
+
+  if (result.topicType !== "entity_competition") {
+    return true;
+  }
+
+  return (result.topicRelevanceScore ?? 0) >= 60;
 }
 
 function isWeakEvidenceSource(sourceType: EvidenceSourceType): boolean {
@@ -1852,6 +2229,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function detectEvidenceSourceType(
   url: string | undefined,
   source: string | undefined,
+  topic?: string,
 ): EvidenceSourceType {
   const sourceText = `${url ?? ""} ${source ?? ""}`.toLowerCase();
   const hostname = getHostname(url);
@@ -1884,6 +2262,18 @@ function detectEvidenceSourceType(
     ].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
   ) {
     return "official_blog";
+  }
+
+  if (isResolvedOfficialDomain(hostname, topic, sourceText)) {
+    if (sourceText.includes("/docs") || sourceText.includes("documentation")) {
+      return "official_docs";
+    }
+
+    if (sourceText.includes("/news") || sourceText.includes("/blog")) {
+      return "official_blog";
+    }
+
+    return "official_statement";
   }
 
   if (
@@ -1953,6 +2343,13 @@ function detectEvidenceSourceType(
       "bbc.com",
       "cnn.com",
       "36kr.com",
+      "people.com.cn",
+      "people.cn",
+      "stcn.com",
+      "globaltimes.cn",
+      "yahoo.com",
+      "finance.yahoo.com",
+      "tw.stock.yahoo.com",
     ].some(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
@@ -1961,7 +2358,7 @@ function detectEvidenceSourceType(
   }
 
   if (
-    ["semianalysis.com"].some(
+    ["semianalysis.com", "gasgoo.com", "epoch.ai", "stanford.edu", "mlcommons.org"].some(
       (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
     )
   ) {
@@ -2022,7 +2419,17 @@ function getEvidenceStatus(items: SearchEvidence[]): EvidenceStatus {
     (item) => item.quality?.reliability === "medium",
   ).length;
 
-  if (highCount >= 2 || (highCount >= 1 && mediumCount >= 1)) {
+  const coverage = summarizeCoverage(items);
+  const coverageCapsHigh =
+    coverage.isEntityCompetitionCoverage &&
+    (coverage.coverageCompleteness < 0.75 ||
+      (coverage.missingDimensions.includes("business_revenue_or_enterprise_adoption") &&
+        coverage.missingDimensions.includes("funding_capital_or_market_analysis")));
+
+  if (
+    !coverageCapsHigh &&
+    (highCount >= 2 || (highCount >= 1 && mediumCount >= 1))
+  ) {
     return "high";
   }
 
@@ -2144,26 +2551,459 @@ function getRelevanceScore(
   }
 
   const topicTokens = getSearchTokens(topic);
-  const evidenceText = `${title} ${snippet}`.toLowerCase();
+  const evidenceText = normalizeTextForMatching(`${title} ${snippet}`);
+  const titleText = normalizeTextForMatching(title);
 
   if (topicTokens.length === 0) {
     return 60;
   }
 
-  const hitCount = topicTokens.filter((token) =>
-    evidenceText.includes(token.toLowerCase()),
+  const normalizedTokens = topicTokens.map(normalizeTextForMatching);
+  const hitCount = normalizedTokens.filter((token) =>
+    token.length > 0 && evidenceText.includes(token),
   ).length;
+  const titleHitCount = normalizedTokens.filter((token) =>
+    token.length > 0 && titleText.includes(token),
+  ).length;
+  const baseScore = Math.round((hitCount / normalizedTokens.length) * 70);
+  const titleBonus = Math.min(titleHitCount, 3) * 10;
+  let score = Math.min(100, baseScore + titleBonus);
 
-  return Math.min(100, Math.round((hitCount / topicTokens.length) * 100));
+  if (titleHitCount > 0) {
+    score = Math.max(score, 25);
+  }
+
+  if (titleHitCount > 0 && hitCount >= 3) {
+    score = Math.max(score, 60);
+  }
+
+  if (titleHitCount >= 2 && hitCount >= 5) {
+    score = Math.max(score, 70);
+  }
+
+  return score;
+}
+
+function analyzeEvidenceTopicCoverage(
+  topic: string | undefined,
+  title: string,
+  snippet: string,
+): {
+  topicType: EvidenceTopicType;
+  topicRelevanceScore: number;
+  relevanceReason: string;
+  matchedQuestionAspects: string[];
+  coverageDimension: EvidenceCoverageDimension;
+} {
+  const text = `${title} ${snippet}`.toLowerCase();
+  const coverageDimension = detectCoverageDimension(text);
+  const topicType = classifyEvidenceTopic(topic);
+  const keywordRelevanceScore = getRelevanceScore(topic, title, snippet);
+
+  if (topicType !== "entity_competition") {
+    return {
+      topicType,
+      topicRelevanceScore: keywordRelevanceScore,
+      relevanceReason: "资料与议题关键词存在一般相关性。",
+      matchedQuestionAspects:
+        coverageDimension === "unknown" ? [] : [coverageDimension],
+      coverageDimension,
+    };
+  }
+
+  const matchedQuestionAspects =
+    getEntityCompetitionMatchedAspects(coverageDimension);
+  const dimensionRelevanceScore =
+    getEntityCompetitionRelevanceScore(coverageDimension);
+  const topicRelevanceScore = capEntityCompetitionKeywordRelevance(
+    coverageDimension,
+    Math.max(dimensionRelevanceScore, keywordRelevanceScore),
+  );
+
+  return {
+    topicType,
+    topicRelevanceScore,
+    relevanceReason: getEntityCompetitionRelevanceReason(
+      coverageDimension,
+      topicRelevanceScore,
+    ),
+    matchedQuestionAspects,
+    coverageDimension,
+  };
+}
+
+export function classifyEvidenceTopic(topic: string | undefined): EvidenceTopicType {
+  if (!topic) {
+    return "general_discussion";
+  }
+
+  const normalized = topic.toLowerCase();
+  const hasMultipleEntities = getLikelyEntityCount(topic) >= 2;
+
+  if (
+    hasMultipleEntities &&
+    matchesAny(normalized, [
+      "vs",
+      "versus",
+      "compare",
+      "comparison",
+      "competition",
+      "competitive",
+      "winner",
+      "wins",
+      "better",
+      "stronger",
+      "对比",
+      "比较",
+      "竞争",
+      "胜负",
+      "更强",
+      "长期格局",
+      "竞争格局",
+      "公司",
+      "企业",
+    ])
+  ) {
+    return "entity_competition";
+  }
+
+  if (
+    matchesAny(normalized, [
+      "benchmark",
+      "evaluation",
+      "capability",
+      "performance",
+      "leaderboard",
+      "评测",
+      "跑分",
+      "能力",
+      "性能",
+      "实力",
+      "排行榜",
+    ])
+  ) {
+    return "capability_comparison";
+  }
+
+  if (
+    matchesAny(normalized, [
+      "market",
+      "outlook",
+      "forecast",
+      "trend",
+      "市场",
+      "趋势",
+      "前景",
+      "格局",
+    ])
+  ) {
+    return "market_outlook";
+  }
+
+  if (
+    matchesAny(normalized, [
+      "policy",
+      "regulation",
+      "governance",
+      "compliance",
+      "监管",
+      "政策",
+      "治理",
+      "合规",
+    ])
+  ) {
+    return "policy_regulation";
+  }
+
+  if (
+    matchesAny(normalized, [
+      "release",
+      "launch",
+      "product",
+      "feature",
+      "发布",
+      "上线",
+      "产品",
+      "功能",
+    ])
+  ) {
+    return "product_release_analysis";
+  }
+
+  if (
+    matchesAny(normalized, [
+      "investment",
+      "business",
+      "funding",
+      "revenue",
+      "valuation",
+      "商业",
+      "投资",
+      "融资",
+      "营收",
+      "收入",
+      "估值",
+    ])
+  ) {
+    return "investment_business_analysis";
+  }
+
+  return (
+    matchesAny(normalized, ["research", "paper", "technical", "研究", "论文", "技术"])
+      ? "technical_research_analysis"
+      : "general_discussion"
+  );
+}
+
+function getLikelyEntityCount(topic: string): number {
+  const englishEntities =
+    topic.match(/\b[A-Z][A-Za-z0-9-]{1,}(?:\s+[A-Z][A-Za-z0-9-]{1,}){0,3}\b/g) ??
+    [];
+  const separatedCjkEntities =
+    topic.match(/[\u4e00-\u9fffA-Za-z0-9.-]{2,}\s*(?:和|与|跟|及|、|vs\.?|versus)\s*[\u4e00-\u9fffA-Za-z0-9.-]{2,}/gi) ??
+    [];
+
+  return Math.max(englishEntities.length, separatedCjkEntities.length > 0 ? 2 : 0);
+}
+
+function detectCoverageDimension(text: string): EvidenceCoverageDimension {
+  if (matchesAny(text, ["lawsuit", "litigation", "copyright", "court", "legal", "诉讼", "版权", "法院", "法律"])) {
+    return "legal_lawsuit";
+  }
+
+  if (matchesAny(text, ["regulation", "regulatory", "governance", "government", "policy", "compliance", "监管", "治理", "政府", "政策", "合规"])) {
+    return "regulation_governance";
+  }
+
+  if (matchesAny(text, ["funding", "valuation", "investor", "capital", "financing", "raise", "融资", "估值", "投资人", "资本"])) {
+    return "funding_capital";
+  }
+
+  if (matchesAny(text, ["revenue", "arr", "sales", "margin", "profit", "burn", "cost", "pricing", "monetization", "营收", "收入", "利润", "成本", "商业化"])) {
+    return "business_revenue";
+  }
+
+  if (matchesAny(text, ["enterprise customer", "enterprise adoption", "customers", "contract", "deployment", "adoption", "usage", "paid subscriber", "企业客户", "企业采用", "合同", "客户", "部署", "付费用户"])) {
+    return "enterprise_adoption";
+  }
+
+  if (matchesAny(text, ["market share", "market analysis", "competitive landscape", "competition", "strategy", "market", "竞争格局", "市场份额", "市场分析", "长期格局", "战略"])) {
+    return "market_analysis";
+  }
+
+  if (matchesAny(text, ["developer", "ecosystem", "sdk", "api", "open source", "github", "开发者", "生态", "开源"])) {
+    return "ecosystem_developer";
+  }
+
+  if (matchesAny(text, ["official statement", "official position", "announcement", "声明", "官方立场", "公告"])) {
+    return "official_position";
+  }
+
+  if (matchesAny(text, ["expert", "analyst", "researcher view", "opinion", "专家", "分析师观点", "研究员观点"])) {
+    return "expert_opinion";
+  }
+
+  if (matchesAny(text, ["user feedback", "sentiment", "review", "discussion", "forum", "用户反馈", "口碑", "讨论", "论坛"])) {
+    return "user_feedback";
+  }
+
+  if (matchesAny(text, ["safety", "alignment", "red teaming", "model card", "constitutional", "risk evaluation", "安全", "对齐", "红队", "模型卡"])) {
+    return "safety_alignment";
+  }
+
+  if (matchesAny(text, ["release", "launch", "product", "feature", "rollout", "app", "发布", "上线", "产品", "功能"])) {
+    return "product_release";
+  }
+
+  if (matchesAny(text, ["benchmark", "eval", "evaluation", "leaderboard", "score", "gdpval", "simpleqa", "mmlu", "跑分", "评测", "排行榜", "分数"])) {
+    return "benchmark_evaluation";
+  }
+
+  if (matchesAny(text, ["capability", "performance", "latency", "reasoning", "coding", "能力", "性能", "推理", "代码"])) {
+    return "technical_capability";
+  }
+
+  return "unknown";
+}
+
+function matchesAny(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => {
+    if (/^[a-z0-9][a-z0-9\s.-]*$/i.test(keyword)) {
+      return new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i").test(text);
+    }
+
+    return text.includes(keyword);
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getEntityCompetitionMatchedAspects(
+  dimension: EvidenceCoverageDimension,
+): string[] {
+  if (
+    dimension === "technical_capability" ||
+    dimension === "benchmark_evaluation" ||
+    dimension === "product_release" ||
+    dimension === "safety_alignment"
+  ) {
+    return ["technical_capability"];
+  }
+
+  if (
+    dimension === "business_revenue" ||
+    dimension === "enterprise_adoption" ||
+    dimension === "funding_capital" ||
+    dimension === "market_analysis" ||
+    dimension === "regulation_governance" ||
+    dimension === "legal_lawsuit" ||
+    dimension === "ecosystem_developer"
+  ) {
+    return [dimension];
+  }
+
+  return [];
+}
+
+function getEntityCompetitionRelevanceScore(
+  dimension: EvidenceCoverageDimension,
+): number {
+  if (
+    dimension === "business_revenue" ||
+    dimension === "enterprise_adoption" ||
+    dimension === "funding_capital" ||
+    dimension === "market_analysis" ||
+    dimension === "regulation_governance" ||
+    dimension === "legal_lawsuit"
+  ) {
+    return 80;
+  }
+
+  if (dimension === "ecosystem_developer") {
+    return 70;
+  }
+
+  if (dimension === "technical_capability" || dimension === "product_release") {
+    return 55;
+  }
+
+  if (dimension === "benchmark_evaluation") {
+    return 50;
+  }
+
+  if (dimension === "safety_alignment") {
+    return 45;
+  }
+
+  return 30;
+}
+
+function getEntityCompetitionRelevanceReason(
+  dimension: EvidenceCoverageDimension,
+  score: number,
+): string {
+  if (score >= 60) {
+    return "资料覆盖实体竞争判断所需的商业、资本、市场、监管或生态维度。";
+  }
+
+  if (
+    dimension === "technical_capability" ||
+    dimension === "benchmark_evaluation" ||
+    dimension === "product_release" ||
+    dimension === "safety_alignment"
+  ) {
+    return "资料主要覆盖技术、产品、评测或安全信息，只能作为实体竞争议题的局部背景。";
+  }
+
+  return "资料与实体竞争议题的关键判断维度关联不足。";
 }
 
 function getSearchTokens(value: string): string[] {
   const englishTokens = value
     .toLowerCase()
     .match(/[a-z0-9][a-z0-9.-]{1,}/g) ?? [];
-  const cjkTokens = value.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const cjkTokens = getCjkSearchTokens(value);
 
   return Array.from(new Set([...englishTokens, ...cjkTokens])).slice(0, 12);
+}
+
+function getCjkSearchTokens(value: string): string[] {
+  const chunks = value.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const stopPhrases = [
+    "怎么看",
+    "如何看",
+    "最近",
+    "发布",
+    "哪个",
+    "哪家",
+    "公司",
+    "企业",
+    "长期",
+    "竞争",
+    "优势",
+    "更有",
+    "谁更",
+    "以及",
+    "相关",
+    "资料",
+  ];
+  const tokens: string[] = [];
+
+  for (const chunk of chunks) {
+    const compact = stopPhrases.reduce(
+      (current, stopPhrase) => current.replaceAll(stopPhrase, " "),
+      chunk,
+    );
+
+    for (const segment of compact.split(/\s+/).filter((item) => item.length >= 2)) {
+      tokens.push(segment);
+
+      if (segment.length > 2) {
+        for (let index = 0; index <= segment.length - 2; index += 1) {
+          tokens.push(segment.slice(index, index + 2));
+        }
+      }
+
+      if (segment.length > 3) {
+        for (let index = 0; index <= segment.length - 3; index += 1) {
+          tokens.push(segment.slice(index, index + 3));
+        }
+      }
+    }
+  }
+
+  return tokens.filter((token) => token.length >= 2);
+}
+
+function capEntityCompetitionKeywordRelevance(
+  dimension: EvidenceCoverageDimension,
+  score: number,
+): number {
+  if (
+    dimension === "technical_capability" ||
+    dimension === "benchmark_evaluation" ||
+    dimension === "product_release" ||
+    dimension === "safety_alignment"
+  ) {
+    return Math.min(score, 55);
+  }
+
+  return score;
+}
+
+function normalizeTextForMatching(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[αΑ]/g, "alpha")
+    .replace(/[βΒ]/g, "beta")
+    .replace(/[γΓ]/g, "gamma")
+    .replace(/[·•・]/g, "")
+    .replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getHostname(url: string | undefined): string {
@@ -2176,6 +3016,107 @@ function getHostname(url: string | undefined): string {
   } catch {
     return "";
   }
+}
+
+function isResolvedOfficialDomain(
+  hostname: string,
+  topic: string | undefined,
+  sourceText: string,
+): boolean {
+  if (!hostname || isKnownNonOfficialHost(hostname)) {
+    return false;
+  }
+
+  if (sourceText.includes("官网") || sourceText.includes("official site")) {
+    return true;
+  }
+
+  const candidates = getOfficialDomainCandidates(topic);
+
+  return candidates.some(
+    (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+  );
+}
+
+function getOfficialDomainCandidates(topic: string | undefined): string[] {
+  if (!topic) {
+    return [];
+  }
+
+  const entities = extractAsciiEntityNames(topic);
+  const candidates = new Set<string>();
+
+  for (const entity of entities) {
+    const words = entity
+      .toLowerCase()
+      .split(/\s+/)
+      .map((word) => word.replace(/[^a-z0-9-]/g, ""))
+      .filter((word) => word.length >= 2);
+
+    if (words.length === 0) {
+      continue;
+    }
+
+    const dashed = words.join("-");
+    const compact = words.join("");
+
+    candidates.add(`${dashed}.com`);
+    candidates.add(`${compact}.com`);
+
+    if (words.length > 1) {
+      candidates.add(`${words[0]}.com`);
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function extractAsciiEntityNames(topic: string): string[] {
+  const matches =
+    topic.match(/\b[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*){0,3}\b/g) ?? [];
+
+  return Array.from(
+    new Set(
+      matches
+        .map((match) => match.trim())
+        .filter((match) => !/^(AI|API|LLM|GDP|IPO)$/i.test(match)),
+    ),
+  ).slice(0, 8);
+}
+
+function isKnownNonOfficialHost(hostname: string): boolean {
+  return [
+    "reddit.com",
+    "zhihu.com",
+    "linkedin.com",
+    "instagram.com",
+    "x.com",
+    "twitter.com",
+    "tiktok.com",
+    "youtube.com",
+    "youtu.be",
+    "bilibili.com",
+    "nytimes.com",
+    "reuters.com",
+    "bloomberg.com",
+    "wsj.com",
+    "ft.com",
+    "theinformation.com",
+    "techcrunch.com",
+    "theverge.com",
+    "wired.com",
+    "engadget.com",
+    "arstechnica.com",
+    "bbc.com",
+    "cnn.com",
+    "36kr.com",
+    "people.com.cn",
+    "people.cn",
+    "stcn.com",
+    "globaltimes.cn",
+    "yahoo.com",
+    "gasgoo.com",
+  ].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 function hasClickbaitRisk(title: string): boolean {

@@ -9,6 +9,10 @@ import {
   normalizeEvidencePack,
   type SearchMode,
 } from "../../../lib/search/evidence-pack";
+import {
+  assertMeetingSearchSucceeded,
+  MeetingSearchFailedError,
+} from "../../../lib/search/meeting-search-failure";
 import { prepareMeetingForClient } from "../../../lib/search/search-response";
 import { TavilySearchError } from "../../../lib/search/tavily-search";
 import type { ModelParticipant } from "../../../lib/types";
@@ -19,6 +23,8 @@ type MeetingRequestBody = {
   participantIds?: unknown;
   question?: unknown;
   searchMode?: unknown;
+  searchDriverParticipantId?: unknown;
+  summaryParticipantId?: unknown;
   webSearchEnabled?: unknown;
 };
 
@@ -45,6 +51,16 @@ export async function POST(request: Request) {
       registry.participants,
       participantIds,
     );
+    const searchDriverParticipant = selectOptionalParticipant(
+      registry.participants,
+      body.searchDriverParticipantId,
+      "selected search driver model is not available",
+    );
+    const summaryParticipant = selectOptionalParticipant(
+      registry.participants,
+      body.summaryParticipantId,
+      "selected summary model is not available",
+    );
 
     if (participants.length === 0) {
       return NextResponse.json(
@@ -58,12 +74,15 @@ export async function POST(request: Request) {
     if (body.webSearchEnabled === true) {
       evidencePack = await buildModelDrivenWebEvidencePack({
         baseEvidencePack: evidencePack,
-        participants,
+        participants: searchDriverParticipant
+          ? [searchDriverParticipant]
+          : participants,
         provider: registry.provider,
         searchMode,
         signal: request.signal,
         topic: question,
       });
+      assertMeetingSearchSucceeded(evidencePack);
     }
 
     const meeting = await runMeeting(
@@ -73,6 +92,7 @@ export async function POST(request: Request) {
         evidencePack,
         isBriefMode,
         signal: request.signal,
+        summaryParticipant,
       },
       registry.provider,
     );
@@ -163,6 +183,34 @@ function selectParticipants(
   return participants.filter((participant) => selectedIds.has(participant.id));
 }
 
+function selectOptionalParticipant(
+  participants: ModelParticipant[],
+  participantId: unknown,
+  errorMessage: string,
+): ModelParticipant | undefined {
+  if (participantId === undefined || participantId === null) {
+    return undefined;
+  }
+
+  if (typeof participantId !== "string") {
+    throw new BadRequestError(errorMessage);
+  }
+
+  const trimmedId = participantId.trim();
+
+  if (!trimmedId) {
+    return undefined;
+  }
+
+  const participant = participants.find((item) => item.id === trimmedId);
+
+  if (!participant) {
+    throw new BadRequestError(errorMessage);
+  }
+
+  return participant;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -181,6 +229,10 @@ function getErrorStatus(error: unknown): number {
   }
 
   if (error instanceof TavilySearchError) {
+    return error.status;
+  }
+
+  if (error instanceof MeetingSearchFailedError) {
     return error.status;
   }
 

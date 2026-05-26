@@ -14,6 +14,7 @@ import {
 import { checkEvidenceCitations } from "../search/evidence-citations";
 import { resolveEvidencePackDelivery } from "../search/evidence-pack";
 import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
+import { sanitizeRoleLeak } from "./role-leak";
 
 const DISCUSSION_FOCUSES = [
   "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
@@ -88,6 +89,7 @@ export async function runMeeting(
     ],
     summary,
     evidencePack: meetingRequest.evidencePack,
+    debugSearchProcess: meetingRequest.evidencePack?.searchProcess,
     citationCheck,
     failures,
     hasPartialFailures: failures.length > 0,
@@ -186,7 +188,10 @@ async function generateSummaryWithFallback(
   successfulParticipants: ModelParticipant[],
   failures: MeetingProviderFailure[],
 ): Promise<MeetingSummary> {
-  for (const participant of successfulParticipants) {
+  for (const participant of getSummaryParticipants(
+    request,
+    successfulParticipants,
+  )) {
     throwIfAborted(request.signal);
 
     try {
@@ -216,6 +221,22 @@ async function generateSummaryWithFallback(
   }
 
   return createFallbackSummary();
+}
+
+function getSummaryParticipants(
+  request: MeetingRequest,
+  successfulParticipants: ModelParticipant[],
+): ModelParticipant[] {
+  if (!request.summaryParticipant) {
+    return successfulParticipants;
+  }
+
+  return [
+    request.summaryParticipant,
+    ...successfulParticipants.filter(
+      (participant) => participant.id !== request.summaryParticipant?.id,
+    ),
+  ];
 }
 
 function getMeetingPromptOptions(
@@ -271,7 +292,7 @@ function createTurn(
     speakerName: participant.name,
     provider: participant.provider,
     model: participant.model,
-    content,
+    content: sanitizeRoleLeak(content),
   };
 }
 

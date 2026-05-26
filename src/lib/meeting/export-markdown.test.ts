@@ -750,6 +750,134 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("- social_clue");
   });
 
+  test("exports evidence debug and coverage overview for a real MeetingResult with debugSearchProcess", () => {
+    const meetingWithDebug: MeetingResult = {
+      ...meeting,
+      evidencePack: {
+        enabled: true,
+        evidenceStatus: "medium",
+        items: [
+          {
+            id: "S1",
+            title: "OpenAI model safety evaluation",
+            url: "https://openai.com/index/model-safety-evaluation",
+            snippet:
+              "OpenAI publishes a technical model safety evaluation, benchmark analysis, model capability details, and alignment notes. ".repeat(
+                12,
+              ),
+            quality: {
+              warnings: [],
+              textLength: 1200,
+              wasTruncated: false,
+              sourceType: "official_blog",
+              reliability: "high",
+              score: 88,
+              topicRelevanceScore: 45,
+              relevanceReason:
+                "资料主要覆盖模型安全与 benchmark，不能支撑公司长期竞争的商业结论。",
+              matchedQuestionAspects: ["technical_capability"],
+              coverageDimension: "safety_alignment",
+            },
+          },
+        ],
+      },
+      debugSearchProcess: {
+        evidenceMode: "low_evidence",
+        searchStrategy: "multi_pass",
+        searchIntents: [],
+        executedQueries: ["OpenAI Anthropic company competition"],
+        queryPlans: [],
+        intentDecisions: [],
+        qualityOverview: {
+          totalResults: 1,
+          includedCount: 1,
+          filteredCount: 0,
+          lowEvidenceCount: 0,
+          byReliability: {
+            high: 1,
+            medium: 0,
+            low: 0,
+            very_low: 0,
+          },
+          bySourceType: {
+            official_statement: 0,
+            official_blog: 1,
+            official_docs: 0,
+            official_community: 0,
+            reputable_media: 0,
+            industry_report: 0,
+            social_forum: 0,
+            video_platform: 0,
+            unknown: 0,
+          },
+        },
+        filteredReasons: [],
+        results: [],
+        warnings: [],
+        debugSummary: {
+          evidenceHitRate: {
+            candidateCount: 1,
+            coreEvidenceCount: 0,
+            evidenceHitRate: 0,
+          },
+          extractionSuccessRate: {
+            extractAttemptCount: 1,
+            extractSuccessCount: 1,
+            extractionSuccessRate: 1,
+          },
+          sourceMix: {
+            officialCount: 1,
+            reputableMediaCount: 0,
+            industryReportCount: 0,
+            socialVideoCount: 0,
+            unknownCount: 0,
+          },
+          degradeReasonsSummary: {
+            snippetOnly: 0,
+            sourceTooWeak: 0,
+            textTooShort: 0,
+            scoreTooLow: 0,
+            extractionFailed: 0,
+            socialVideoSource: 0,
+          },
+          lowEvidenceTriggerReasons: {
+            coreEvidenceLessThan3: true,
+            highMediumLessThan3: true,
+            shortTextRatioTooHigh: false,
+            socialVideoRatioTooHigh: false,
+            searchFailed: false,
+          },
+          passStats: [
+            {
+              passName: "official",
+              query: "OpenAI Anthropic company competition site:openai.com",
+              resultCount: 1,
+              extractedCount: 1,
+              coreEvidenceCount: 0,
+              socialVideoCount: 0,
+              unknownCount: 0,
+            },
+          ],
+          selectedEvidenceByPass: [{ passName: "official", count: 1 }],
+          skippedPasses: ["social_clue"],
+        },
+      },
+    };
+
+    const markdown = exportMeetingToMarkdown(meetingWithDebug, participants);
+
+    expect(markdown).toContain("## Evidence Debug");
+    expect(markdown).toContain("### Pass Stats");
+    expect(markdown).toContain("### Selected Evidence By Pass");
+    expect(markdown).toContain("### Skipped Passes");
+    expect(markdown).toContain("覆盖维度");
+    expect(markdown).toContain("缺失维度");
+    expect(markdown).toContain("覆盖度评分");
+    expect(markdown).toContain("## 技术/产品线索");
+    expect(sectionText(markdown, "## 核心证据")).not.toContain("[S1]");
+    expect(sectionText(markdown, "## 技术/产品线索")).toContain("[S1]");
+  });
+
   test("exports an evidence debug warning when debug was requested but process is missing", () => {
     const markdown = exportMeetingToMarkdown(meeting, participants, {
       includeEvidenceDebug: true,
