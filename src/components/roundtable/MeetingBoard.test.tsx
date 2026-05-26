@@ -77,6 +77,53 @@ describe("MeetingBoard", () => {
     expect(html).not.toContain("citationGuidance");
   });
 
+  test("localizes compact web search status in Chinese mode", () => {
+    const meeting: MeetingResult = {
+      topic: "AI model funding",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+      searchSummary: {
+        enabled: true,
+        status: "low_evidence",
+        evidenceMode: "low_evidence",
+        totalReferences: 9,
+        strongCount: 0,
+        mediumCount: 0,
+        weakCount: 9,
+        hasRealtimeWarning: true,
+        userMessage:
+          "Web search completed. System referenced 9 evidence items: 0 reliable, 0 general, 9 weaker. Some real-time information may still need manual verification.",
+      },
+      evidencePack: {
+        enabled: true,
+        evidenceStatus: "low",
+        items: [],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingBoard meeting={meeting} text={getUiText("zh")} />,
+    );
+
+    expect(html).toContain("联网搜索过程");
+    expect(html).toContain("联网搜索已完成");
+    expect(html).toContain("系统引用了 9 条资料");
+    expect(html).toContain("0 可靠");
+    expect(html).toContain("0 一般");
+    expect(html).toContain("9 较弱");
+    expect(html).toContain("部分实时信息仍需要人工核验");
+    expect(html).not.toContain("Web search completed");
+    expect(html).not.toContain("Reliable");
+    expect(html).not.toContain("General");
+    expect(html).not.toContain("Weaker");
+  });
+
   test("renders full web search diagnostics when the API returns debugSearchProcess", () => {
     const meeting: MeetingResult = {
       topic: "AI model benchmark",

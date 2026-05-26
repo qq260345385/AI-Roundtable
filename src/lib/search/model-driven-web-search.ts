@@ -62,6 +62,7 @@ const MARKETING_TERMS = new Set([
   "leading",
 ]);
 const CORE_EVIDENCE_TARGET = 3;
+const SOCIAL_CLUE_FINAL_LIMIT = 2;
 
 type SearchPassName =
   | "official"
@@ -144,6 +145,7 @@ export async function buildModelDrivenWebEvidencePack({
   let extractedCandidateCount = 0;
   let extractSucceededCount = 0;
   let officialExtractFailed = false;
+  let extractErrorType: string | undefined;
   let targetedSearchRetryTriggered = false;
   let targetedSearchRetryReason: string | undefined;
 
@@ -320,15 +322,19 @@ export async function buildModelDrivenWebEvidencePack({
           }));
 
           extractedCandidateCount = extractedDrafts.length;
-          extractSucceededCount = extractedDrafts.filter((draft) =>
-            draft.snippet.trim(),
-          ).length;
+          extractSucceededCount = Math.min(
+            fallbackRescueCandidates.length,
+            extractedDrafts.filter((draft) => draft.snippet.trim()).length,
+          );
           officialExtractFailed =
             officialRetryUrls.size > 0 &&
             !extractedDrafts.some(
               (draft) =>
                 officialRetryUrls.has(draft.url) && draft.snippet.trim().length >= 800,
             );
+          if (officialExtractFailed) {
+            extractErrorType = "empty_official_extract";
+          }
 
           const rescuedDeduped = dedupeSearchResults([
             ...webDrafts,
@@ -347,7 +353,8 @@ export async function buildModelDrivenWebEvidencePack({
           });
           recordExtractedCountsByPass(passStats, extractedDrafts);
         } catch (error) {
-          rescueReason = `extract_failed:${getTavilyFailureReason(error)}`;
+          extractErrorType = getTavilyFailureReason(error);
+          rescueReason = `extract_failed:${extractErrorType}`;
           officialExtractFailed = officialRetryUrls.size > 0;
         }
       }
@@ -388,6 +395,7 @@ export async function buildModelDrivenWebEvidencePack({
           searchIntents: searchPlan.searchIntents,
           queryPlans: searchPlan.queryPlans,
           intentDecisions: searchPlan.intentDecisions,
+          searchStrategy: "multi_pass",
           warnings: [failureReason],
         }),
         searchQueries,
@@ -398,10 +406,11 @@ export async function buildModelDrivenWebEvidencePack({
       },
     );
   }
+  const finalWebDrafts = limitPublicOpinionDrafts(webDrafts, topic);
   const preflightPack = normalizeEvidencePack(
     {
-      enabled: baseItems.length > 0 || webDrafts.length > 0,
-      items: [...baseItems, ...webDrafts],
+      enabled: baseItems.length > 0 || finalWebDrafts.length > 0,
+      items: [...baseItems, ...finalWebDrafts],
     },
     {
       maxItems: modeConfig.finalLimit,
@@ -421,7 +430,7 @@ export async function buildModelDrivenWebEvidencePack({
       enabled: true,
       evidenceStatus,
       evidenceWarnings,
-      items: [...baseItems, ...webDrafts],
+      items: [...baseItems, ...finalWebDrafts],
       searchProcess: {
         cacheEvents,
         dedupeStats,
@@ -432,6 +441,7 @@ export async function buildModelDrivenWebEvidencePack({
             : undefined,
         executedQueries: searchQueries,
         extractAttempted,
+        extractErrorType,
         extractedCandidateCount,
         extractSucceededCount,
         finalEvidenceCount: preflightPack.items.length,
@@ -440,6 +450,7 @@ export async function buildModelDrivenWebEvidencePack({
         rescueReason,
         rescueTriggered,
         officialExtractFailed,
+        searchStrategy: "multi_pass",
         passStats,
         skippedPasses,
         targetedSearchRetryTriggered,
@@ -512,6 +523,10 @@ function buildSearchPasses(
   topic: string,
   plannedQueries: string[],
 ): SearchPassSpec[] {
+  if (isCompanyCompetitionTopic(topic)) {
+    return buildCompanyCompetitionSearchPasses(topic);
+  }
+
   const baseQuery = plannedQueries.find(Boolean) ?? topic;
 
   return [
@@ -544,6 +559,60 @@ function buildSearchPasses(
       freshness: "recent",
     },
   ];
+}
+
+function buildCompanyCompetitionSearchPasses(topic: string): SearchPassSpec[] {
+  const companyQuery = getCompanyCompetitionQuery(topic);
+
+  return [
+    {
+      name: "official",
+      query: trimQueryToLength(
+        `${companyQuery} funding revenue governance business model official site:openai.com site:anthropic.com`,
+      ),
+      freshness: "latest",
+    },
+    {
+      name: "reputable_media",
+      query: trimQueryToLength(
+        `${companyQuery} enterprise customers market share funding revenue Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch`,
+      ),
+      freshness: "latest",
+    },
+    {
+      name: "industry_report",
+      query: trimQueryToLength(
+        `${companyQuery} strategic partnership cloud partnership regulation government contracts industry report SemiAnalysis Stanford Epoch AI`,
+      ),
+      freshness: "recent",
+    },
+    {
+      name: "social_clue",
+      query: trimQueryToLength(
+        `${companyQuery} discussion sentiment Reddit LinkedIn YouTube X -instagram -tiktok`,
+      ),
+      freshness: "recent",
+    },
+  ];
+}
+
+function isCompanyCompetitionTopic(topic: string): boolean {
+  const normalized = topic.toLowerCase();
+
+  return (
+    (/openai/.test(normalized) && /anthropic/.test(normalized)) ||
+    /公司|company|business|竞争|竞争力|笑到最后|长期|长期竞争|winner|wins|win/.test(
+      normalized,
+    )
+  );
+}
+
+function getCompanyCompetitionQuery(topic: string): string {
+  if (/openai/i.test(topic) && /anthropic/i.test(topic)) {
+    return "OpenAI Anthropic company competition";
+  }
+
+  return topic;
 }
 
 function createPassStats(
@@ -632,6 +701,36 @@ function recordExtractedCountsByPass(
   for (const stat of passStats) {
     stat.extractedCount += counts.get(stat.passName) ?? 0;
   }
+}
+
+function limitPublicOpinionDrafts(
+  drafts: TavilyEvidenceDraft[],
+  topic: string,
+): TavilyEvidenceDraft[] {
+  let publicOpinionCount = 0;
+
+  return drafts.filter((draft) => {
+    const quality = scoreEvidence({
+      title: draft.title,
+      url: draft.url,
+      source: draft.source,
+      publishedAt: draft.publishedAt,
+      snippet: draft.snippet,
+      topic,
+    });
+
+    if (
+      quality.sourceType !== "official_community" &&
+      quality.sourceType !== "social_forum" &&
+      quality.sourceType !== "video_platform"
+    ) {
+      return true;
+    }
+
+    publicOpinionCount += 1;
+
+    return publicOpinionCount <= SOCIAL_CLUE_FINAL_LIMIT;
+  });
 }
 
 function getCanonicalSearchUrl(url: string | undefined): string {

@@ -19,6 +19,13 @@ import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
 
 type EmitLiveMeetingEvent = (event: LiveMeetingEvent) => void | Promise<void>;
 
+const DISCUSSION_FOCUSES = [
+  "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
+  "商业与资本效率：收入、成本、融资、客户结构、商业闭环",
+  "技术与产品能力：模型能力、产品化、工程效率、技术路线",
+  "生态与用户采用：开发者生态、用户迁移成本、开源竞争、企业采用、长期格局",
+] as const;
+
 export async function runLiveMeeting(
   request: MeetingRequest,
   provider: ModelProvider,
@@ -152,7 +159,7 @@ async function runIndependentPhase(
         participant,
         request.topic,
         request.evidencePack,
-        getMeetingPromptOptions(request),
+        getMeetingPromptOptions(request, participant),
       );
       const turn = createTurn("independent", participant, content);
 
@@ -199,7 +206,7 @@ async function runResponsePhase(
         request.topic,
         independentTurns,
         request.evidencePack,
-        getMeetingPromptOptions(request),
+        getMeetingPromptOptions(request, participant),
       );
       const turn = createTurn("response", participant, content);
 
@@ -239,7 +246,7 @@ async function generateSummaryWithFallback(
           request.topic,
           turns,
           request.evidencePack,
-          getMeetingPromptOptions(request),
+          getMeetingPromptOptions(request, participant),
         );
       }
 
@@ -247,7 +254,7 @@ async function generateSummaryWithFallback(
         request.topic,
         turns,
         request.evidencePack,
-        getMeetingPromptOptions(request),
+        getMeetingPromptOptions(request, participant),
       );
     } catch (error) {
       if (request.signal?.aborted) {
@@ -264,11 +271,27 @@ async function generateSummaryWithFallback(
   return createFallbackSummary();
 }
 
-function getMeetingPromptOptions(request: MeetingRequest) {
+function getMeetingPromptOptions(
+  request: MeetingRequest,
+  participant: ModelParticipant,
+) {
   return {
+    discussionFocus: getParticipantDiscussionFocus(
+      request.participants,
+      participant,
+    ),
     isBriefMode: request.isBriefMode,
     signal: request.signal,
   };
+}
+
+function getParticipantDiscussionFocus(
+  participants: ModelParticipant[],
+  participant: ModelParticipant,
+) {
+  const index = participants.findIndex((item) => item.id === participant.id);
+
+  return DISCUSSION_FOCUSES[Math.max(0, index) % DISCUSSION_FOCUSES.length];
 }
 
 function throwIfAborted(signal: AbortSignal | undefined) {

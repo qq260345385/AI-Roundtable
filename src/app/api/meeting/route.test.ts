@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { POST } from "./route";
 import { clearTavilySearchCache } from "../../../lib/search/tavily-search";
+import { exportMeetingToMarkdown } from "../../../lib/meeting/export-markdown";
 
 const originalEnv = { ...process.env };
 const originalFetch = global.fetch;
@@ -240,6 +241,7 @@ describe("POST /api/meeting", () => {
 
   test("builds model-driven web evidence when web search is enabled", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.SEARCH_DEBUG_ENABLED = "false";
     process.env.TAVILY_API_KEY = "tvly-test-key";
     vi.stubGlobal("fetch", async () =>
       Response.json({
@@ -398,6 +400,59 @@ describe("POST /api/meeting", () => {
         citationLevel: "context_only",
       }),
     );
+  });
+
+  test("returns debugSearchProcess by default in non-production web search meetings", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    delete process.env.SEARCH_DEBUG_ENABLED;
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        results: [
+          {
+            title: "Official source",
+            url: "https://openai.com/news/test",
+            content: `Official search result. ${"A".repeat(900)}`,
+          },
+        ],
+      }),
+    );
+
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["gpt-mock"],
+        question: "OpenAI 和 Anthropic 哪个公司会笑到最后",
+        webSearchEnabled: true,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.meeting.debugSearchProcess).toEqual(
+      expect.objectContaining({
+        searchStrategy: "multi_pass",
+        passStats: expect.any(Array),
+      }),
+    );
+
+    const markdown = exportMeetingToMarkdown(body.meeting, [
+      {
+        id: "gpt-mock",
+        name: "GPT Mock",
+        provider: "OpenAI",
+        model: "gpt-mock",
+        status: "available",
+        statusLabel: "Connected",
+      },
+    ]);
+
+    expect(markdown).toContain("## Evidence Debug");
+    expect(markdown).toContain("### Pass Stats");
+    expect(markdown).toContain("### Selected Evidence By Pass");
+    expect(markdown).toContain("### Skipped Passes");
   });
 
   test("does not return debugSearchProcess in production even when search debug is enabled", async () => {

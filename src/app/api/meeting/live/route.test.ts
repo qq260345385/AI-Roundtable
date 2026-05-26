@@ -53,6 +53,7 @@ describe("POST /api/meeting/live", () => {
 
   test("streams model-driven web evidence when web search is enabled", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
+    process.env.SEARCH_DEBUG_ENABLED = "false";
     process.env.TAVILY_API_KEY = "tvly-test-key";
     vi.stubGlobal("fetch", async () =>
       Response.json({

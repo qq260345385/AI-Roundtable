@@ -641,8 +641,68 @@ describe("buildModelDrivenWebEvidencePack", () => {
       expect.objectContaining({
         rescueTriggered: true,
         officialExtractFailed: true,
+        extractErrorType: "empty_official_extract",
       }),
     );
+  });
+
+  test("records official extract retry success and replaces short official snippets", async () => {
+    const provider = createNoIntentProvider();
+    const extractedUrls: string[][] = [];
+    const extractProvider: ExtractProvider = {
+      id: "test-extract",
+      displayName: "Test Extract",
+      async extract(request) {
+        extractedUrls.push(request.urls);
+
+        return {
+          provider: "test-extract",
+          results: [
+            {
+              title: "OpenAI company update",
+              url: "https://openai.com/news/company-update",
+              content: "Long official OpenAI company update. ".repeat(80),
+              sourceQuery: request.query,
+              provider: "test-extract",
+            },
+          ],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "OpenAI company strategy",
+      extractProvider,
+      searcher: async (query) => {
+        if (!query.includes("site:openai.com")) {
+          return [];
+        }
+
+        return [
+          {
+            title: "OpenAI company update",
+            url: "https://openai.com/news/company-update",
+            snippet: "Short official snippet.",
+          },
+        ];
+      },
+    });
+
+    const item = pack.items.find((entry) =>
+      entry.url?.includes("openai.com/news/company-update"),
+    );
+
+    expect(extractedUrls[0]).toContain("https://openai.com/news/company-update");
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        rescueTriggered: true,
+        officialExtractFailed: false,
+      }),
+    );
+    expect(item?.snippet.length).toBeGreaterThanOrEqual(800);
+    expect(item?.quality?.snippetOnly).not.toBe(true);
   });
 
   test("runs targeted source retry when social and video results dominate", async () => {
@@ -921,6 +981,62 @@ describe("buildModelDrivenWebEvidencePack", () => {
         coreEvidenceCount: 1,
       }),
     );
+    expect(pack.searchProcess?.searchStrategy).toBe("multi_pass");
+  });
+
+  test("keeps company competition topics focused on business queries instead of benchmark-only comparisons", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateSearchIntents() {
+        return [
+          {
+            question: "Claude 3.5 Sonnet vs GPT-4o benchmark comparison",
+            mustInclude: ["Claude 3.5 Sonnet", "GPT-4o"],
+            shouldInclude: ["benchmark", "leaderboard"],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "benchmark",
+            rationale:
+              "A model benchmark query that should not dominate company strategy search.",
+          },
+        ];
+      },
+      async generateIndependentView() {
+        return "";
+      },
+      async generateResponse() {
+        return "";
+      },
+      async generateSummary() {
+        return {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+    const searchedQueries: string[] = [];
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "OpenAI 和 Anthropic 哪个公司会笑到最后",
+      searcher: async (query) => {
+        searchedQueries.push(query);
+
+        return [];
+      },
+    });
+
+    expect(searchedQueries[0]).toContain("OpenAI");
+    expect(searchedQueries[0]).toContain("Anthropic");
+    expect(searchedQueries[0]).toContain("funding");
+    expect(searchedQueries[0]).toContain("revenue");
+    expect(searchedQueries[0]).not.toContain("Claude 3.5 Sonnet");
+    expect(searchedQueries[1]).toContain("enterprise customers");
+    expect(searchedQueries[2]).toContain("strategic partnership");
   });
 
   test("skips social clue pass when trusted passes already provide enough core evidence", async () => {
@@ -1027,6 +1143,52 @@ describe("buildModelDrivenWebEvidencePack", () => {
           result.sourceType === "video_platform",
       ),
     ).toBe(true);
+  });
+
+  test("keeps at most two social clue items when no core evidence is available", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI company rumor",
+      searcher: async (query) => {
+        if (!query.includes("Reddit")) {
+          return [];
+        }
+
+        return [
+          {
+            title: "Reddit rumor 1",
+            url: "https://reddit.com/r/artificial/comments/rumor1",
+            snippet: "Reddit rumor discussion. ".repeat(60),
+          },
+          {
+            title: "Reddit rumor 2",
+            url: "https://reddit.com/r/artificial/comments/rumor2",
+            snippet: "Reddit rumor discussion. ".repeat(60),
+          },
+          {
+            title: "YouTube rumor",
+            url: "https://youtube.com/watch?v=rumor",
+            snippet: "YouTube rumor discussion. ".repeat(60),
+          },
+          {
+            title: "LinkedIn rumor",
+            url: "https://linkedin.com/posts/rumor",
+            snippet: "LinkedIn rumor discussion. ".repeat(60),
+          },
+        ];
+      },
+    });
+
+    const socialClueItems = pack.items.filter((item) =>
+      item.seenInPasses?.includes("social_clue"),
+    );
+
+    expect(pack.searchProcess?.debugSummary?.evidenceHitRate.coreEvidenceCount)
+      .toBe(0);
+    expect(socialClueItems).toHaveLength(2);
   });
 
   test("dedupes the same URL across passes and records all seen passes", async () => {

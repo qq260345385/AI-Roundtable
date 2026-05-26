@@ -287,6 +287,130 @@ describe("OpenAICompatibleProvider", () => {
     }
   });
 
+  test("uses lightweight discussion focuses without fixed analyst identity", async () => {
+    const requestBodies: string[] = [];
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBodies.push(String(init?.body));
+
+        return Response.json({
+          choices: [{ message: { content: "ok" } }],
+        });
+      },
+    });
+    const participants = ["a", "e", "i", "m"].map((id) => ({
+      id,
+      name: `Participant ${id}`,
+      provider: "SameProvider",
+      model: "same-model",
+      status: "available" as const,
+      statusLabel: "Connected",
+    }));
+    const focuses = [
+      "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
+      "商业与资本效率：收入、成本、融资、客户结构、商业闭环",
+      "技术与产品能力：模型能力、产品化、工程效率、技术路线",
+      "生态与用户采用：开发者生态、用户迁移成本、开源竞争、企业采用、长期格局",
+    ];
+
+    for (const [index, participant] of participants.entries()) {
+      await provider.generateIndependentView(
+        participant,
+        "OpenAI 和 Anthropic 哪个公司会笑到最后",
+        undefined,
+        { discussionFocus: focuses[index] },
+      );
+    }
+
+    const prompts = requestBodies.map((bodyText) => {
+      const body = JSON.parse(bodyText) as {
+        messages: { content: string }[];
+      };
+
+      return body.messages.map((message) => message.content).join("\n");
+    });
+
+    const allPrompts = prompts.join("\n");
+
+    for (const focus of focuses) {
+      expect(allPrompts).toContain(focus);
+    }
+
+    expect(allPrompts).toContain("关注点只是为了减少重复，不是固定身份");
+    expect(allPrompts).toContain("不要自称固定角色");
+    expect(allPrompts).not.toContain("你的分析角色");
+    expect(allPrompts).not.toContain("本轮分析角色");
+    expect(allPrompts).not.toMatch(/你是.+分析师/);
+    expect(allPrompts).not.toMatch(/作为.+分析师/);
+  });
+
+  test("guards technical focus against inventing unpublished architecture in low-evidence mode", async () => {
+    let requestBody = "";
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBody = String(init?.body);
+
+        return Response.json({
+          choices: [{ message: { content: "ok" } }],
+        });
+      },
+    });
+
+    await provider.generateIndependentView(
+      {
+        id: "tech",
+        name: "Tech Model",
+        provider: "DeepSeek",
+        model: "deepseek-v4-flash",
+        status: "available",
+        statusLabel: "Connected",
+      },
+      "OpenAI 和 Anthropic 哪个公司会笑到最后",
+      {
+        enabled: true,
+        evidenceStatus: "low",
+        items: [
+          {
+            id: "S1",
+            title: "Short rumor",
+            url: "https://reddit.com/r/artificial/comments/test",
+            snippet: "short rumor",
+            quality: {
+              warnings: ["snippet only"],
+              textLength: 11,
+              wasTruncated: false,
+              sourceType: "social_forum",
+              reliability: "low",
+              score: 35,
+              snippetOnly: true,
+            },
+          },
+        ],
+      },
+      {
+        discussionFocus:
+          "技术与产品能力：模型能力、产品化、工程效率、技术路线",
+      },
+    );
+
+    const body = JSON.parse(requestBody) as {
+      messages: { content: string }[];
+    };
+    const promptText = body.messages.map((message) => message.content).join("\n");
+
+    expect(promptText).toContain("禁止在无可靠资料时推断未公开底层架构");
+    expect(promptText).toContain("low-evidence mode 下只能做框架分析和低置信推测");
+    expect(promptText).not.toMatch(/你是.+分析师/);
+  });
+
   test("adds evidence quality guardrails to summary prompts", async () => {
     let requestBody = "";
     const provider = new OpenAICompatibleProvider({
@@ -410,7 +534,7 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     expect(prompts[0]).toContain("简要会议模式");
-    expect(prompts[0]).toContain("150 字左右");
+    expect(prompts[0]).toContain("200 字左右");
     expect(prompts[1]).toContain("简要会议模式");
     expect(prompts[1]).toContain("避免长篇列表");
     expect(prompts[2]).toContain("简要会议模式");

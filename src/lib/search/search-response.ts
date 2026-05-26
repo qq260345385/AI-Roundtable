@@ -62,7 +62,7 @@ export function prepareLiveMeetingEventForClient(
 export function isSearchDebugResponseEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  return env.NODE_ENV !== "production" && env.SEARCH_DEBUG_ENABLED === "true";
+  return env.NODE_ENV !== "production" && env.SEARCH_DEBUG_ENABLED !== "false";
 }
 
 export function createSearchSummary(

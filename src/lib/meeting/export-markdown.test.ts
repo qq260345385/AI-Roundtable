@@ -649,7 +649,7 @@ describe("exportMeetingToMarkdown", () => {
 
     expect(markdown).not.toContain("## 事实核验提示");
   });
-  test("hides evidence debug by default and exports it when debug is enabled", () => {
+  test("exports evidence debug automatically when debugSearchProcess is present", () => {
     const meetingWithDebug: MeetingResult = {
       ...meeting,
       debugSearchProcess: {
@@ -734,13 +734,7 @@ describe("exportMeetingToMarkdown", () => {
       },
     };
 
-    expect(exportMeetingToMarkdown(meetingWithDebug, participants)).not.toContain(
-      "## Evidence Debug",
-    );
-
-    const markdown = exportMeetingToMarkdown(meetingWithDebug, participants, {
-      includeEvidenceDebug: true,
-    });
+    const markdown = exportMeetingToMarkdown(meetingWithDebug, participants);
 
     expect(markdown).toContain("## Evidence Debug");
     expect(markdown).toContain("- candidateCount: 10");
@@ -754,6 +748,17 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("### Selected Evidence By Pass");
     expect(markdown).toContain("- official: 1");
     expect(markdown).toContain("- social_clue");
+  });
+
+  test("exports an evidence debug warning when debug was requested but process is missing", () => {
+    const markdown = exportMeetingToMarkdown(meeting, participants, {
+      includeEvidenceDebug: true,
+    });
+
+    expect(markdown).toContain("## Evidence Debug");
+    expect(markdown).toContain(
+      "Evidence Debug unavailable: debugSearchProcess missing",
+    );
   });
 });
 

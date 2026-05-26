@@ -113,13 +113,21 @@ function appendEvidenceDebug(
   meeting: MeetingResult,
   options: ExportMarkdownOptions,
 ) {
-  if (options.includeEvidenceDebug !== true) {
+  const process = meeting.debugSearchProcess ?? meeting.evidencePack?.searchProcess;
+
+  if (options.includeEvidenceDebug !== true && !process) {
     return;
   }
 
-  const process = meeting.debugSearchProcess ?? meeting.evidencePack?.searchProcess;
+  if (options.includeEvidenceDebug !== true && !meeting.debugSearchProcess) {
+    return;
+  }
 
   if (!process?.debugSummary) {
+    lines.push("## Evidence Debug");
+    lines.push("");
+    lines.push("Evidence Debug unavailable: debugSearchProcess missing");
+    lines.push("");
     return;
   }
 

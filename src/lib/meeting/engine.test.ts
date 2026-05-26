@@ -146,6 +146,66 @@ describe("runMeeting", () => {
     expect(result.isBriefMode).toBe(true);
   });
 
+  test("assigns mostly unique discussion focuses to four participants", async () => {
+    const participants: ModelParticipant[] = [
+      gptParticipant,
+      claudeParticipant,
+      {
+        id: "gemini",
+        name: "Gemini Mock",
+        provider: "Google",
+        model: "gemini-mock",
+        status: "mock",
+        statusLabel: "Mock / 无需 API",
+      },
+      {
+        id: "deepseek",
+        name: "DeepSeek Mock",
+        provider: "DeepSeek",
+        model: "deepseek-mock",
+        status: "mock",
+        statusLabel: "Mock / 无需 API",
+      },
+    ];
+    const focuses: string[] = [];
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView(_participant, _topic, _evidencePack, options) {
+        focuses.push(options?.discussionFocus ?? "");
+        return "独立观点";
+      },
+      async generateResponse() {
+        return "自由回应";
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        return {
+          consensus: ["共识"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    await runMeeting(
+      {
+        topic: "讨论关注点分配",
+        participants,
+      },
+      provider,
+    );
+
+    expect(new Set(focuses).size).toBe(4);
+    expect(focuses).toEqual([
+      "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
+      "商业与资本效率：收入、成本、融资、客户结构、商业闭环",
+      "技术与产品能力：模型能力、产品化、工程效率、技术路线",
+      "生态与用户采用：开发者生态、用户迁移成本、开源竞争、企业采用、长期格局",
+    ]);
+    expect(focuses.join("\n")).not.toContain("分析师");
+  });
+
   test("adds citation check results after the meeting is generated", async () => {
     const provider: ModelProvider = {
       name: "TestProvider",

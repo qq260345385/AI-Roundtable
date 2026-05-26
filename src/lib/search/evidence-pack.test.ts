@@ -751,6 +751,40 @@ describe("normalizeEvidencePack", () => {
     expect(prompt).toContain("请人工核验");
   });
 
+  test("marks low-quality snippet evidence as unverified and suppresses concrete claims in prompts", () => {
+    const prompt = formatEvidencePackForPrompt(
+      normalizeEvidencePack({
+        enabled: true,
+        evidenceStatus: "low",
+        items: [
+          {
+            title: "Low quality social claim",
+            url: "https://reddit.com/r/artificial/comments/test",
+            snippet:
+              "GPT-4o scored 1234 points and OpenAI raised $10 billion at a $100 billion valuation.",
+            quality: {
+              warnings: ["snippet only"],
+              textLength: 96,
+              wasTruncated: false,
+              sourceType: "social_forum",
+              reliability: "low",
+              score: 35,
+              snippetOnly: true,
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(prompt).toContain("UNVERIFIED_LOW_EVIDENCE_DO_NOT_USE_AS_FACT");
+    expect(prompt).toContain(
+      "低可信资料中有相关线索，但由于正文不足，本轮不能确认。",
+    );
+    expect(prompt).not.toContain("$10 billion");
+    expect(prompt).not.toContain("$100 billion");
+    expect(prompt).not.toContain("1234 points");
+  });
+
   test("formats native file intent with a text fallback note", () => {
     const prompt = formatEvidencePackForPrompt(
       normalizeEvidencePack({

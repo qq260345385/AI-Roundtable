@@ -113,6 +113,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
     const briefModePrompt = getBriefModePrompt(options);
+    const discussionFocusPrompt = getDiscussionFocusPrompt(options);
+    const discussionFocusGuardrails = getDiscussionFocusGuardrails(
+      options,
+      evidencePack,
+    );
 
     return this.callChat([
       getSystemMessage(participant),
@@ -121,9 +126,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
         content: [
           `会议议题：${topic}`,
           "这是第一阶段：独立观点。",
-          `你的本轮分析角色：${getAnalysisRole(participant)}。`,
-          "请围绕这个角色优先分析，但仍要像普通用户可读的圆桌发言，不要展示复杂内部推理。",
+          discussionFocusPrompt,
+          "请给出你的独立观点。系统给你的关注点只是为了减少重复，不是固定身份。你不需要自称角色，也可以超出该关注点自由表达。",
+          "不要自称固定角色，也不要使用身份式开头；可以用“我更关注的是……”“这里可能被低估的是……”“这个判断要加一个条件……”等自然圆桌语气。",
           "发言控制在 500～800 字；只保留与结论有关的证据、判断和不确定性。",
+          discussionFocusGuardrails,
           briefModePrompt,
           factHygienePrompt,
           evidencePackPrompt,
@@ -145,6 +152,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
     const briefModePrompt = getBriefModePrompt(options);
+    const discussionFocusPrompt = getDiscussionFocusPrompt(options);
+    const discussionFocusGuardrails = getDiscussionFocusGuardrails(
+      options,
+      evidencePack,
+    );
 
     return this.callChat([
       getSystemMessage(participant),
@@ -156,11 +168,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
           `你当前是 ${currentSeatNumber}号。`,
           "下面是其他参会者在第一阶段的独立观点，已按圆桌席位编号列出：",
           formatTurnsWithSeatNumbers(previousTurns, participant.name),
-          "请自由回应：可以同意、部分同意、补充、质疑、反驳或延展。",
-          "必须回应至少一个其他席位的具体观点，并新增一个不同角度；不要复述上一阶段已有内容。",
+          discussionFocusPrompt,
+          "请回应其他模型中你最想补充、质疑或修正的一点。避免重复上一阶段已有观点，除非你是在反驳、加条件或指出证据不足。",
+          "关注点只是为了减少重复，不是固定身份；不要自称固定角色，也可以超出该关注点自由表达。",
           "回应其他参会者时，请使用席位编号称呼对方，例如“1号的观点”或“我想补充 2号”。",
           "不要直接称呼对方的模型名或显示名，例如不要写“感谢 Pro”或“Flash 提到”。",
-          `你的本轮分析角色：${getAnalysisRole(participant)}。请从这个角色补一个新角度。`,
+          "语气自然一点，避免部门报告式结构。",
+          discussionFocusGuardrails,
           briefModePrompt,
           factHygienePrompt,
           evidencePackPrompt,
@@ -186,6 +200,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           factHygienePrompt,
           evidencePackPrompt,
           briefModePrompt,
+          "第三阶段由你压缩和归类观点，不按身份归因，只按观点归类。",
           "共识整理阶段不能把未经验证的说法升级为事实，只能标记为参会模型倾向或需要外部核验。",
           "整理共识时，请使用资料质量门控：可确认事实只能放入 high / medium 资料支持的事实性结论，且必须带资料编号，例如 [S1]。",
           "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
@@ -262,7 +277,7 @@ function getBriefModePrompt(options?: MeetingPromptOptions): string {
 
   return [
     "本轮启用简要会议模式。",
-    "你的发言请尽量控制在 150 字左右，只保留最关键观点。",
+    "你的发言请尽量控制在 200 字左右，只保留最关键观点。",
     "避免长篇列表、铺垫和重复解释；如果需要列点，最多 3 点。",
   ].join("\n");
 }
@@ -274,26 +289,48 @@ function getSystemMessage(participant: ModelParticipant): ChatMessage {
       `你是 ${participant.name}。`,
       `provider: ${participant.provider}`,
       `model: ${participant.model}`,
-      `你的分析角色：${getAnalysisRole(participant)}。`,
-      "你是圆桌会议中的平等参会者；角色只用于减少重复和明确关注重点。",
+      "你是圆桌会议中的平等参会者；系统给出的关注点只用于减少重复，不是身份或人设。",
       "面向普通用户输出，保持简洁、克制、低认知负担。",
     ].join("\n"),
   };
 }
 
-function getAnalysisRole(participant: ModelParticipant): string {
-  const roles = [
-    "技术架构分析师",
-    "商业与融资分析师",
-    "产品与生态分析师",
-    "风险与监管分析师",
-  ];
-  const key = `${participant.id}:${participant.provider}:${participant.model}`;
-  const index =
-    Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0) %
-    roles.length;
+function getDiscussionFocusPrompt(options?: MeetingPromptOptions): string {
+  if (!options?.discussionFocus) {
+    return "";
+  }
 
-  return roles[index];
+  return `本轮讨论关注点：${options.discussionFocus}。`;
+}
+
+function getDiscussionFocusGuardrails(
+  options: MeetingPromptOptions | undefined,
+  evidencePack: EvidencePack | undefined,
+): string {
+  const focus = options?.discussionFocus ?? "";
+  const lines = [
+    "所有关注点都只能作为讨论切入点；low-evidence mode 下只能做框架分析和低置信推测，不得用低质量资料包装成事实。",
+  ];
+
+  if (focus.includes("技术与产品能力")) {
+    lines.push(
+      "技术与产品能力关注点：禁止在无可靠资料时推断未公开底层架构，只能讨论可观察的产品能力、工程效率信号和需要核验的问题。",
+    );
+  }
+
+  if (focus.includes("商业与资本效率")) {
+    lines.push(
+      "商业与资本效率关注点：禁止把低可信来源中的融资额、估值、营收、收入写成确定事实。",
+    );
+  }
+
+  if (evidencePack?.evidenceStatus === "low" || evidencePack?.evidenceStatus === "none") {
+    lines.push(
+      "当前资料质量不足时，请主动降级表达，不要把具体数字、模型版本、融资、估值、营收或 IPO 时间表写成确定事实。",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function formatTurns(turns: MeetingTurn[], currentSpeakerName?: string): string {

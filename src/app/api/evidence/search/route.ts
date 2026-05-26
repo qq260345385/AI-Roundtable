@@ -12,7 +12,6 @@ import {
 } from "../../../../lib/search/evidence-pack";
 import {
   createSearchSummary,
-  isSearchDebugResponseEnabled,
   sanitizeEvidencePackForClient,
 } from "../../../../lib/search/search-response";
 import {
@@ -215,9 +214,10 @@ export async function POST(request: Request) {
           ]);
 
           extractedCandidateCount = extractedDrafts.length;
-          extractSucceededCount = extractedDrafts.filter((draft) =>
-            draft.snippet.trim(),
-          ).length;
+          extractSucceededCount = Math.min(
+            rescueUrls.length,
+            extractedDrafts.filter((draft) => draft.snippet.trim()).length,
+          );
           officialExtractFailed =
             officialRetryUrls.size > 0 &&
             !extractedDrafts.some(
@@ -317,7 +317,7 @@ export async function POST(request: Request) {
       drafts: safeEvidencePack?.items ?? [],
       evidencePack: safeEvidencePack,
       searchSummary: createSearchSummary(evidencePack),
-      ...(isSearchDebugResponseEnabled()
+      ...(isEvidenceSearchDebugResponseEnabled()
         ? { debugSearchProcess: evidencePack.searchProcess }
         : {}),
       warnings: [
@@ -361,7 +361,7 @@ export async function POST(request: Request) {
       {
         error: getErrorMessage(error),
         ...(failurePack ? { searchSummary: createSearchSummary(failurePack) } : {}),
-        ...(failureProcess && isSearchDebugResponseEnabled()
+        ...(failureProcess && isEvidenceSearchDebugResponseEnabled()
           ? { debugSearchProcess: failureProcess }
           : {}),
       },
@@ -370,6 +370,12 @@ export async function POST(request: Request) {
       },
     );
   }
+}
+
+function isEvidenceSearchDebugResponseEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return env.NODE_ENV !== "production" && env.SEARCH_DEBUG_ENABLED === "true";
 }
 
 async function readRequestBody(request: Request): Promise<SearchRequestBody> {

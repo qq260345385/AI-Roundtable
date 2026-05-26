@@ -53,7 +53,7 @@ export function WebSearchProcessPanel({
   }
 
   const labels = text.meetingBoard.searchProcess;
-  const copy = getSearchStatusCopy(meeting);
+  const copy = getSearchStatusCopy(meeting, labels);
 
   return (
     <section className="border border-sky-100 bg-sky-50/45 p-4">
@@ -71,9 +71,9 @@ export function WebSearchProcessPanel({
           ) : null}
         </div>
         <div className="grid grid-cols-3 border border-sky-100 bg-white/70 text-center text-xs text-sky-900 md:min-w-72">
-          <Metric label="Reliable" value={copy.reliableCount} />
-          <Metric label="General" value={copy.generalCount} />
-          <Metric label="Weaker" value={copy.weakerCount} />
+          <Metric label={labels.reliableMetric} value={copy.reliableCount} />
+          <Metric label={labels.generalMetric} value={copy.generalCount} />
+          <Metric label={labels.weakerMetric} value={copy.weakerCount} />
         </div>
       </div>
 
@@ -265,7 +265,12 @@ function DeveloperSearchDetails({
   );
 }
 
-function getSearchStatusCopy(meeting: MeetingResult) {
+type SearchProcessLabels = UiText["meetingBoard"]["searchProcess"];
+
+function getSearchStatusCopy(
+  meeting: MeetingResult,
+  labels: SearchProcessLabels,
+) {
   const searchSummary = meeting.searchSummary;
 
   if (!searchSummary) {
@@ -280,16 +285,20 @@ function getSearchStatusCopy(meeting: MeetingResult) {
   }
 
   if (searchSummary.status === "failed") {
+    const noteParts = [
+      getSearchFailureDisplay(searchSummary.userMessage, labels),
+      searchSummary.hasRealtimeWarning
+        ? labels.realtimeClaimsNeedVerification
+        : "",
+    ].filter(Boolean);
+
     return {
       reliableCount: searchSummary.strongCount,
       generalCount: searchSummary.mediumCount,
       weakerCount: searchSummary.weakCount,
-      status:
-        "Web search failed. This round mainly uses model knowledge and reasoning.",
-      summary: searchSummary.userMessage,
-      note: searchSummary.hasRealtimeWarning
-        ? "Real-time claims should be manually verified."
-        : "",
+      status: labels.failedStatus,
+      summary: formatSearchEvidenceSummary(searchSummary, labels),
+      note: noteParts.join(" "),
     };
   }
 
@@ -297,14 +306,39 @@ function getSearchStatusCopy(meeting: MeetingResult) {
     reliableCount: searchSummary.strongCount,
     generalCount: searchSummary.mediumCount,
     weakerCount: searchSummary.weakCount,
-    status: "Web search completed.",
-    summary: searchSummary.userMessage,
-    note:
-      searchSummary.hasRealtimeWarning &&
-      !searchSummary.userMessage.includes("manual verification")
-        ? "Some real-time information may still need manual verification."
-        : "",
+    status: labels.completedStatus,
+    summary: formatSearchEvidenceSummary(searchSummary, labels),
+    note: searchSummary.hasRealtimeWarning ? labels.manualVerificationNote : "",
   };
+}
+
+function formatSearchEvidenceSummary(
+  searchSummary: NonNullable<MeetingResult["searchSummary"]>,
+  labels: SearchProcessLabels,
+) {
+  if (searchSummary.totalReferences <= 0) {
+    return labels.noEvidenceSummary;
+  }
+
+  const evidenceItemLabel =
+    searchSummary.totalReferences === 1
+      ? labels.evidenceItemSingular
+      : labels.evidenceItemPlural;
+
+  return `${labels.referencedEvidenceStart} ${searchSummary.totalReferences} ${evidenceItemLabel}${labels.summaryColon}${searchSummary.strongCount} ${labels.reliableSummaryLabel}${labels.summarySeparator}${searchSummary.mediumCount} ${labels.generalSummaryLabel}${labels.summarySeparator}${searchSummary.weakCount} ${labels.weakerSummaryLabel}${labels.sentencePeriod}`;
+}
+
+function getSearchFailureDisplay(
+  userMessage: string,
+  labels: SearchProcessLabels,
+) {
+  const failureMatch = userMessage.match(/Failure type:\s*(.+?)(?:\.|$)/i);
+
+  if (!failureMatch?.[1]) {
+    return "";
+  }
+
+  return `${labels.failureReasonPrefix}${failureMatch[1].trim()}${labels.sentencePeriod}`;
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

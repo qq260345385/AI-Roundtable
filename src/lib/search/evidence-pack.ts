@@ -209,6 +209,7 @@ export type EvidenceSearchPassStats = {
 
 export type SearchProcess = {
   evidenceMode: EvidenceMode;
+  searchStrategy?: "multi_pass";
   failureReason?: SearchFailureReason;
   provider?: string;
   providerDiagnostics?: SearchProviderDiagnostic[];
@@ -223,6 +224,7 @@ export type SearchProcess = {
   rescueTriggered?: boolean;
   rescueReason?: string;
   officialExtractFailed?: boolean;
+  extractErrorType?: string;
   targetedSearchRetryTriggered?: boolean;
   targetedSearchRetryReason?: string;
   passStats?: EvidenceSearchPassStats[];
@@ -426,10 +428,12 @@ export function createSearchFailureProcess(input: {
   searchIntents?: SearchIntentRecord[];
   queryPlans?: SearchQueryPlan[];
   intentDecisions?: SearchIntentDecision[];
+  searchStrategy?: "multi_pass";
   warnings?: string[];
 }): SearchProcess {
   return {
     evidenceMode: "search_failed",
+    ...(input.searchStrategy ? { searchStrategy: input.searchStrategy } : {}),
     ...(normalizeSearchFailureReason(input.failureReason)
       ? { failureReason: normalizeSearchFailureReason(input.failureReason) }
       : {}),
@@ -856,9 +860,21 @@ function normalizeEvidenceItem(
 }
 
 function formatEvidenceItemForPrompt(item: SearchEvidence): string {
+  const isUnverifiedLowEvidence = shouldSuppressEvidenceDetailsForPrompt(item);
+  const snippet = isUnverifiedLowEvidence
+    ? "低可信资料中有相关线索，但由于正文不足，本轮不能确认。"
+    : item.snippet;
+
   return [
     `[${item.id}]`,
-    `标题：${item.title}`,
+    isUnverifiedLowEvidence
+      ? "UNVERIFIED_LOW_EVIDENCE_DO_NOT_USE_AS_FACT"
+      : "",
+    `标题：${
+      isUnverifiedLowEvidence
+        ? sanitizeLowEvidenceTextForPrompt(item.title)
+        : item.title
+    }`,
     item.source ? `来源：${item.source}` : "",
     item.publishedAt ? `时间：${item.publishedAt}` : "",
     item.url ? `URL：${item.url}` : "",
@@ -868,11 +884,31 @@ function formatEvidenceItemForPrompt(item: SearchEvidence): string {
     item.quality?.warnings.length
       ? `质量提示：${item.quality.warnings.join("；")}`
       : "",
-    `摘要：${item.snippet}`,
+    `摘要：${snippet}`,
     "",
   ]
     .filter((line) => line !== "")
     .join("\n");
+}
+
+function shouldSuppressEvidenceDetailsForPrompt(item: SearchEvidence): boolean {
+  const quality = item.quality;
+
+  return (
+    quality !== undefined &&
+    (quality.score < 60 ||
+      quality.snippetOnly === true ||
+      quality.reliability === "low" ||
+      quality.reliability === "very_low")
+  );
+}
+
+function sanitizeLowEvidenceTextForPrompt(value: string): string {
+  return value
+    .replace(/\$?\b\d+(?:\.\d+)?\s*(?:billion|million|bn|m)\b/gi, "[待核验数字]")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:亿美元|亿元|万亿|亿|万)\b/g, "[待核验数字]")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:points?|分|score)\b/gi, "[待核验数字]")
+    .replace(/\b(?:GPT|Claude|Gemini|DeepSeek|Llama|Qwen|Grok)[-\s]?\d+(?:\.\d+)?[A-Za-z-]*\b/g, "[待核验模型版本]");
 }
 
 function createDisabledEvidencePack(input?: unknown): EvidencePack {
@@ -918,6 +954,8 @@ function createSearchProcess(input: {
   const cacheEvents = normalizeSearchCacheEvents(input.input.cacheEvents);
   const dedupeStats = normalizeSearchDedupeStats(input.input.dedupeStats);
   const searchMode = normalizeSearchMode(input.input.searchMode);
+  const searchStrategy =
+    input.input.searchStrategy === "multi_pass" ? "multi_pass" : undefined;
   const provider = normalizeOptionalText(input.input.provider, 80);
   const providerDiagnostics = normalizeSearchProviderDiagnostics(
     input.input.providerDiagnostics,
@@ -974,8 +1012,11 @@ function createSearchProcess(input: {
     intentDecisions,
     ...(cacheEvents.length > 0 ? { cacheEvents } : {}),
     ...(dedupeStats ? { dedupeStats } : {}),
+    ...(searchStrategy ? { searchStrategy } : {}),
     ...(searchMode ? { searchMode } : {}),
     ...rescueStats,
+    ...(passStats.length > 0 ? { passStats } : {}),
+    ...(skippedPasses.length > 0 ? { skippedPasses } : {}),
     qualityOverview,
     debugSummary: createEvidenceDebugSummary({
       evidenceMode,
@@ -1678,6 +1719,9 @@ function normalizeRescueStats(value: Record<string, unknown>) {
       : {}),
     ...(rescueTriggered !== undefined ? { rescueTriggered } : {}),
     ...(officialExtractFailed !== undefined ? { officialExtractFailed } : {}),
+    ...(normalizeText(value.extractErrorType, 160)
+      ? { extractErrorType: normalizeText(value.extractErrorType, 160) }
+      : {}),
     ...(targetedSearchRetryTriggered !== undefined
       ? { targetedSearchRetryTriggered }
       : {}),
@@ -1904,6 +1948,8 @@ function detectEvidenceSourceType(
       "techcrunch.com",
       "theverge.com",
       "wired.com",
+      "engadget.com",
+      "arstechnica.com",
       "bbc.com",
       "cnn.com",
       "36kr.com",
