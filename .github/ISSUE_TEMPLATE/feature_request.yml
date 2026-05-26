@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      placeholder: I want AI Roundtable to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the user-facing behavior you would like.
+      placeholder: Add a setting that...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: I also considered...
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product area
+      options:
+        - Meeting flow
+        - Evidence Pack
+        - Web search
+        - Model configuration
+        - Markdown export
+        - UI / usability
+        - Documentation
+        - Other
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: This request does not require exposing API keys or private meeting content.
+          required: true

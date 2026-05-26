@@ -1,0 +1,93 @@
+name: Search quality report
+description: Report poor Evidence Search results, extraction failures, or low-evidence behavior.
+title: "[Search Quality]: "
+labels:
+  - search
+  - evidence
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when Tavily search completed but the Evidence Pack was weak, irrelevant, or failed to extract useful text. Remove API keys and private content before posting.
+  - type: textarea
+    id: topic
+    attributes:
+      label: Meeting topic
+      description: Paste the exact meeting topic if it is safe to share.
+      placeholder: Example: How should we evaluate...
+    validations:
+      required: true
+  - type: dropdown
+    id: web_search_enabled
+    attributes:
+      label: Was web search enabled?
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: evidence_debug
+    attributes:
+      label: /api/evidence/search/debug or Evidence Debug output
+      description: Paste safe debug output. Remove API keys and sensitive meeting content.
+      render: json
+  - type: input
+    id: error_type
+    attributes:
+      label: errorType
+      placeholder: timeout, provider_error, parse_error, etc.
+  - type: input
+    id: failed_stage
+    attributes:
+      label: failedStage
+      placeholder: search_pass, extract, normalize, etc.
+  - type: input
+    id: safe_error_message
+    attributes:
+      label: safeErrorMessage
+      placeholder: Search service timed out...
+  - type: dropdown
+    id: tavily_key
+    attributes:
+      label: Is TAVILY_API_KEY configured?
+      description: Do not paste the key itself.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: terminal_logs
+    attributes:
+      label: Terminal logs
+      description: Paste safe terminal logs related to the search request.
+      render: shell
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected search results
+      placeholder: I expected sources like...
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual search results
+      placeholder: Instead, the Evidence Pack contained...
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      placeholder: Locale, search mode, model used to drive search, or anything else useful.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I removed API keys, account tokens, and private content.
+          required: true

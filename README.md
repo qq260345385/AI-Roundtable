@@ -143,6 +143,17 @@ AI Roundtable 目前仍是早期版本，核心体验已经可以运行，但还
 
 暂不建议把它用于高风险决策的唯一依据。
 
+## Roadmap
+
+当前重点：
+
+- Tavily Search Options Builder
+- 中文新闻与本地资料搜索优化
+- Evidence relevance / coverage scoring
+- GitHub Actions CI
+- Docker / 部署文档
+- 更多会议示例
+
 ## 常用命令
 
 ```bash

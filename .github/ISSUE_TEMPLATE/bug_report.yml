@@ -1,0 +1,69 @@
+name: Bug report
+description: Report something that is broken or behaving unexpectedly.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve AI Roundtable. Please remove any API keys or private meeting content before submitting.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem in a few sentences.
+      placeholder: The meeting failed when...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps that trigger the issue.
+      placeholder: |
+        1. Open...
+        2. Enable...
+        3. Click...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: I expected...
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: Instead...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.6.0 or commit SHA
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Running mode
+      options:
+        - Mock mode
+        - Real model mode
+        - Not sure
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste safe logs or attach screenshots. Do not include API keys.
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I removed API keys, account tokens, and private content.
+          required: true
