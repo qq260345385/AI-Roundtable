@@ -25,6 +25,7 @@ import {
   buildTavilySearchQueries,
   dedupeSearchResults,
   getTavilyFailureReason,
+  SEARCH_REGION_COUNTRY_MAP,
   TavilySearchError,
   type TavilyEvidenceDraft,
 } from "./tavily-search";
@@ -161,6 +162,7 @@ type BuildModelDrivenWebEvidencePackOptions = {
   participants: ModelParticipant[];
   provider: ModelProvider;
   searchMode?: SearchMode;
+  searchPreferences?: import("../types").SearchPreferences;
   searchProvider?: SearchProvider;
   searcher?: Searcher;
   signal?: AbortSignal;
@@ -173,12 +175,18 @@ export async function buildModelDrivenWebEvidencePack({
   participants,
   provider,
   searchMode = "deep",
+  searchPreferences,
   searchProvider = getSearchProvider(),
   searcher,
   signal,
   topic,
 }: BuildModelDrivenWebEvidencePackOptions): Promise<EvidencePack> {
-  const modeConfig = getSearchModeConfig(searchMode);
+  const regionResolution = resolveSearchRegionPreference({
+    topic,
+    searchRegion: searchPreferences?.searchRegion,
+  });
+  const searchRegion = regionResolution.resolvedRegion;
+  const modeConfig = getSearchModeConfig(searchPreferences?.searchIntensity === "standard" ? "standard" : searchMode);
   const searchPlan = await buildParticipantSearchQueries(
     topic,
     participants,
@@ -213,15 +221,19 @@ export async function buildModelDrivenWebEvidencePack({
   let failedKeyPassCount = 0;
   let firstFailedPassName: SearchPassName | undefined;
   let firstFailureReason: ReturnType<typeof getTavilyFailureReason> | undefined;
+  let zeroResultFallbackTriggered = false;
+  const fallbackQueries: string[] = [];
+  let providerReturnedZeroCount = 0;
+  let relaxedQueryCount = 0;
+  const skippedPassReasons: Record<string, string> = {};
 
   try {
     const allSearchPasses = buildSearchPasses(topic, searchPlan.queries);
     const searchPasses = allSearchPasses.slice(0, MODEL_DRIVEN_SEARCH_PASS_LIMIT);
-    skippedPasses.push(
-      ...allSearchPasses
-        .slice(MODEL_DRIVEN_SEARCH_PASS_LIMIT)
-        .map((pass) => pass.name),
-    );
+    for (const pass of allSearchPasses.slice(MODEL_DRIVEN_SEARCH_PASS_LIMIT)) {
+      skippedPasses.push(pass.name);
+      skippedPassReasons[pass.name] = "exceeds_pass_limit";
+    }
     keyPassCount = searchPasses.filter((pass) =>
       isKeySearchPass(pass.name),
     ).length;
@@ -236,13 +248,22 @@ export async function buildModelDrivenWebEvidencePack({
         dedupeSearchResults(rawWebDrafts).items,
         topic,
       );
+      const currentCandidateCount = rawWebDrafts.length;
 
       if (
         searchPass.name === "social_clue" &&
         currentCoreEvidenceCount >= CORE_EVIDENCE_TARGET
       ) {
         skippedPasses.push(searchPass.name);
+        skippedPassReasons[searchPass.name] = "core_evidence_sufficient";
         continue;
+      }
+
+      if (
+        searchPass.name === "industry_report" &&
+        currentCandidateCount === 0
+      ) {
+        // Don't skip industry_report when no candidates yet
       }
 
       searchQueries.push(searchPass.query);
@@ -300,6 +321,7 @@ export async function buildModelDrivenWebEvidencePack({
           provider: searchProvider,
           query: searchPass.query,
           searchDepth: searchPass.searchDepth,
+          searchRegion,
           searchTopic: searchPass.searchTopic,
           searcher,
           signal: passAbort.signal,
@@ -415,6 +437,106 @@ export async function buildModelDrivenWebEvidencePack({
       );
     }
 
+    // Zero-result fallback: if all passes returned 0 results, try broader queries
+    if (rawWebDrafts.length === 0) {
+      zeroResultFallbackTriggered = true;
+      const zeroFallbackQueries = buildZeroResultFallbackQueries(topic);
+      fallbackQueries.push(...zeroFallbackQueries);
+      const fallbackPasses = buildFallbackSearchPasses(topic, zeroFallbackQueries);
+
+      for (const fallbackPass of fallbackPasses) {
+        const remainingTimeoutMs = getRemainingTimeoutMs(
+          overallStartedAt,
+          overallTimeoutMs,
+        );
+        const effectivePassTimeoutMs = Math.min(
+          passTimeoutMs,
+          remainingTimeoutMs,
+        );
+
+        if (effectivePassTimeoutMs <= 0) {
+          passStats.push(
+            createFailedPassStats(
+              fallbackPass.name,
+              fallbackPass.query,
+              0,
+              "evidence_overall_timeout",
+              true,
+            ),
+          );
+          break;
+        }
+
+        searchQueries.push(fallbackPass.query);
+        relaxedQueryCount += 1;
+        const passStartedAt = Date.now();
+        const passAbort = createTimedAbortSignal(signal, effectivePassTimeoutMs);
+
+        try {
+          const response = await searchWithConfiguredProvider({
+            chunksPerSource: fallbackPass.chunksPerSource,
+            country: fallbackPass.country,
+            excludeDomains: fallbackPass.excludeDomains,
+            freshness: fallbackPass.freshness,
+            includeDomains: fallbackPass.includeDomains,
+            includeRawContent: fallbackPass.includeRawContent,
+            maxResults: maxResultsPerQuery,
+            provider: searchProvider,
+            query: fallbackPass.query,
+            searchDepth: fallbackPass.searchDepth,
+            searchRegion,
+            searchTopic: fallbackPass.searchTopic,
+            searcher,
+            signal: passAbort.signal,
+            timeRange: fallbackPass.timeRange,
+            topic,
+          });
+          cacheEvents.push(...(response.cacheEvents ?? []));
+          providerDiagnostics.push(createProviderDiagnostic(response));
+          const passDrafts = response.results.map((result) => ({
+            title: result.title,
+            url: result.url,
+            snippet: result.content ?? result.snippet ?? "",
+            publishedAt: result.publishedDate,
+            providerScore: result.providerScore,
+            query: fallbackPass.query,
+            seenInPasses: [fallbackPass.name],
+          }));
+
+          if (passDrafts.length === 0) {
+            providerReturnedZeroCount += 1;
+          }
+
+          passStats.push(
+            createPassStats(
+              fallbackPass.name,
+              fallbackPass.query,
+              passDrafts,
+              topic,
+              { durationMs: Date.now() - passStartedAt },
+            ),
+          );
+          rawWebDrafts.push(...passDrafts);
+        } catch (error) {
+          if (signal?.aborted) {
+            throw error;
+          }
+
+          passStats.push(
+            createFailedPassStats(
+              fallbackPass.name,
+              fallbackPass.query,
+              Date.now() - passStartedAt,
+              getSearchPassErrorType(error, Date.now() - passStartedAt, effectivePassTimeoutMs),
+              isSearchPassTimeout(getSearchPassErrorType(error, Date.now() - passStartedAt, effectivePassTimeoutMs)),
+            ),
+          );
+        } finally {
+          passAbort.clear();
+        }
+      }
+    }
+
     rawCandidateCount = rawWebDrafts.length;
     const deduped = dedupeSearchResults(rawWebDrafts);
 
@@ -481,6 +603,7 @@ export async function buildModelDrivenWebEvidencePack({
             provider: searchProvider,
             query,
             searchDepth: "advanced",
+            searchRegion,
             searchTopic: "news",
             searcher,
             signal: passAbort.signal,
@@ -836,6 +959,7 @@ export async function buildModelDrivenWebEvidencePack({
         searchStrategy: "multi_pass",
         passStats,
         skippedPasses,
+        skippedPassReasons,
         targetedSearchRetryTriggered,
         targetedSearchRetryReason,
         searchMode,
@@ -844,6 +968,15 @@ export async function buildModelDrivenWebEvidencePack({
         intentDecisions: searchPlan.intentDecisions,
         provider: searchProvider.id,
         providerDiagnostics,
+        zeroResultFallbackTriggered,
+        fallbackQueries,
+        providerReturnedZeroCount,
+        relaxedQueryCount,
+        effectiveSearchRegion: regionResolution.resolvedRegion,
+        effectiveCountry: getEffectiveCountryForRegion(regionResolution.resolvedRegion),
+        searchRegionSource: regionResolution.regionSource,
+        regionFallbackReason: regionResolution.regionFallbackReason,
+        requestedSearchRegion: searchPreferences?.searchRegion ?? "auto",
       },
       searchQueries,
       strategy: baseEvidencePack?.strategy ?? "text_pack",
@@ -866,6 +999,7 @@ async function searchWithConfiguredProvider(input: {
   provider: SearchProvider;
   query: string;
   searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
+  searchRegion?: import("../types").SearchRegion;
   searchTopic?: "general" | "news" | "finance";
   searcher?: Searcher;
   signal?: AbortSignal;
@@ -914,6 +1048,7 @@ async function searchWithConfiguredProvider(input: {
     maxResults: input.maxResults,
     query: input.query,
     searchDepth: input.searchDepth ?? "basic",
+    searchRegion: input.searchRegion,
     searchTopic: input.searchTopic,
     signal: input.signal,
     timeRange: input.timeRange,
@@ -930,112 +1065,154 @@ function buildSearchPasses(
   }
 
   const baseQuery = plannedQueries.find(Boolean) ?? topic;
+  const isChinese = isPrimaryChineseTopic(topic);
   const localizedPasses = buildLocalizedMediaPasses(topic);
 
+  const officialPass: SearchPassSpec = {
+    name: "official",
+    query: isChinese
+      ? trimQueryToLength(`${baseQuery} 官方 发布 公告`)
+      : trimQueryToLength(
+          `${baseQuery} official statement official blog official docs announcement report`,
+        ),
+    freshness: "latest",
+    includeDomains: buildOfficialDomainCandidates(topic),
+    excludeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "basic",
+    searchTopic: "general",
+    timeRange: getTavilyTimeRange("latest"),
+  };
+
+  const reputableMediaPass: SearchPassSpec = {
+    name: "reputable_media",
+    query: trimQueryToLength(
+      `Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch ${baseQuery}`,
+    ),
+    freshness: "latest",
+    includeDomains: TRUSTED_MEDIA_DOMAINS,
+    excludeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "basic",
+    searchTopic: "news",
+    timeRange: getTavilyTimeRange("latest"),
+  };
+
+  const industryReportPass: SearchPassSpec = {
+    name: "industry_report",
+    query: trimQueryToLength(
+      `SemiAnalysis Epoch AI Stanford arxiv MLCommons industry report ${baseQuery}`,
+    ),
+    freshness: "recent",
+    includeDomains: INDUSTRY_REPORT_DOMAINS,
+    excludeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "basic",
+    searchTopic: "general",
+    timeRange: getTavilyTimeRange("recent"),
+  };
+
+  const socialCluePass: SearchPassSpec = {
+    name: "social_clue",
+    query: trimQueryToLength(
+      `Reddit LinkedIn YouTube X discussion ${baseQuery}`,
+    ),
+    freshness: "recent",
+    includeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "fast",
+    searchTopic: "general",
+    timeRange: getTavilyTimeRange("recent"),
+  };
+
+  if (isChinese) {
+    return [
+      ...localizedPasses,
+      officialPass,
+      reputableMediaPass,
+      industryReportPass,
+      socialCluePass,
+    ];
+  }
+
   return [
-    {
-      name: "official",
-      query: trimQueryToLength(
-        `${baseQuery} official statement official blog official docs announcement report`,
-      ),
-      freshness: "latest",
-      includeDomains: buildOfficialDomainCandidates(topic),
-      excludeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "basic",
-      searchTopic: "general",
-      timeRange: getTavilyTimeRange("latest"),
-    },
+    officialPass,
     ...localizedPasses,
-    {
-      name: "reputable_media",
-      query: trimQueryToLength(
-        `Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch ${baseQuery}`,
-      ),
-      freshness: "latest",
-      includeDomains: TRUSTED_MEDIA_DOMAINS,
-      excludeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "basic",
-      searchTopic: "news",
-      timeRange: getTavilyTimeRange("latest"),
-    },
-    {
-      name: "industry_report",
-      query: trimQueryToLength(
-        `SemiAnalysis Epoch AI Stanford arxiv MLCommons industry report ${baseQuery}`,
-      ),
-      freshness: "recent",
-      includeDomains: INDUSTRY_REPORT_DOMAINS,
-      excludeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "basic",
-      searchTopic: "general",
-      timeRange: getTavilyTimeRange("recent"),
-    },
-    {
-      name: "social_clue",
-      query: trimQueryToLength(
-        `Reddit LinkedIn YouTube X discussion ${baseQuery}`,
-      ),
-      freshness: "recent",
-      includeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "fast",
-      searchTopic: "general",
-      timeRange: getTavilyTimeRange("recent"),
-    },
+    reputableMediaPass,
+    industryReportPass,
+    socialCluePass,
   ];
 }
 
 function buildEntityCompetitionSearchPasses(topic: string): SearchPassSpec[] {
+  const isChinese = isPrimaryChineseTopic(topic);
   const localizedPasses = buildLocalizedMediaPasses(topic);
 
+  const officialPass: SearchPassSpec = {
+    name: "official",
+    query: isChinese
+      ? trimQueryToLength(`${topic} 官方 融资 营收 合作 客户 合同`)
+      : trimQueryToLength(
+          `${topic} official statement funding revenue governance business model partnership customer contract`,
+        ),
+    freshness: "latest",
+    includeDomains: buildOfficialDomainCandidates(topic),
+    excludeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "basic",
+    searchTopic: "general",
+    timeRange: getTavilyTimeRange("latest"),
+  };
+
+  const reputableMediaPass: SearchPassSpec = {
+    name: "reputable_media",
+    query: trimQueryToLength(
+      `${topic} enterprise customers market share funding revenue Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch`,
+    ),
+    freshness: "latest",
+    includeDomains: TRUSTED_MEDIA_DOMAINS,
+    excludeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "basic",
+    searchTopic: "news",
+    timeRange: getTavilyTimeRange("latest"),
+  };
+
+  const industryReportPass: SearchPassSpec = {
+    name: "industry_report",
+    query: trimQueryToLength(
+      `${topic} strategic partnership regulation government contracts market analysis industry report`,
+    ),
+    freshness: "recent",
+    includeDomains: INDUSTRY_REPORT_DOMAINS,
+    excludeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "basic",
+    searchTopic: "general",
+    timeRange: getTavilyTimeRange("recent"),
+  };
+
+  const socialCluePass: SearchPassSpec = {
+    name: "social_clue",
+    query: trimQueryToLength(
+      `${topic} discussion sentiment Reddit LinkedIn YouTube X -instagram -tiktok`,
+    ),
+    freshness: "recent",
+    includeDomains: SOCIAL_VIDEO_DOMAINS,
+    searchDepth: "fast",
+    searchTopic: "general",
+    timeRange: getTavilyTimeRange("recent"),
+  };
+
+  if (isChinese) {
+    return [
+      ...localizedPasses,
+      officialPass,
+      reputableMediaPass,
+      industryReportPass,
+      socialCluePass,
+    ];
+  }
+
   return [
-    {
-      name: "official",
-      query: trimQueryToLength(
-        `${topic} official statement funding revenue governance business model partnership customer contract`,
-      ),
-      freshness: "latest",
-      includeDomains: buildOfficialDomainCandidates(topic),
-      excludeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "basic",
-      searchTopic: "general",
-      timeRange: getTavilyTimeRange("latest"),
-    },
+    officialPass,
     ...localizedPasses,
-    {
-      name: "reputable_media",
-      query: trimQueryToLength(
-        `${topic} enterprise customers market share funding revenue Reuters Bloomberg FT WSJ NYTimes The Information TechCrunch`,
-      ),
-      freshness: "latest",
-      includeDomains: TRUSTED_MEDIA_DOMAINS,
-      excludeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "basic",
-      searchTopic: "news",
-      timeRange: getTavilyTimeRange("latest"),
-    },
-    {
-      name: "industry_report",
-      query: trimQueryToLength(
-        `${topic} strategic partnership regulation government contracts market analysis industry report`,
-      ),
-      freshness: "recent",
-      includeDomains: INDUSTRY_REPORT_DOMAINS,
-      excludeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "basic",
-      searchTopic: "general",
-      timeRange: getTavilyTimeRange("recent"),
-    },
-    {
-      name: "social_clue",
-      query: trimQueryToLength(
-        `${topic} discussion sentiment Reddit LinkedIn YouTube X -instagram -tiktok`,
-      ),
-      freshness: "recent",
-      includeDomains: SOCIAL_VIDEO_DOMAINS,
-      searchDepth: "fast",
-      searchTopic: "general",
-      timeRange: getTavilyTimeRange("recent"),
-    },
+    reputableMediaPass,
+    industryReportPass,
+    socialCluePass,
   ];
 }
 
@@ -1045,15 +1222,13 @@ function buildLocalizedMediaPasses(topic: string): SearchPassSpec[] {
   }
 
   const variants = buildLocalizedQueryVariants(topic);
-  const localMediaQuery = trimQueryToLength(
-    [
-      variants.originalLanguageQuery,
-      variants.normalizedOriginalQuery,
-      variants.aliasQuery,
-      "本地媒体 人民网 证券时报 环球时报 行业媒体 财经",
-      "-linkedin -instagram -reddit -youtube -tiktok -twitter -x.com",
-    ].filter(Boolean).join(" "),
-  );
+  const queryParts = dedupeQueryParts([
+    variants.originalLanguageQuery,
+    variants.normalizedOriginalQuery,
+    variants.aliasQuery,
+    "本地媒体 行业媒体 财经",
+  ]);
+  const localMediaQuery = trimQueryToLength(queryParts.join(" "));
 
   return [
     {
@@ -1068,6 +1243,40 @@ function buildLocalizedMediaPasses(topic: string): SearchPassSpec[] {
       timeRange: getTavilyTimeRange("latest"),
     },
   ];
+}
+
+function dedupeQueryParts(parts: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    const normalized = trimmed.toLowerCase().replace(/\s+/g, " ");
+
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    const isDuplicate = Array.from(seen).some(
+      (existing) =>
+        (existing.length >= 4 && normalized.includes(existing)) ||
+        (normalized.length >= 4 && existing.includes(normalized)),
+    );
+
+    if (isDuplicate) {
+      continue;
+    }
+
+    seen.add(normalized);
+    result.push(trimmed);
+  }
+
+  return result;
 }
 
 function buildLocalizedQueryVariants(topic: string): {
@@ -2048,13 +2257,13 @@ async function buildParticipantSearchQueries(
 export function buildTavilySearchPlanFromIntents(
   topic: string,
   searchIntents: SearchIntentRecord[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for backward compatibility
   options: { currentYear?: number } = {},
 ): {
   queries: string[];
   queryPlans: SearchQueryPlan[];
   intentDecisions: SearchIntentDecision[];
 } {
-  const currentYear = options.currentYear ?? new Date().getFullYear();
   const seenQueries = new Map<string, string>();
   const queries: string[] = [];
   const queryPlans: SearchQueryPlan[] = [];
@@ -2076,7 +2285,7 @@ export function buildTavilySearchPlanFromIntents(
         continue;
       }
 
-      const query = buildQueryFromIntent(topic, normalizedIntent, currentYear);
+      const query = buildQueryFromIntent(topic, normalizedIntent);
 
       if (!query) {
         intentDecisions.push({
@@ -2090,7 +2299,7 @@ export function buildTavilySearchPlanFromIntents(
       }
 
       const dedupeKey = getQueryDedupeKey(query);
-      const existingQuery = seenQueries.get(dedupeKey);
+      const existingQuery = seenQueries.get(dedupeKey) ?? findOverlappingQuery(query, seenQueries);
 
       if (existingQuery) {
         intentDecisions.push({
@@ -2134,14 +2343,13 @@ export function buildTavilySearchPlanFromIntents(
 function buildQueryFromIntent(
   topic: string,
   intent: SearchIntent,
-  currentYear: number,
 ): string {
   const terms = [
     intent.question,
     ...intent.mustInclude,
     ...intent.shouldInclude,
     ...getSourcePreferenceTerms(intent.sourcePreference),
-    ...getFreshnessTerms(topic, intent, currentYear),
+    ...getFreshnessTerms(topic, intent),
     ...getDefaultSourceExclusionTerms(intent.sourcePreference),
     ...intent.exclude.map((term) => `-${term}`),
   ].flatMap(splitSearchPhrases);
@@ -2255,21 +2463,36 @@ function getDefaultSourceExclusionTerms(
 function getFreshnessTerms(
   topic: string,
   intent: SearchIntent,
-  currentYear: number,
 ): string[] {
+  const explicitYear = extractExplicitYear(topic) ?? extractExplicitYear(intent.question);
+
   if (intent.freshness === "latest") {
-    return [`${currentYear}`, "latest"];
+    return explicitYear ? [`${explicitYear}`, "latest"] : ["latest"];
   }
 
   if (intent.freshness === "recent") {
-    return [`${currentYear}`, "recent"];
+    return explicitYear ? [`${explicitYear}`, "recent"] : ["recent"];
   }
 
   if (isRealtimeTopic(topic)) {
-    return [`${currentYear}`, "latest", "official"];
+    return explicitYear ? [`${explicitYear}`, "latest", "official"] : ["latest", "official"];
   }
 
   return [];
+}
+
+function extractExplicitYear(text: string): number | undefined {
+  const match = text.match(/\b(20\d{2})\b/);
+
+  if (match) {
+    const year = Number(match[1]);
+
+    if (year >= 2020 && year <= 2030) {
+      return year;
+    }
+  }
+
+  return undefined;
 }
 
 function getQueryGenerationReason(topic: string, intent: SearchIntent): string {
@@ -2333,9 +2556,37 @@ function getMeaningfulTokenCount(query: string): number {
 function getQueryDedupeKey(query: string): string {
   return query
     .toLowerCase()
-    .replace(/["'“”‘’]/g, "")
+    .replace(/[“”‘’\x22\x27]/g, "")
+    .replace(/\b20\d{2}\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function findOverlappingQuery(
+  query: string,
+  seenQueries: Map<string, string>,
+): string | undefined {
+  const normalized = getQueryDedupeKey(query);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  for (const [existingKey, existingQuery] of seenQueries) {
+    if (existingKey === normalized) {
+      continue;
+    }
+
+    if (existingKey.length >= 8 && normalized.includes(existingKey)) {
+      return existingQuery;
+    }
+
+    if (normalized.length >= 8 && existingKey.includes(normalized)) {
+      return existingQuery;
+    }
+  }
+
+  return undefined;
 }
 
 function normalizeSearchText(value: string, maxLength: number): string {
@@ -2366,6 +2617,142 @@ function normalizeSourcePreference(
     : "mixed";
 }
 
+export function resolveSearchRegionPreference(input: {
+  topic: string;
+  searchRegion?: import("../types").SearchRegion;
+}): {
+  resolvedRegion: import("../types").SearchRegion;
+  regionSource: "user_preference" | "auto_detected" | "default_global";
+  regionFallbackReason: string;
+} {
+  const { topic, searchRegion } = input;
+
+  if (searchRegion && searchRegion !== "auto") {
+    return {
+      resolvedRegion: searchRegion,
+      regionSource: "user_preference",
+      regionFallbackReason: "none",
+    };
+  }
+
+  const detected = detectRegionFromTopic(topic);
+
+  if (detected) {
+    return {
+      resolvedRegion: detected,
+      regionSource: "auto_detected",
+      regionFallbackReason: "none",
+    };
+  }
+
+  return {
+    resolvedRegion: "global",
+    regionSource: "default_global",
+    regionFallbackReason: "uncertain_auto_region",
+  };
+}
+
+function detectRegionFromTopic(
+  topic: string,
+): import("../types").SearchRegion | undefined {
+  const normalized = topic.toLowerCase();
+
+  if (hasChinaSignals(normalized)) {
+    return "china";
+  }
+
+  if (hasJapanSignals(normalized)) {
+    return "japan";
+  }
+
+  if (hasKoreaSignals(normalized)) {
+    return "korea";
+  }
+
+  if (hasUsSignals(normalized)) {
+    return "us";
+  }
+
+  return undefined;
+}
+
+function hasChinaSignals(text: string): boolean {
+  const cjkCount = (text.match(/[一-鿿]/g) ?? []).length;
+  const latinCount = (text.match(/[a-z]/g) ?? []).length;
+
+  if (cjkCount >= 4 && cjkCount > latinCount * 2) {
+    const chinaKeywords = [
+      "中国", "国内", "中国市场", "中国政策", "中国监管",
+      "中国政府", "中国公司", "中国企业", "中国城市",
+      "北京", "上海", "深圳", "广州", "杭州", "成都",
+      "中国人民银行", "工信部", "国务院", "发改委",
+      "a股", "港股", "科创板", "创业板",
+      "人民币", "rmb",
+    ];
+
+    if (chinaKeywords.some((keyword) => text.includes(keyword))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasJapanSignals(text: string): boolean {
+  const japanKeywords = [
+    "日本", "japan", "japanese",
+    "东京", "tokyo",
+    "日经", "nikkei",
+    "日元", "yen",
+    "日本政策", "日本监管", "日本市场",
+    "日本公司", "日本企业",
+  ];
+
+  return japanKeywords.some((keyword) => text.includes(keyword));
+}
+
+function hasKoreaSignals(text: string): boolean {
+  const koreaKeywords = [
+    "韩国", "korea", "korean",
+    "首尔", "seoul",
+    "韩元", "won",
+    "韩国政策", "韩国监管", "韩国市场",
+    "韩国公司", "韩国企业",
+    "三星", "samsung",
+    "现代", "hyundai",
+    "lg",
+    "sk",
+  ];
+
+  return koreaKeywords.some((keyword) => text.includes(keyword));
+}
+
+function hasUsSignals(text: string): boolean {
+  const usKeywords = [
+    "美国", "us market", "us policy", "us regulation",
+    "美国政策", "美国监管", "美国市场",
+    "美国公司", "美国企业",
+    "华尔街", "wall street",
+    "美联储", "fed ", "federal reserve",
+    "sec", "美国证监会",
+    "纳斯达克", "nasdaq",
+    "纽约", "new york",
+    "硅谷", "silicon valley",
+  ];
+
+  return usKeywords.some((keyword) => text.includes(keyword));
+}
+
+function getEffectiveCountryForRegion(
+  searchRegion: import("../types").SearchRegion | undefined,
+): string | undefined {
+  if (!searchRegion || searchRegion === "auto") {
+    return undefined;
+  }
+
+  return SEARCH_REGION_COUNTRY_MAP[searchRegion];
+}
+
 function getEvidenceWarnings(status: string): string[] {
   if (status === "low") {
     return [
@@ -2380,4 +2767,165 @@ function getEvidenceWarnings(status: string): string[] {
   }
 
   return [];
+}
+
+const ACTION_TOKENS = [
+  "发布", "公告", "宣布", "推出", "上线", "更新",
+  "release", "launch", "announced", "update", "introduce",
+];
+
+function extractTopicTokens(topic: string): {
+  entityTokens: string[];
+  conceptTokens: string[];
+  actionTokens: string[];
+} {
+  const normalized = topic.toLowerCase();
+  const englishWords = normalized.match(/[a-z][a-z0-9-]{1,}/g) ?? [];
+  const cjkSegments = splitCjkText(normalized);
+  const allTokens = [...cjkSegments, ...englishWords];
+
+  const actionTokens = allTokens.filter((token) =>
+    ACTION_TOKENS.some((action) => token.includes(action)),
+  );
+
+  const stopWords = new Set([
+    "怎么", "如何看待", "如何看", "怎么看", "认为", "觉得",
+    "评价", "分析", "怎么样", "什么", "如何", "怎样",
+    "为什么", "为啥", "最近", "最新", "对", "的", "了",
+    "影响", "意义", "看法", "观点", "how", "what", "why",
+    "the", "a", "an", "is", "are", "was", "were", "be",
+    "impact", "significance", "opinion", "view",
+  ]);
+
+  const entityTokens = allTokens.filter(
+    (token) => !stopWords.has(token) && token.length >= 2 && !actionTokens.includes(token),
+  );
+
+  const conceptTokens = allTokens.filter(
+    (token) =>
+      !stopWords.has(token) &&
+      !actionTokens.includes(token) &&
+      token.length >= 2 &&
+      !/^[a-z]$/.test(token),
+  );
+
+  return {
+    entityTokens: [...new Set(entityTokens)].slice(0, 6),
+    conceptTokens: [...new Set(conceptTokens)].slice(0, 6),
+    actionTokens: [...new Set(actionTokens)].slice(0, 3),
+  };
+}
+
+function splitCjkText(text: string): string[] {
+  const segments: string[] = [];
+  const cjkPattern = /[一-鿿]+/g;
+  let match;
+
+  while ((match = cjkPattern.exec(text)) !== null) {
+    const chunk = match[0];
+
+    // Split on common particles and measure words
+    const parts = chunk.split(/(?:的|了|在|是|有|和|与|对|从|到|把|被|让|给|向|往|以|因|但|而|就|都|也|还|才|又|再|已|正|将|会|能|可以|应该|必须|需要|想要|打算|某|这个|那个|这些|那些)/);
+
+    for (const part of parts) {
+      if (part.length >= 2) {
+        segments.push(part);
+      }
+    }
+  }
+
+  return [...new Set(segments)];
+}
+
+function buildZeroResultFallbackQueries(topic: string): string[] {
+  const { entityTokens, conceptTokens, actionTokens } = extractTopicTokens(topic);
+  const queries: string[] = [];
+  const seenKeys = new Set<string>();
+
+  const addQuery = (parts: string[]) => {
+    const query = trimQueryToLength(parts.filter(Boolean).join(" "));
+    if (query && getMeaningfulTokenCount(query) >= 2) {
+      const key = getQueryDedupeKey(query);
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        queries.push(query);
+      }
+    }
+  };
+
+  // entity + version/concept
+  if (entityTokens.length > 0) {
+    addQuery(entityTokens.slice(0, 3));
+    addQuery([...entityTokens.slice(0, 2), ...conceptTokens.slice(0, 2)]);
+
+    // entity + action
+    if (actionTokens.length > 0) {
+      addQuery([...entityTokens.slice(0, 2), actionTokens[0]]);
+    }
+
+    // entity + 发布/release
+    addQuery([...entityTokens.slice(0, 2), "发布"]);
+    addQuery([...entityTokens.slice(0, 2), "release"]);
+
+    // entity + 官方/announcement
+    addQuery([...entityTokens.slice(0, 2), "官方"]);
+    addQuery([...entityTokens.slice(0, 2), "announcement"]);
+  }
+
+  // concept-only queries
+  if (conceptTokens.length >= 2) {
+    addQuery(conceptTokens.slice(0, 3));
+  }
+
+  // bare topic as last resort
+  addQuery([topic]);
+
+  return queries.slice(0, 5);
+}
+
+function buildFallbackSearchPasses(
+  topic: string,
+  fallbackQueries: string[],
+): SearchPassSpec[] {
+  const passes: SearchPassSpec[] = [];
+
+  if (fallbackQueries.length > 0) {
+    const broadQuery = fallbackQueries[0];
+
+    passes.push({
+      name: "industry_report",
+      query: broadQuery,
+      freshness: "recent",
+      includeDomains: INDUSTRY_REPORT_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "general",
+      timeRange: getTavilyTimeRange("recent"),
+    });
+
+    passes.push({
+      name: "reputable_media",
+      query: broadQuery,
+      freshness: "recent",
+      includeDomains: TRUSTED_MEDIA_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      searchDepth: "basic",
+      searchTopic: "news",
+      timeRange: getTavilyTimeRange("recent"),
+    });
+
+    if (fallbackQueries.length > 1) {
+      passes.push({
+        name: "social_clue",
+        query: fallbackQueries[1],
+        freshness: "recent",
+        includeDomains: SOCIAL_VIDEO_DOMAINS,
+        searchDepth: "fast",
+        searchTopic: "general",
+        timeRange: getTavilyTimeRange("recent"),
+      });
+    }
+  }
+
+  return passes;
 }

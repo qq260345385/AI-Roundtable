@@ -20,6 +20,14 @@ export type TavilyPingResult =
       durationMs: number;
       resultCount: number;
       hasTavilyApiKey: boolean;
+      tavilyApiKeyPresent: boolean;
+      keyPrefix: string;
+      requestSent: boolean;
+      httpStatus: number;
+      providerOk: boolean;
+      rawResultCount: number;
+      errorType: "none";
+      errorMessageSafe: string;
       statusCode: number;
     }
   | {
@@ -30,6 +38,13 @@ export type TavilyPingResult =
       errorType: TavilyPingErrorType;
       safeErrorMessage: string;
       hasTavilyApiKey: boolean;
+      tavilyApiKeyPresent: boolean;
+      keyPrefix: string;
+      requestSent: boolean;
+      httpStatus: number;
+      providerOk: boolean;
+      rawResultCount: number;
+      errorMessageSafe: string;
       statusCode: number;
     };
 
@@ -39,7 +54,9 @@ export async function runTavilyPing(input: {
   signal?: AbortSignal;
 } = {}): Promise<TavilyPingResult> {
   const startedAt = Date.now();
-  const hasTavilyApiKey = Boolean(process.env.TAVILY_API_KEY);
+  const apiKey = process.env.TAVILY_API_KEY;
+  const hasTavilyApiKey = Boolean(apiKey);
+  const keyPrefix = maskApiKey(apiKey);
   const query = normalizePingQuery(input.query);
 
   try {
@@ -57,6 +74,14 @@ export async function runTavilyPing(input: {
       durationMs: Date.now() - startedAt,
       resultCount: results.length,
       hasTavilyApiKey,
+      tavilyApiKeyPresent: hasTavilyApiKey,
+      keyPrefix,
+      requestSent: true,
+      httpStatus: 200,
+      providerOk: true,
+      rawResultCount: results.length,
+      errorType: "none",
+      errorMessageSafe: "",
       statusCode: 200,
     };
   } catch (error) {
@@ -70,9 +95,32 @@ export async function runTavilyPing(input: {
       errorType,
       safeErrorMessage: formatPingErrorMessage(errorType),
       hasTavilyApiKey,
+      tavilyApiKeyPresent: hasTavilyApiKey,
+      keyPrefix,
+      requestSent: true,
+      httpStatus: getHttpStatusFromError(error),
+      providerOk: false,
+      rawResultCount: 0,
+      errorMessageSafe: formatPingErrorMessage(errorType),
       statusCode: getPingStatusCode(error, errorType),
     };
   }
+}
+
+function maskApiKey(key: string | undefined): string {
+  if (!key || key.length < 8) {
+    return key ? "****" : "";
+  }
+
+  return `${key.slice(0, 4)}${"*".repeat(Math.max(0, key.length - 8))}${key.slice(-4)}`;
+}
+
+function getHttpStatusFromError(error: unknown): number {
+  if (error instanceof TavilySearchError) {
+    return error.status;
+  }
+
+  return 0;
 }
 
 export function normalizePingQuery(query: string | undefined) {

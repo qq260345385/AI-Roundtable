@@ -9,8 +9,8 @@ describe("ui text", () => {
   });
 
   test("returns Chinese and English settings labels", () => {
-    expect(getUiText("zh").settings.title).toBe("设置");
-    expect(getUiText("en").settings.title).toBe("Settings");
+    expect(getUiText("zh").settings.title).toBe("偏好设置");
+    expect(getUiText("en").settings.title).toBe("Preferences");
   });
 
   test("returns Chinese and English brief mode labels", () => {

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   formatEvidencePackForPrompt,
@@ -7,6 +9,7 @@ import {
   scoreEvidence,
   summarizeEvidenceQuality,
 } from "./evidence-pack";
+import { exportMeetingToMarkdown } from "../meeting/export-markdown";
 
 describe("normalizeEvidencePack", () => {
   test("returns a disabled empty pack when input is missing or disabled", () => {
@@ -1046,6 +1049,165 @@ describe("normalizeEvidencePack", () => {
     });
   });
 
+  test("missingDimensions is non-empty when coreEvidenceCount is zero for non-entity topics", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "Short social rumor",
+            url: "https://reddit.com/r/test",
+            snippet: "A short rumor about AI models.",
+          },
+        ],
+      },
+      { topic: "AI model comparison" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBe(0);
+    expect(overview.strongCoveredDimensions).toHaveLength(0);
+    expect(overview.missingDimensions).not.toHaveLength(0);
+    expect(overview.coverageCompleteness).toBe(0);
+  });
+
+  test("coverageCompleteness is below 1 when only weak coverage exists", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "Technical background",
+            url: "https://example.com/tech",
+            snippet:
+              "Technical capability and product release discussion. ".repeat(10),
+          },
+        ],
+      },
+      { topic: "AI model technical capability" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBe(0);
+    expect(overview.weakCoveredDimensions.length).toBeGreaterThan(0);
+    expect(overview.coverageCompleteness).toBeLessThan(1);
+  });
+
+  test("weak coverage does not clear missingDimensions", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "Business revenue analysis",
+            url: "https://example.com/business",
+            snippet:
+              "Business revenue, enterprise adoption, and market analysis. ".repeat(
+                10,
+              ),
+          },
+          {
+            title: "Technical capability review",
+            url: "https://example.com/tech",
+            snippet:
+              "Technical capability, benchmark evaluation, and product release. ".repeat(
+                10,
+              ),
+          },
+        ],
+      },
+      { topic: "OpenAI 和 Anthropic 哪个公司会笑到最后" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBe(0);
+    expect(overview.weakCoveredDimensions.length).toBeGreaterThan(0);
+    expect(overview.missingDimensions.length).toBeGreaterThan(0);
+    expect(overview.coverageCompleteness).toBeLessThan(1);
+  });
+
+  test("strong coverage contributes to coveredDimensions and reduces missingDimensions", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "Official business report",
+            url: "https://openai.com/news/business-report",
+            snippet:
+              "OpenAI reports enterprise adoption, customer contracts, revenue growth, and market strategy. ".repeat(
+                16,
+              ),
+          },
+          {
+            title: "Industry technical analysis",
+            url: "https://semianalysis.com/2026/ai-analysis",
+            snippet:
+              "This industry report covers technical capability, benchmark performance, product release, and model evaluation. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "OpenAI 和 Anthropic 哪个公司会笑到最后" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBeGreaterThan(0);
+    expect(overview.strongCoveredDimensions.length).toBeGreaterThan(0);
+    expect(overview.coverageCompleteness).toBeGreaterThan(0);
+    expect(overview.missingDimensions.length).toBeLessThan(4);
+  });
+
+  test("exported markdown does not show coverage=0 with missingDimensions=none", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "Short social rumor",
+            url: "https://reddit.com/r/test",
+            snippet: "A short rumor.",
+          },
+        ],
+      },
+      { topic: "AI model comparison" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+    const meeting = {
+      topic: "AI model comparison",
+      isTimeSensitive: false,
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+      evidencePack: pack,
+    };
+    const participants = [
+      {
+        id: "test",
+        name: "Test Model",
+        provider: "TestProvider",
+        model: "test-model",
+        status: "available" as const,
+        statusLabel: "available",
+      },
+    ];
+
+    const markdown = exportMeetingToMarkdown(
+      meeting as Parameters<typeof exportMeetingToMarkdown>[0],
+      participants,
+    );
+
+    if (overview.coverageCompleteness === 0) {
+      expect(markdown).not.toMatch(/缺失维度：\s*无/);
+    }
+  });
+
   test("resolves native file intent to native files when every provider supports attachments", () => {
     const pack = resolveEvidencePackDelivery(
       normalizeEvidencePack({
@@ -1072,5 +1234,364 @@ describe("normalizeEvidencePack", () => {
     expect(pack.delivery?.reason).toBe(
       "所有参会 provider 都声明支持原生文件附件。",
     );
+  });
+
+  test("generic: low topicRelevanceScore items cannot enter core evidence", () => {
+    const quality = scoreEvidence({
+      title: "Company A quarterly earnings report",
+      url: "https://reuters.com/technology/earnings",
+      snippet:
+        "Company A reported quarterly earnings with revenue growth and market expansion details. ".repeat(
+          10,
+        ),
+      topic: "Company B new product launch",
+    });
+
+    expect(quality.topicRelevanceScore).toBeLessThan(60);
+    expect(
+      isCoreEvidenceItem({
+        id: "S1",
+        title: "Company A quarterly earnings report",
+        snippet:
+          "Company A reported quarterly earnings with revenue growth and market expansion details. ".repeat(
+            10,
+          ),
+        quality,
+      }),
+    ).toBe(false);
+  });
+
+  test("generic: disassociation signals reduce topic relevance score", () => {
+    const withSignal = scoreEvidence({
+      title: "Entity X clarifies no relationship with Entity Y technology",
+      url: "https://reuters.com/tech/clarification",
+      snippet:
+        "Entity X issued a public clarification that it has no relationship with Entity Y regarding the new technology. Entity X denies any involvement. ".repeat(
+          10,
+        ),
+      topic: "Entity Y new technology",
+    });
+    const withoutSignal = scoreEvidence({
+      title: "Entity Y new technology launch details",
+      url: "https://reuters.com/tech/launch",
+      snippet:
+        "Entity Y announced its new technology launch with detailed specifications and market analysis. ".repeat(
+          10,
+        ),
+      topic: "Entity Y new technology",
+    });
+
+    expect(withSignal.topicRelevanceScore ?? 0).toBeLessThan(
+      withoutSignal.topicRelevanceScore ?? 0,
+    );
+  });
+
+  test("generic: CJK traditional title matches simplified query", () => {
+    const quality = scoreEvidence({
+      title: "華為發佈新技術突破",
+      url: "https://example.com/news/tech",
+      snippet: "華為發佈新技術突破，半導體領域取得重大進展。".repeat(10),
+      topic: "华为新技术突破",
+    });
+
+    expect(quality.topicRelevanceScore).toBeGreaterThan(0);
+  });
+
+  test("generic: source credibility does not guarantee core evidence status", () => {
+    const quality = scoreEvidence({
+      title: "Company quarterly earnings report",
+      url: "https://openai.com/news/earnings",
+      snippet:
+        "Company quarterly earnings report with revenue growth and market expansion. This report covers financial performance and business operations. ".repeat(
+          10,
+        ),
+      topic: "quantum computing breakthroughs",
+    });
+
+    expect(quality.sourceType).toBe("official_blog");
+    expect(quality.score).toBeGreaterThanOrEqual(60);
+    expect(quality.topicRelevanceScore).toBeLessThan(60);
+    expect(
+      isCoreEvidenceItem({
+        id: "S1",
+        title: "Company quarterly earnings report",
+        snippet:
+          "Company quarterly earnings report with revenue growth and market expansion. This report covers financial performance and business operations. ".repeat(
+            10,
+          ),
+        quality,
+      }),
+    ).toBe(false);
+  });
+
+  test("generic: lowEvidenceMode caps reliability at medium", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "Official AI company financing report",
+            url: "https://openai.com/news/financing",
+            snippet:
+              "Official AI company financing report with detailed revenue and market analysis. ".repeat(
+                16,
+              ),
+          },
+          {
+            title: "Industry AI company financing analysis",
+            url: "https://semianalysis.com/ai-financing",
+            snippet:
+              "Industry AI company financing analysis with market data and revenue projections. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "AI company financing" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBeLessThan(3);
+    expect(overview.overallReliability).not.toBe("高");
+  });
+
+  test("generic: coverageCompleteness below 1 when coreEvidenceCount below 3", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "AI company financing official report",
+            url: "https://openai.com/news/financing",
+            snippet:
+              "AI company financing official report with revenue details. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "AI company financing" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.coreEvidenceCount).toBeLessThan(3);
+    expect(overview.coverageCompleteness).toBeLessThan(1);
+  });
+
+  test("generic: exported markdown does not show Low-Evidence Mode with reliability 高", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "AI company financing report",
+            url: "https://openai.com/news/financing",
+            snippet:
+              "AI company financing report details. ".repeat(16),
+          },
+        ],
+      },
+      { topic: "AI company financing" },
+    );
+    const meeting = {
+      topic: "AI company financing",
+      isTimeSensitive: false,
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+      evidencePack: pack,
+    };
+    const participants = [
+      {
+        id: "test",
+        name: "Test Model",
+        provider: "TestProvider",
+        model: "test-model",
+        status: "available" as const,
+        statusLabel: "available",
+      },
+    ];
+    const markdown = exportMeetingToMarkdown(
+      meeting as Parameters<typeof exportMeetingToMarkdown>[0],
+      participants,
+    );
+
+    if (markdown.includes("Low-Evidence Mode")) {
+      expect(markdown).not.toMatch(/本轮结论可靠性：\s*高/);
+    }
+  });
+});
+
+describe("source code scan: no fixture-specific terms in business logic", () => {
+  test("evidence-pack.ts does not contain fixture-specific company or topic names", () => {
+    const businessFiles = [
+      "src/lib/search/evidence-pack.ts",
+      "src/lib/meeting/export-markdown.ts",
+      "src/lib/meeting/summary-quality-gate.ts",
+    ];
+    const fixturePatterns = [
+      /华为/,
+      /華為/,
+      /韬定律/,
+      /韜定律/,
+      /雄韬股份/,
+      /雄韬/,
+    ];
+
+    for (const file of businessFiles) {
+      const fullPath = path.join(process.cwd(), file);
+      if (!fs.existsSync(fullPath)) continue;
+      const content = fs.readFileSync(fullPath, "utf8");
+
+      for (const pattern of fixturePatterns) {
+        if (pattern.test(content)) {
+          expect(`${file} contains fixture term: ${pattern.source}`).toBe(
+            "no fixture terms",
+          );
+        }
+      }
+    }
+  });
+});
+
+describe("topicRelevanceScore missing handling", () => {
+  test("missing topicRelevanceScore prevents core evidence entry", () => {
+    const quality = scoreEvidence({
+      title: "Official company report",
+      url: "https://openai.com/news/report",
+      snippet: "Official company report with detailed analysis. ".repeat(20),
+    });
+
+    expect(quality.topicRelevanceScore).toBeDefined();
+    expect(quality.topicRelevanceScore).toBeGreaterThanOrEqual(0);
+
+    const withoutScore = {
+      ...quality,
+      topicRelevanceScore: undefined,
+    };
+
+    expect(
+      isCoreEvidenceItem({
+        id: "S1",
+        title: "Official company report",
+        snippet: "Official company report with detailed analysis. ".repeat(20),
+        quality: withoutScore as never,
+      }),
+    ).toBe(false);
+  });
+
+  test("debug summary tracks missingTopicRelevanceScore count", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      searchProcess: {
+        executedQueries: ["test query"],
+      },
+      items: [
+        {
+          title: "Item with score",
+          url: "https://reuters.com/tech/example",
+          snippet: "Long enough content for scoring. ".repeat(30),
+        },
+        {
+          title: "Item without score",
+          url: "https://example.com/test",
+          snippet: "Another long enough content. ".repeat(30),
+          quality: {
+            textLength: 900,
+            wasTruncated: false,
+            warnings: [],
+            sourceType: "unknown",
+            reliability: "low",
+            score: 30,
+          },
+        },
+      ],
+    });
+
+    expect(pack.searchProcess?.debugSummary?.degradeReasonsSummary.missingTopicRelevanceScore)
+      .toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("topicType-based coverage profiles", () => {
+  test("technical topic prioritizes technical_and_product group", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "AI model capability and performance analysis",
+            url: "https://lmarena.ai/leaderboard",
+            snippet:
+              "AI model capability and performance analysis with detailed technical specifications and benchmark results. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "AI model capability comparison" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.strongCoveredDimensions.length).toBeGreaterThan(0);
+    expect(
+      overview.strongCoveredDimensions.some((d) =>
+        ["technical_capability", "benchmark_evaluation", "product_release"].includes(d),
+      ),
+    ).toBe(true);
+  });
+
+  test("policy topic prioritizes governance_and_compliance group", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "AI regulation governance policy update",
+            url: "https://reuters.com/policy/ai-regulation",
+            snippet:
+              "AI regulation governance policy update with compliance requirements and regulatory framework details. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "AI regulation governance policy" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.strongCoveredDimensions.length).toBeGreaterThan(0);
+    expect(
+      overview.strongCoveredDimensions.some((d) =>
+        ["regulation_governance", "legal_lawsuit"].includes(d),
+      ),
+    ).toBe(true);
+  });
+
+  test("business topic prioritizes business_and_market group", () => {
+    const pack = normalizeEvidencePack(
+      {
+        enabled: true,
+        items: [
+          {
+            title: "AI company revenue growth analysis",
+            url: "https://reuters.com/business/ai-revenue",
+            snippet:
+              "AI company revenue growth analysis with market share data and enterprise adoption metrics. ".repeat(
+                16,
+              ),
+          },
+        ],
+      },
+      { topic: "AI company revenue growth" },
+    );
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.strongCoveredDimensions.length).toBeGreaterThan(0);
   });
 });

@@ -140,7 +140,7 @@ describe("Tavily evidence search", () => {
     );
   });
 
-  test("keeps at most twenty non-empty sanitized candidate results", () => {
+  test("keeps at most five non-empty sanitized candidate results", () => {
     const drafts = normalizeTavilySearchResponse({
       results: [
         {
@@ -158,7 +158,7 @@ describe("Tavily evidence search", () => {
     });
     const serialized = JSON.stringify(drafts);
 
-    expect(drafts).toHaveLength(20);
+    expect(drafts).toHaveLength(5);
     expect(serialized).not.toContain("Authorization");
     expect(serialized).not.toContain("Bearer");
     expect(serialized).not.toContain("secret-openai-key");
@@ -197,8 +197,8 @@ describe("Tavily evidence search", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual(
       expect.objectContaining({
         query: "fresh topic",
-        max_results: 20,
-        search_depth: "basic",
+        max_results: 5,
+        search_depth: "advanced",
       }),
     );
     expect(drafts[0]).toEqual(
@@ -314,11 +314,10 @@ describe("Tavily evidence search", () => {
 
     expect(JSON.parse(String(init.body))).toEqual(
       expect.objectContaining({
-        chunks_per_source: 5,
-        country: "china",
         include_raw_content: "text",
       }),
     );
+    expect(JSON.parse(String(init.body))).not.toHaveProperty("country");
     expect(JSON.parse(String(init.body))).not.toHaveProperty("topic");
   });
 
@@ -349,11 +348,7 @@ describe("Tavily evidence search", () => {
 
     const requestBody = JSON.parse(String(init.body));
 
-    expect(requestBody).toEqual(
-      expect.objectContaining({
-        country: "china",
-      }),
-    );
+    expect(requestBody).not.toHaveProperty("country");
     expect(requestBody).not.toHaveProperty("topic");
   });
 
@@ -490,6 +485,190 @@ describe("Tavily evidence search", () => {
       message: "Tavily search failed: missing_api_key",
     } satisfies Partial<TavilySearchError>);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("does not send chunks_per_source when search depth is not advanced", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Basic source",
+            url: "https://example.com/basic",
+            content: "Basic search content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("basic topic", {
+      apiKey: "tvly-test-key",
+      chunksPerSource: 5,
+      fetchImpl: fetchMock,
+      searchDepth: "basic",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody).not.toHaveProperty("chunks_per_source");
+  });
+
+  test("sends chunks_per_source when search depth is advanced", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Advanced source",
+            url: "https://example.com/advanced",
+            content: "Advanced search content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("advanced topic", {
+      apiKey: "tvly-test-key",
+      chunksPerSource: 3,
+      fetchImpl: fetchMock,
+      searchDepth: "advanced",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody).toHaveProperty("chunks_per_source", 3);
+  });
+
+  test("does not send country when topic is news", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "News source",
+            url: "https://example.com/news",
+            content: "News content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("news topic", {
+      apiKey: "tvly-test-key",
+      country: "china",
+      fetchImpl: fetchMock,
+      topic: "news",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody).not.toHaveProperty("country");
+  });
+
+  test("sends country when topic is general", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        results: [
+          {
+            title: "General source",
+            url: "https://example.com/general",
+            content: "General content.",
+          },
+        ],
+      }),
+    );
+
+    await searchTavilyEvidence("general topic", {
+      apiKey: "tvly-test-key",
+      country: "china",
+      fetchImpl: fetchMock,
+      topic: "general",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody).toHaveProperty("country", "china");
+  });
+
+  test("truncates include_domains to 300 and exclude_domains to 150", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({ results: [] }),
+    );
+    const manyIncludeDomains = Array.from({ length: 400 }, (_, i) => `include-${i}.com`);
+    const manyExcludeDomains = Array.from({ length: 200 }, (_, i) => `exclude-${i}.com`);
+
+    await searchTavilyEvidence("domain limit topic", {
+      apiKey: "tvly-test-key",
+      excludeDomains: manyExcludeDomains,
+      fetchImpl: fetchMock,
+      includeDomains: manyIncludeDomains,
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit];
+    const requestBody = JSON.parse(String(init.body));
+
+    expect(requestBody.include_domains).toHaveLength(300);
+    expect(requestBody.exclude_domains).toHaveLength(150);
+  });
+
+  test("classifies Tavily detail.error as invalid_request instead of invalid_response", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        detail: {
+          error: "When time_range is set, start_date or end_date cannot be set",
+        },
+      }),
+    );
+
+    await expect(
+      searchTavilyEvidence("conflicting params topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toMatchObject({
+      reason: "invalid_request",
+      message: "Tavily search failed: invalid_request",
+    } satisfies Partial<TavilySearchError>);
+  });
+
+  test("classifies Tavily detail string error as invalid_request", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        detail: "Rate limit exceeded for this endpoint",
+      }),
+    );
+
+    await expect(
+      searchTavilyEvidence("rate limit detail", {
+        apiKey: "tvly-test-key",
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toMatchObject({
+      reason: "invalid_request",
+    } satisfies Partial<TavilySearchError>);
+  });
+
+  test("sanitizes API key from Tavily detail.error message", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        detail: {
+          error: "Authorization failed for Bearer secret-tavily-key-abc123",
+        },
+      }),
+    );
+
+    let error: unknown;
+
+    try {
+      await searchTavilyEvidence("auth error topic", {
+        apiKey: "tvly-test-key",
+        fetchImpl: fetchMock,
+      });
+    } catch (caughtError) {
+      error = caughtError;
+    }
+
+    expect(error).toBeInstanceOf(TavilySearchError);
+    const tavilyError = error as TavilySearchError;
+    expect(tavilyError.reason).toBe("invalid_request");
+    expect(tavilyError.message).not.toContain("secret-tavily-key-abc123");
+    expect(tavilyError.diagnostics?.safeMessage).not.toContain("secret-tavily-key-abc123");
   });
 
   test("classifies rate limits, network errors, and invalid responses safely", async () => {

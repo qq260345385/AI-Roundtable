@@ -15,6 +15,7 @@ import { checkEvidenceCitations } from "../search/evidence-citations";
 import { resolveEvidencePackDelivery } from "../search/evidence-pack";
 import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
 import { sanitizeRoleLeak } from "./role-leak";
+import { generateFallbackSummaryFromTurns } from "../providers/openai-compatible-provider";
 
 const DISCUSSION_FOCUSES = [
   "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
@@ -195,9 +196,18 @@ async function generateSummaryWithFallback(
     throwIfAborted(request.signal);
 
     try {
+      let summary: MeetingSummary;
+
       if (provider.generateSummaryForParticipant) {
-        return await provider.generateSummaryForParticipant(
+        summary = await provider.generateSummaryForParticipant(
           participant,
+          request.topic,
+          turns,
+          request.evidencePack,
+          getMeetingPromptOptions(request, participant),
+        );
+      } else {
+        summary = await provider.generateSummary(
           request.topic,
           turns,
           request.evidencePack,
@@ -205,12 +215,15 @@ async function generateSummaryWithFallback(
         );
       }
 
-      return await provider.generateSummary(
-        request.topic,
-        turns,
-        request.evidencePack,
-        getMeetingPromptOptions(request, participant),
-      );
+      if (summary.summaryDebug?.fallbackUsed) {
+        return generateFallbackSummaryFromTurns(
+          request.topic,
+          turns,
+          request.evidencePack,
+        );
+      }
+
+      return summary;
     } catch (error) {
       if (request.signal?.aborted) {
         throw error;
@@ -220,7 +233,11 @@ async function generateSummaryWithFallback(
     }
   }
 
-  return createFallbackSummary();
+  return generateFallbackSummaryFromTurns(
+    request.topic,
+    turns,
+    request.evidencePack,
+  );
 }
 
 function getSummaryParticipants(
@@ -318,16 +335,6 @@ function sanitizeErrorMessage(error: unknown): string {
     .replace(/secret[-_A-Za-z0-9]*/gi, "[redacted]")
     .replace(/Authorization/gi, "[redacted-header]")
     .slice(0, 160);
-}
-
-function createFallbackSummary(): MeetingSummary {
-  return {
-    consensus: ["已有模型发言已保留，但未能生成模型总结。"],
-    differences: ["未能生成结构化分歧总结。"],
-    minorityViews: ["未能生成结构化少数派观点总结。"],
-    risks: ["未能生成模型总结，请查看会议发言和失败记录。"],
-    nextSteps: ["检查 summary provider 的配置、模型输出和错误记录。"],
-  };
 }
 
 export class AllProvidersFailedError extends Error {

@@ -9,6 +9,7 @@ import {
 
 type ExportMarkdownOptions = {
   includeEvidenceDebug?: boolean;
+  includeSummaryDebug?: boolean;
 };
 
 // 把会议结果导出成适合保存到 examples 的 Markdown 文本。
@@ -65,30 +66,67 @@ export function exportMeetingToMarkdown(
 
   lines.push("## 第三阶段：共识整理");
   lines.push("");
-  const confirmableFacts = meeting.summary.confirmableFacts ?? meeting.summary.consensus;
-  const lowConfidenceHypotheses = [
+  const confirmableFacts = sanitizeSummaryItems(
+    meeting.summary.confirmableFacts ?? meeting.summary.consensus,
+  );
+  const lowConfidenceHypotheses = sanitizeSummaryItems([
     ...(meeting.summary.initialHypotheses ?? []),
     ...(meeting.summary.communityViews ?? []),
-  ];
+  ]);
+  const hasOfficialSources = hasStrongOfficialEvidence(meeting);
   appendList(
     lines,
     "可确认事实",
     confirmableFacts.length > 0
-      ? confirmableFacts
+      ? confirmableFacts.map((fact) =>
+          hasOfficialSources ? fact : hedgeUnofficialFact(fact),
+        )
       : ["无。当前资料不足以确认关键事实。"],
   );
   appendList(
     lines,
     "低置信推测",
-    lowConfidenceHypotheses,
+    lowConfidenceHypotheses.length > 0
+      ? lowConfidenceHypotheses
+      : ["无。"],
   );
   appendList(
     lines,
     "不能确认的关键问题",
-    meeting.summary.insufficientlyConfirmed ?? [],
+    sanitizeSummaryItems(meeting.summary.insufficientlyConfirmed ?? []),
   );
-  appendList(lines, "风险点", meeting.summary.risks);
-  appendList(lines, "下一步核验建议", meeting.summary.nextSteps);
+  appendList(
+    lines,
+    "风险点",
+    sanitizeSummaryItems(meeting.summary.risks).length > 0
+      ? sanitizeSummaryItems(meeting.summary.risks)
+      : ["无。"],
+  );
+  appendList(
+    lines,
+    "下一步核验建议",
+    sanitizeSummaryItems(meeting.summary.nextSteps).length > 0
+      ? sanitizeSummaryItems(meeting.summary.nextSteps)
+      : ["无。"],
+  );
+
+  if (options.includeSummaryDebug && meeting.summary.summaryDebug) {
+    const debug = meeting.summary.summaryDebug;
+
+    lines.push("### Summary Debug");
+    lines.push("");
+    lines.push(`- rawFormatDetected: ${debug.rawFormatDetected}`);
+    lines.push(`- parseSucceeded: ${debug.parseSucceeded}`);
+    lines.push(`- repairAttempted: ${debug.repairAttempted}`);
+    lines.push(`- fallbackUsed: ${debug.fallbackUsed}`);
+    if (debug.fallbackReason) {
+      lines.push(`- fallbackReason: ${sanitizeMarkdownText(debug.fallbackReason)}`);
+    }
+    if (debug.emptySectionsRepaired.length > 0) {
+      lines.push(`- emptySectionsRepaired: ${debug.emptySectionsRepaired.join(", ")}`);
+    }
+    lines.push("");
+  }
 
   if (meeting.failures && meeting.failures.length > 0) {
     lines.push("## 模型调用失败记录");
@@ -277,7 +315,14 @@ function appendEvidencePack(lines: string[], meeting: MeetingResult) {
         !isRelatedBackgroundEvidenceItem(item),
     );
 
-    if (coreEvidence.length < 3) {
+    if (coreEvidence.length < 3 && meeting.evidencePack.items.length > 0) {
+      lines.push("## Low-Evidence Mode");
+      lines.push("");
+      lines.push(
+        `已找到联网参考资料，但核心证据不足，以下资料仅作为参考，结论需谨慎核验。`,
+      );
+      lines.push("");
+    } else if (coreEvidence.length < 3) {
       lines.push("## Low-Evidence Mode");
       lines.push("");
       lines.push(
@@ -383,9 +428,11 @@ function appendEvidenceStatus(lines: string[], meeting: MeetingResult) {
     return;
   }
 
+  const hasItems = (meeting.evidencePack?.items?.length ?? 0) > 0;
+
   lines.push("## 事实核验状态");
   lines.push("");
-  lines.push(formatEvidenceStatusMessage(status));
+  lines.push(formatEvidenceStatusMessage(status, hasItems));
 
   const warnings = meeting.evidencePack?.evidenceWarnings ?? [];
 
@@ -396,7 +443,7 @@ function appendEvidenceStatus(lines: string[], meeting: MeetingResult) {
   lines.push("");
 }
 
-function formatEvidenceStatusMessage(status: string): string {
+function formatEvidenceStatusMessage(status: string, hasItems: boolean): string {
   if (status === "high") {
     return "本次会议参考了较可靠的联网资料。";
   }
@@ -406,6 +453,10 @@ function formatEvidenceStatusMessage(status: string): string {
   }
 
   if (status === "low") {
+    if (hasItems) {
+      return "已找到联网参考资料，但核心证据不足，结论需谨慎核验。";
+    }
+
     return "本次会议未找到高质量资料，结论仅供参考。";
   }
 
@@ -413,7 +464,9 @@ function formatEvidenceStatusMessage(status: string): string {
 }
 
 function appendEvidenceQualityOverview(lines: string[], meeting: MeetingResult) {
-  const overview = summarizeEvidenceQuality(meeting.evidencePack);
+  const overview = summarizeEvidenceQuality(meeting.evidencePack, {
+    evidenceStatus: meeting.evidencePack?.evidenceStatus,
+  });
 
   lines.push("## 资料质量概览");
   lines.push("");
@@ -427,9 +480,13 @@ function appendEvidenceQualityOverview(lines: string[], meeting: MeetingResult) 
   lines.push(`- 核心证据数量：${overview.coreEvidenceCount}`);
   lines.push(`- 内容过短资料数量：${overview.shortContentCount}`);
   lines.push(`- 标题党风险资料数量：${overview.clickbaitRiskCount}`);
-  lines.push(`- 覆盖维度：${formatOverviewList(overview.coveredDimensions)}`);
+  lines.push(`- 强覆盖维度：${formatOverviewList(overview.strongCoveredDimensions)}`);
+  lines.push(`- 弱覆盖维度：${formatOverviewList(overview.weakCoveredDimensions)}`);
   lines.push(`- 缺失维度：${formatOverviewList(overview.missingDimensions)}`);
   lines.push(`- 覆盖度评分：${overview.coverageCompleteness}`);
+  if (overview.reliabilityLimitReason) {
+    lines.push(`- 可靠性限制：${sanitizeMarkdownText(overview.reliabilityLimitReason)}`);
+  }
   lines.push(`- 本轮结论可靠性：${overview.overallReliability}`);
   lines.push("");
 }
@@ -555,4 +612,45 @@ function sanitizeMarkdownText(value: string): string {
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "[redacted-token]")
     .replace(/secret[-_A-Za-z0-9]*/gi, "[redacted]")
     .replace(/Authorization/gi, "[redacted-header]");
+}
+
+function sanitizeSummaryItems(items: string[]): string[] {
+  return items
+    .map((item) =>
+      item
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/\bundefined\b/g, "")
+        .replace(/\[object Object\]/g, "")
+        .trim(),
+    )
+    .filter((item) => item.length > 0);
+}
+
+function hasStrongOfficialEvidence(meeting: MeetingResult): boolean {
+  const items = meeting.evidencePack?.items ?? [];
+
+  return items.some(
+    (item) =>
+      item.quality?.reliability === "high" &&
+      (item.quality?.sourceType === "official_statement" ||
+        item.quality?.sourceType === "official_blog" ||
+        item.quality?.sourceType === "official_docs"),
+  );
+}
+
+function hedgeUnofficialFact(fact: string): string {
+  if (
+    fact.includes("据") ||
+    fact.includes("媒体报道") ||
+    fact.includes("资料声称") ||
+    fact.includes("社区讨论") ||
+    fact.includes("尚未核验") ||
+    fact.includes("不能确认") ||
+    fact.includes("不足以确认") ||
+    fact.includes("当前资料")
+  ) {
+    return fact;
+  }
+
+  return `据资料，${fact}`;
 }

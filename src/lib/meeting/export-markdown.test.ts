@@ -150,7 +150,7 @@ describe("exportMeetingToMarkdown", () => {
     );
 
     expect(markdown).toContain("## 事实核验状态");
-    expect(markdown).toContain("本次会议未找到高质量资料，结论仅供参考。");
+    expect(markdown).toContain("已找到联网参考资料，但核心证据不足，结论需谨慎核验。");
     expect(markdown).toContain("- 提示：未找到高质量联网资料");
   });
 
@@ -332,6 +332,7 @@ describe("exportMeetingToMarkdown", () => {
                 sourceType: "reputable_media" as never,
                 reliability: "high",
                 score: 82,
+                topicRelevanceScore: 75,
               },
             },
             {
@@ -404,7 +405,7 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("## 核心证据");
     expect(markdown).toContain("## 舆论线索");
     expect(markdown).toContain("## 被降级资料");
-    expect(markdown).toContain("本轮核心证据少于 3 条，会议已进入 low-evidence mode");
+    expect(markdown).toContain("已找到联网参考资料，但核心证据不足");
     expect(sectionText(markdown, "## 核心证据")).toContain("Reuters long report");
     expect(sectionText(markdown, "## 核心证据")).not.toContain("Reddit discussion");
     expect(sectionText(markdown, "## 核心证据")).not.toContain("YouTube reaction");
@@ -709,6 +710,7 @@ describe("exportMeetingToMarkdown", () => {
             scoreTooLow: 4,
             extractionFailed: 2,
             socialVideoSource: 6,
+            missingTopicRelevanceScore: 0,
           },
           lowEvidenceTriggerReasons: {
             coreEvidenceLessThan3: true,
@@ -839,6 +841,7 @@ describe("exportMeetingToMarkdown", () => {
             scoreTooLow: 0,
             extractionFailed: 0,
             socialVideoSource: 0,
+            missingTopicRelevanceScore: 0,
           },
           lowEvidenceTriggerReasons: {
             coreEvidenceLessThan3: true,

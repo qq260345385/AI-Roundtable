@@ -60,7 +60,9 @@ function applyCoverageNoticeToConfirmableFacts(
     return summary;
   }
 
-  const overview = summarizeEvidenceQuality(evidencePack);
+  const overview = summarizeEvidenceQuality(evidencePack, {
+    evidenceStatus: evidencePack.evidenceStatus,
+  });
 
   if (
     overview.coverageCompleteness >= 0.75 ||

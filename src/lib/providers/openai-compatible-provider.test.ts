@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { OpenAICompatibleProvider } from "./openai-compatible-provider";
+import { OpenAICompatibleProvider, parseSummary } from "./openai-compatible-provider";
+import { exportMeetingToMarkdown } from "../meeting/export-markdown";
 
 describe("OpenAICompatibleProvider", () => {
   test("throws a clear error when api key is missing", () => {
@@ -540,6 +541,296 @@ describe("OpenAICompatibleProvider", () => {
     expect(prompts[2]).toContain("简要会议模式");
     expect(prompts[2]).toContain("每个字段最多 3 条");
   });
+  describe("parseSummary", () => {
+    test("parses pure JSON summary", () => {
+      const input = JSON.stringify({
+        confirmableFacts: ["GPT-4o 已发布。"],
+        initialHypotheses: ["可能有新版本。"],
+        insufficientlyConfirmed: [],
+        risks: ["信息可能过时。"],
+        nextSteps: ["核验发布时间。"],
+        consensus: ["共识。"],
+        differences: [],
+        minorityViews: [],
+      });
+
+      const result = parseSummary(input);
+
+      expect(result.confirmableFacts).toEqual(["GPT-4o 已发布。"]);
+      expect(result.initialHypotheses).toEqual(["可能有新版本。"]);
+      expect(result.insufficientlyConfirmed).toEqual([]);
+      expect(result.risks).toEqual(["信息可能过时。"]);
+      expect(result.nextSteps).toEqual(["核验发布时间。"]);
+      expect(result.consensus).toEqual(["共识。"]);
+    });
+
+    test("parses JSON wrapped in ```json code fence", () => {
+      const input = '```json\n{"confirmableFacts":["事实A"],"initialHypotheses":[],"insufficientlyConfirmed":[],"risks":[],"nextSteps":[],"consensus":[],"differences":[],"minorityViews":[]}\n```';
+
+      const result = parseSummary(input);
+
+      expect(result.confirmableFacts).toEqual(["事实A"]);
+      expect(result.consensus).toEqual([]);
+    });
+
+    test("parses JSON wrapped in plain ``` code fence", () => {
+      const input = '```\n{"confirmableFacts":[],"initialHypotheses":["推测B"],"insufficientlyConfirmed":[],"risks":[],"nextSteps":[],"consensus":[],"differences":[],"minorityViews":[]}\n```';
+
+      const result = parseSummary(input);
+
+      expect(result.initialHypotheses).toEqual(["推测B"]);
+    });
+
+    test("extracts JSON object from surrounding explanation text", () => {
+      const input = '以下是会议小结：\n{"confirmableFacts":["事实C"],"initialHypotheses":[],"insufficientlyConfirmed":[],"risks":["风险D"],"nextSteps":[],"consensus":[],"differences":[],"minorityViews":[]}\n以上是会议小结。';
+
+      const result = parseSummary(input);
+
+      expect(result.confirmableFacts).toEqual(["事实C"]);
+      expect(result.risks).toEqual(["风险D"]);
+    });
+
+    test("does not leak raw JSON into consensus on parse failure", () => {
+      const input = "这不是 JSON，也不是代码块，就是一段普通文字。";
+
+      const result = parseSummary(input);
+
+      expect(result.consensus).toEqual([]);
+      expect(result.confirmableFacts).toEqual([]);
+      expect(result.insufficientlyConfirmed).toContain(
+        "第三阶段共识整理输出格式异常，无法可靠解析。",
+      );
+      expect(result.risks).toContain(
+        "会议小结不是标准 JSON，后续需要加强提示词或解析逻辑。",
+      );
+    });
+
+    test("does not leak raw ```json fence into consensus on parse failure", () => {
+      const input = '```json\n{broken json}\n```';
+
+      const result = parseSummary(input);
+
+      expect(result.consensus).toEqual([]);
+      expect(result.confirmableFacts).toEqual([]);
+      expect(result.insufficientlyConfirmed).toContain(
+        "第三阶段共识整理输出格式异常，无法可靠解析。",
+      );
+    });
+
+    test("exported markdown does not contain raw JSON or code fences from failed parse", () => {
+      const rawContent = '```json\n{broken json}\n```';
+      const summary = parseSummary(rawContent);
+      const meeting = {
+        topic: "Test Topic",
+        isTimeSensitive: false,
+        phases: [],
+        summary,
+      };
+      const participants = [
+        {
+          id: "test",
+          name: "Test Model",
+          provider: "TestProvider",
+          model: "test-model",
+          status: "available" as const,
+          statusLabel: "available",
+        },
+      ];
+
+      const markdown = exportMeetingToMarkdown(
+        meeting as Parameters<typeof exportMeetingToMarkdown>[0],
+        participants,
+      );
+
+      expect(markdown).not.toContain("```json");
+      expect(markdown).not.toContain("broken json");
+      expect(markdown).toContain("第三阶段共识整理输出格式异常");
+    });
+
+    test("exported markdown contains valid facts from successful parse", () => {
+      const input = JSON.stringify({
+        confirmableFacts: ["GPT-4o 已发布。"],
+        initialHypotheses: [],
+        insufficientlyConfirmed: [],
+        risks: [],
+        nextSteps: ["核验发布时间。"],
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+      });
+      const summary = parseSummary(input);
+      const meeting = {
+        topic: "Test Topic",
+        isTimeSensitive: false,
+        phases: [],
+        summary,
+      };
+      const participants = [
+        {
+          id: "test",
+          name: "Test Model",
+          provider: "TestProvider",
+          model: "test-model",
+          status: "available" as const,
+          statusLabel: "available",
+        },
+      ];
+
+      const markdown = exportMeetingToMarkdown(
+        meeting as Parameters<typeof exportMeetingToMarkdown>[0],
+        participants,
+      );
+
+      expect(markdown).toContain("GPT-4o 已发布。");
+      expect(markdown).toContain("核验发布时间。");
+    });
+
+    test("maps field aliases to canonical names", () => {
+      const input = JSON.stringify({
+        facts: ["事实A"],
+        hypotheses: ["推测B"],
+        unknowns: ["未知C"],
+        riskPoints: ["风险D"],
+        actionItems: ["行动E"],
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+      });
+
+      const result = parseSummary(input);
+
+      expect(result.confirmableFacts).toEqual(["事实A"]);
+      expect(result.initialHypotheses).toEqual(["推测B"]);
+      expect(result.insufficientlyConfirmed).toEqual(["未知C"]);
+      expect(result.risks).toEqual(["风险D"]);
+      expect(result.nextSteps).toEqual(["行动E"]);
+    });
+
+    test("converts string fields to arrays", () => {
+      const input = JSON.stringify({
+        confirmableFacts: "single fact string",
+        initialHypotheses: "single hypothesis",
+        insufficientlyConfirmed: [],
+        risks: "single risk",
+        nextSteps: "single step",
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+      });
+
+      const result = parseSummary(input);
+
+      expect(result.confirmableFacts).toEqual(["single fact string"]);
+      expect(result.initialHypotheses).toEqual(["single hypothesis"]);
+      expect(result.risks).toEqual(["single risk"]);
+      expect(result.nextSteps).toEqual(["single step"]);
+    });
+
+    test("removes empty strings and duplicates from arrays", () => {
+      const input = JSON.stringify({
+        confirmableFacts: ["事实A", "", "事实A", "  ", "事实B"],
+        initialHypotheses: [],
+        insufficientlyConfirmed: [],
+        risks: [],
+        nextSteps: [],
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+      });
+
+      const result = parseSummary(input);
+
+      expect(result.confirmableFacts).toEqual(["事实A", "事实B"]);
+    });
+
+    test("sets fallbackUsed=true on parse failure and populates all sections", () => {
+      const input = "This is not JSON at all, just plain text.";
+
+      const result = parseSummary(input);
+
+      expect(result.summaryDebug?.fallbackUsed).toBe(true);
+      expect(result.summaryDebug?.parseSucceeded).toBe(false);
+      expect(result.risks.length).toBeGreaterThan(0);
+      expect(result.nextSteps.length).toBeGreaterThan(0);
+    });
+
+    test("exported markdown does not contain undefined or [object Object]", () => {
+      const input = JSON.stringify({
+        confirmableFacts: ["事实A"],
+        initialHypotheses: [undefined, null, "推测B"],
+        insufficientlyConfirmed: [],
+        risks: [],
+        nextSteps: [],
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+      });
+      const summary = parseSummary(input);
+      const meeting = {
+        topic: "Test Topic",
+        isTimeSensitive: false,
+        phases: [],
+        summary,
+      };
+      const participants = [
+        {
+          id: "test",
+          name: "Test Model",
+          provider: "TestProvider",
+          model: "test-model",
+          status: "available" as const,
+          statusLabel: "available",
+        },
+      ];
+
+      const markdown = exportMeetingToMarkdown(
+        meeting as Parameters<typeof exportMeetingToMarkdown>[0],
+        participants,
+      );
+
+      expect(markdown).not.toContain("undefined");
+      expect(markdown).not.toContain("[object Object]");
+    });
+
+    test("exported markdown does not show summaryDebug by default", () => {
+      const input = JSON.stringify({
+        confirmableFacts: ["事实"],
+        initialHypotheses: [],
+        insufficientlyConfirmed: [],
+        risks: [],
+        nextSteps: [],
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+      });
+      const summary = parseSummary(input);
+      const meeting = {
+        topic: "Test Topic",
+        isTimeSensitive: false,
+        phases: [],
+        summary,
+      };
+      const participants = [
+        {
+          id: "test",
+          name: "Test Model",
+          provider: "TestProvider",
+          model: "test-model",
+          status: "available" as const,
+          statusLabel: "available",
+        },
+      ];
+
+      const markdown = exportMeetingToMarkdown(
+        meeting as Parameters<typeof exportMeetingToMarkdown>[0],
+        participants,
+      );
+
+      expect(markdown).not.toContain("rawFormatDetected");
+      expect(markdown).not.toContain("parseSucceeded");
+    });
+  });
+
   test("asks the model to plan web search queries", async () => {
     let requestBody = "";
     const provider = new OpenAICompatibleProvider({

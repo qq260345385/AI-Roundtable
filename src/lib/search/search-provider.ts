@@ -2,6 +2,7 @@ import type {
   SearchCacheEvent,
   SearchFreshness,
 } from "./evidence-pack";
+import type { SearchRegion } from "../types";
 
 export type SearchProviderRequest = {
   query: string;
@@ -16,6 +17,7 @@ export type SearchProviderRequest = {
   includeDomains?: string[];
   includeRawContent?: boolean | "markdown" | "text";
   includeUsage?: boolean;
+  searchRegion?: SearchRegion;
   searchTopic?: "general" | "news" | "finance";
   signal?: AbortSignal;
   timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";

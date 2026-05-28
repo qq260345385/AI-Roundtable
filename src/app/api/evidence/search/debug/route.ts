@@ -82,6 +82,9 @@ export async function GET(request: Request) {
         evidencePack.searchProcess,
         "evidence_search",
       );
+      const providerErrorSnippet = extractProviderErrorSnippet(
+        evidencePack.searchProcess?.providerDiagnostics,
+      );
 
       return NextResponse.json(
         {
@@ -89,6 +92,7 @@ export async function GET(request: Request) {
           failedStage: diagnostic.failedStage,
           errorType: diagnostic.errorType,
           safeErrorMessage: diagnostic.safeErrorMessage,
+          ...(providerErrorSnippet ? { providerErrorSnippet } : {}),
         },
         { status: diagnostic.statusCode },
       );
@@ -104,6 +108,21 @@ export async function GET(request: Request) {
       coreEvidenceCount:
         debugSummary?.evidenceHitRate.coreEvidenceCount ?? 0,
       debugSummary,
+      passDiagnostics: evidencePack.searchProcess?.passStats?.map((stat) => ({
+        passName: stat.passName,
+        query: stat.query,
+        resultCount: stat.resultCount,
+        requestSent: true,
+        providerRawResultCount: stat.resultCount,
+        providerNormalizedResultCount: stat.extractedCount,
+        zeroResultStage: stat.resultCount === 0 ? "provider_returned_zero" : "none",
+        skippedReason: evidencePack.searchProcess?.skippedPassReasons?.[stat.passName],
+      })),
+      zeroResultFallbackTriggered: evidencePack.searchProcess?.zeroResultFallbackTriggered,
+      fallbackQueries: evidencePack.searchProcess?.fallbackQueries,
+      providerReturnedZeroCount: evidencePack.searchProcess?.providerReturnedZeroCount,
+      skippedPasses: evidencePack.searchProcess?.skippedPasses,
+      skippedPassReasons: evidencePack.searchProcess?.skippedPassReasons,
     });
   } catch (error) {
     const diagnostic = createSearchProcessFailureDiagnostic(
@@ -124,4 +143,31 @@ export async function GET(request: Request) {
       { status: diagnostic.statusCode },
     );
   }
+}
+
+function extractProviderErrorSnippet(
+  diagnostics: { provider?: string; diagnostics?: Record<string, unknown> }[] | undefined,
+): string | undefined {
+  if (!diagnostics || diagnostics.length === 0) {
+    return undefined;
+  }
+
+  for (const entry of diagnostics) {
+    const diag = entry.diagnostics;
+
+    if (!diag) {
+      continue;
+    }
+
+    const safeMessage = typeof diag.safeMessage === "string" ? diag.safeMessage : undefined;
+    const responseTextSnippet =
+      typeof diag.responseTextSnippet === "string" ? diag.responseTextSnippet : undefined;
+    const snippet = safeMessage || responseTextSnippet;
+
+    if (snippet) {
+      return snippet.slice(0, 300);
+    }
+  }
+
+  return undefined;
 }

@@ -4,6 +4,7 @@ import type {
   MeetingPromptOptions,
   ModelParticipant,
   ModelProvider,
+  SummaryDebug,
 } from "../types";
 import { getFactHygienePrompt } from "../meeting/fact-hygiene";
 import {
@@ -380,38 +381,430 @@ function getSeatNumber(turns: MeetingTurn[], speakerName: string): number {
   return index >= 0 ? index + 1 : 0;
 }
 
-function parseSummary(content: string): MeetingSummary {
-  try {
-    const data = JSON.parse(content) as Partial<MeetingSummary>;
+const FIELD_ALIASES: Record<string, string> = {
+  facts: "confirmableFacts",
+  confirmedFacts: "confirmableFacts",
+  hypotheses: "initialHypotheses",
+  lowConfidenceInferences: "initialHypotheses",
+  unknowns: "insufficientlyConfirmed",
+  openQuestions: "insufficientlyConfirmed",
+  riskPoints: "risks",
+  verificationSteps: "nextSteps",
+  actionItems: "nextSteps",
+};
 
-    return {
-      consensus: readStringList(data.consensus),
-      differences: readStringList(data.differences),
-      minorityViews: readStringList(data.minorityViews),
-      confirmableFacts: readStringList(data.confirmableFacts),
-      initialHypotheses: readStringList(data.initialHypotheses),
-      communityViews: readStringList(data.communityViews),
-      insufficientlyConfirmed: readStringList(data.insufficientlyConfirmed),
-      risks: readStringList(data.risks),
-      nextSteps: readStringList(data.nextSteps),
-    };
-  } catch {
-    return {
-      consensus: [content],
-      differences: ["模型没有返回可解析的结构化分歧。"],
-      minorityViews: ["模型没有返回可解析的少数派观点。"],
-      risks: ["会议小结不是标准 JSON，后续需要加强提示词或解析逻辑。"],
-      nextSteps: ["检查真实模型的 summary 输出格式。"],
-    };
+const SAFE_FALLBACK: MeetingSummary = {
+  consensus: [],
+  differences: [],
+  minorityViews: [],
+  confirmableFacts: [],
+  initialHypotheses: [],
+  communityViews: [],
+  insufficientlyConfirmed: [
+    "第三阶段共识整理输出格式异常，无法可靠解析。",
+  ],
+  risks: ["会议小结不是标准 JSON，后续需要加强提示词或解析逻辑。"],
+  nextSteps: ["检查真实模型的 summary 输出格式。"],
+};
+
+export function parseSummary(content: string): MeetingSummary {
+  const { format, extracted } = detectAndExtractJson(content);
+  const debug: SummaryDebug = {
+    rawFormatDetected: format,
+    parseSucceeded: false,
+    repairAttempted: false,
+    fallbackUsed: false,
+    emptySectionsRepaired: [],
+  };
+
+  if (extracted) {
+    const repaired = repairParsedData(extracted);
+    const summary = buildSummaryFromParsed(repaired.data);
+    debug.parseSucceeded = true;
+    debug.repairAttempted = repaired.wasRepaired;
+    debug.emptySectionsRepaired = repaired.emptySections;
+
+    return applyQualityGate(summary, debug);
   }
+
+  debug.fallbackUsed = true;
+  debug.fallbackReason = "JSON extraction failed from model output";
+
+  return applyQualityGate({ ...SAFE_FALLBACK }, debug);
+}
+
+export function generateFallbackSummaryFromTurns(
+  topic: string,
+  turns: MeetingTurn[],
+  evidencePack?: EvidencePack,
+): MeetingSummary {
+  const debug: SummaryDebug = {
+    rawFormatDetected: "unknown",
+    parseSucceeded: false,
+    repairAttempted: false,
+    fallbackUsed: true,
+    fallbackReason: "Model summary generation failed, using turn-based fallback",
+    emptySectionsRepaired: [],
+  };
+
+  const turnTexts = turns.map((turn) => turn.content);
+  const allText = turnTexts.join("\n");
+  const hasCoreEvidence = (evidencePack?.items ?? []).some(
+    (item) =>
+      item.quality?.reliability === "high" ||
+      item.quality?.reliability === "medium",
+  );
+
+  const confirmableFacts = hasCoreEvidence
+    ? extractSentencesWithPattern(allText, [
+        /资料\[S\d+\]/,
+        /据.*?报道/,
+        /官方.*?发布/,
+        /已确认/,
+      ]).slice(0, 5)
+    : ["当前资料不足以确认关键事实。"];
+
+  const initialHypotheses = extractConsensusPoints(allText).slice(0, 5);
+  const risks = extractSentencesWithPattern(allText, [
+    /风险/,
+    /不确定/,
+    /不足/,
+    /无法确认/,
+    /需要核验/,
+    /risk/i,
+    /uncertain/i,
+  ]).slice(0, 5);
+
+  const nextSteps = [
+    `核验"${topic}"相关的最新官方信息。`,
+    "补充缺失维度的权威资料。",
+  ];
+
+  const summary: MeetingSummary = {
+    consensus: initialHypotheses,
+    differences: [],
+    minorityViews: [],
+    confirmableFacts,
+    initialHypotheses: [],
+    communityViews: [],
+    insufficientlyConfirmed: [
+      "模型总结生成失败，以下内容基于发言自动提取，可能不完整。",
+    ],
+    risks: risks.length > 0 ? risks : ["总结生成失败，风险点无法自动提取。"],
+    nextSteps,
+    summaryDebug: debug,
+  };
+
+  return applyQualityGate(summary, debug);
+}
+
+function detectAndExtractJson(content: string): {
+  format: SummaryDebug["rawFormatDetected"];
+  extracted: Record<string, unknown> | undefined;
+  wasFenced: boolean;
+} {
+  const trimmed = content.trim();
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/);
+
+  if (fenceMatch) {
+    const inner = fenceMatch[1].trim();
+    const parsed = tryParseJsonObject(inner) ?? extractFirstJsonObject(inner);
+
+    return { format: "fenced_json", extracted: parsed, wasFenced: true };
+  }
+
+  const directParsed = tryParseJsonObject(trimmed);
+
+  if (directParsed) {
+    return { format: "json", extracted: directParsed, wasFenced: false };
+  }
+
+  const braceExtracted = extractFirstJsonObject(trimmed);
+
+  if (braceExtracted) {
+    return { format: "json", extracted: braceExtracted, wasFenced: false };
+  }
+
+  return { format: "markdown", extracted: undefined, wasFenced: false };
+}
+
+function tryParseJsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(text);
+
+    if (isObject(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Not valid JSON.
+  }
+
+  return undefined;
+}
+
+function extractFirstJsonObject(content: string): Record<string, unknown> | undefined {
+  const startIndex = content.indexOf("{");
+
+  if (startIndex < 0) {
+    return undefined;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let index = startIndex; index < content.length; index += 1) {
+    const char = content[index];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      if (inString) {
+        escape = true;
+      }
+
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+
+      if (depth === 0) {
+        try {
+          const candidate = content.slice(startIndex, index + 1);
+          const parsed = JSON.parse(candidate);
+
+          if (isObject(parsed)) {
+            return parsed;
+          }
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function repairParsedData(data: Record<string, unknown>): {
+  data: Record<string, unknown>;
+  wasRepaired: boolean;
+  emptySections: string[];
+} {
+  const repaired: Record<string, unknown> = {};
+  let wasRepaired = false;
+  const emptySections: string[] = [];
+
+  for (const [key, value] of Object.entries(data)) {
+    const canonicalKey = FIELD_ALIASES[key] ?? key;
+    const repairedValue = repairFieldValue(value);
+
+    if (repairedValue.changed) {
+      wasRepaired = true;
+    }
+
+    repaired[canonicalKey] = repairedValue.value;
+
+    if (
+      Array.isArray(repairedValue.value) &&
+      repairedValue.value.length === 0 &&
+      isSummaryListField(canonicalKey)
+    ) {
+      emptySections.push(canonicalKey);
+    }
+  }
+
+  return { data: repaired, wasRepaired, emptySections };
+}
+
+function repairFieldValue(value: unknown): { value: unknown; changed: boolean } {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (trimmed === "" || trimmed === "undefined" || trimmed === "null") {
+      return { value: [], changed: true };
+    }
+
+    return { value: [trimmed], changed: true };
+  }
+
+  if (Array.isArray(value)) {
+    const cleaned = value
+      .filter((item) => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0 && item !== "undefined" && item !== "[object Object]")
+      .filter((item, index, arr) => arr.indexOf(item) === index);
+
+    return { value: cleaned, changed: cleaned.length !== value.length };
+  }
+
+  if (isObject(value)) {
+    const text =
+      typeof value.text === "string"
+        ? value.text
+        : typeof value.content === "string"
+          ? value.content
+          : typeof value.value === "string"
+            ? value.value
+            : JSON.stringify(value);
+
+    return { value: [text], changed: true };
+  }
+
+  if (value === undefined || value === null) {
+    return { value: [], changed: true };
+  }
+
+  return { value: [String(value)], changed: true };
+}
+
+function isSummaryListField(key: string): boolean {
+  return [
+    "consensus",
+    "differences",
+    "minorityViews",
+    "confirmableFacts",
+    "initialHypotheses",
+    "communityViews",
+    "insufficientlyConfirmed",
+    "risks",
+    "nextSteps",
+  ].includes(key);
+}
+
+function buildSummaryFromParsed(data: Record<string, unknown>): MeetingSummary {
+  return {
+    consensus: readStringList(data.consensus),
+    differences: readStringList(data.differences),
+    minorityViews: readStringList(data.minorityViews),
+    confirmableFacts: readStringList(data.confirmableFacts),
+    initialHypotheses: readStringList(data.initialHypotheses),
+    communityViews: readStringList(data.communityViews),
+    insufficientlyConfirmed: readStringList(data.insufficientlyConfirmed),
+    risks: readStringList(data.risks),
+    nextSteps: readStringList(data.nextSteps),
+  };
 }
 
 function readStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
   }
 
-  return value.filter((item): item is string => typeof item === "string");
+  return [];
+}
+
+function applyQualityGate(summary: MeetingSummary, debug: SummaryDebug): MeetingSummary {
+  const result = { ...summary };
+
+  result.consensus = sanitizeList(result.consensus);
+  result.differences = sanitizeList(result.differences);
+  result.minorityViews = sanitizeList(result.minorityViews);
+  result.risks = sanitizeList(result.risks);
+  result.nextSteps = sanitizeList(result.nextSteps);
+
+  if (result.confirmableFacts) {
+    result.confirmableFacts = sanitizeList(result.confirmableFacts);
+  }
+
+  if (result.initialHypotheses) {
+    result.initialHypotheses = sanitizeList(result.initialHypotheses);
+  }
+
+  if (result.communityViews) {
+    result.communityViews = sanitizeList(result.communityViews);
+  }
+
+  if (result.insufficientlyConfirmed) {
+    result.insufficientlyConfirmed = sanitizeList(result.insufficientlyConfirmed);
+  }
+
+  result.summaryDebug = debug;
+
+  return result;
+}
+
+function sanitizeList(items: string[]): string[] {
+  return items
+    .map((item) =>
+      item
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/\bundefined\b/g, "")
+        .replace(/\[object Object\]/g, "")
+        .trim(),
+    )
+    .filter((item) => item.length > 0);
+}
+
+function extractSentencesWithPattern(
+  text: string,
+  patterns: RegExp[],
+): string[] {
+  const sentences = text
+    .split(/[。！？\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 10);
+
+  const matched: string[] = [];
+
+  for (const sentence of sentences) {
+    if (patterns.some((pattern) => pattern.test(sentence))) {
+      matched.push(sentence);
+
+      if (matched.length >= 5) {
+        break;
+      }
+    }
+  }
+
+  return matched;
+}
+
+function extractConsensusPoints(text: string): string[] {
+  const sentences = text
+    .split(/[。！？\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 15 && s.length <= 200);
+
+  const points: string[] = [];
+  const seen = new Set<string>();
+
+  for (const sentence of sentences) {
+    const normalized = sentence.replace(/\s+/g, "");
+
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      points.push(sentence);
+    }
+
+    if (points.length >= 5) {
+      break;
+    }
+  }
+
+  return points;
 }
 
 function parseSearchIntents(content: string, topic: string): SearchIntent[] {

@@ -43,6 +43,13 @@ export type UnavailableProvider = {
   detectedModels?: string[];
 };
 
+export type SearchRegion = "auto" | "global" | "china" | "us" | "europe" | "japan" | "korea";
+export type SearchIntensity = "standard" | "deep";
+export type SearchPreferences = {
+  searchRegion?: SearchRegion;
+  searchIntensity?: SearchIntensity;
+};
+
 export type MeetingRequest = {
   topic: string;
   participants: ModelParticipant[];
@@ -50,6 +57,7 @@ export type MeetingRequest = {
   isBriefMode?: boolean;
   signal?: AbortSignal;
   summaryParticipant?: ModelParticipant;
+  searchPreferences?: SearchPreferences;
 };
 
 export type MeetingTurn = {
@@ -78,6 +86,16 @@ export type MeetingSummary = {
   insufficientlyConfirmed?: string[];
   risks: string[];
   nextSteps: string[];
+  summaryDebug?: SummaryDebug;
+};
+
+export type SummaryDebug = {
+  rawFormatDetected: "json" | "fenced_json" | "markdown" | "unknown";
+  parseSucceeded: boolean;
+  repairAttempted: boolean;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  emptySectionsRepaired: string[];
 };
 
 export type MeetingProviderFailure = {

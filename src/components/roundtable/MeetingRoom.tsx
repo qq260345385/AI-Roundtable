@@ -14,7 +14,6 @@ import {
   buildMeetingStageViews,
   type MeetingStageView,
 } from "@/lib/meeting/meeting-room";
-import { formatFailureForDisplay } from "@/lib/meeting/failure-format";
 import { formatModelDisplayName } from "@/lib/models/model-display-name";
 import { WebSearchProcessPanel } from "./MeetingBoard";
 
@@ -189,8 +188,6 @@ export function MeetingRoom({
                 ))}
               </div>
             </section>
-
-            <MeetingAlerts meeting={meeting} text={text} />
           </aside>
 
           <section className="relative min-h-[620px] border border-white/70 bg-white/85 p-5 shadow-sm backdrop-blur">
@@ -310,11 +307,15 @@ type SummaryStageProps = {
 };
 
 function SummaryStage({ summary, text }: SummaryStageProps) {
+  const hasMinorityViews = summary.minorityViews.some((item) => item.trim().length > 0);
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <SummaryList title={text.meetingBoard.consensus} items={summary.consensus} text={text} />
       <SummaryList title={text.meetingBoard.differences} items={summary.differences} text={text} />
-      <SummaryList title={text.meetingBoard.minorityViews} items={summary.minorityViews} text={text} />
+      {hasMinorityViews ? (
+        <SummaryList title={text.meetingBoard.minorityViews} items={summary.minorityViews} text={text} />
+      ) : null}
       <SummaryList title={text.meetingBoard.risks} items={summary.risks} text={text} />
       <div className="md:col-span-2">
         <SummaryList title={text.meetingBoard.nextSteps} items={summary.nextSteps} text={text} />
@@ -344,73 +345,6 @@ function SummaryList({ items, text, title }: SummaryListProps) {
           ))}
         </ul>
       )}
-    </section>
-  );
-}
-
-type MeetingAlertsProps = {
-  meeting: MeetingResult;
-  text: UiText;
-};
-
-function MeetingAlerts({ meeting, text }: MeetingAlertsProps) {
-  const hasAlerts =
-    meeting.isTimeSensitive ||
-    Boolean(meeting.evidencePack?.evidenceStatus) ||
-    Boolean(meeting.evidencePack?.delivery) ||
-    meeting.hasPartialFailures ||
-    meeting.citationCheck?.hasInvalidCitations;
-
-  if (!hasAlerts) {
-    return null;
-  }
-
-  return (
-    <section className="border border-amber-200 bg-amber-50/80 p-4 text-sm leading-6 text-amber-900">
-      <h2 className="font-semibold text-amber-950">{text.meetingRoom.alerts}</h2>
-      <div className="mt-2 space-y-2">
-        {meeting.isTimeSensitive && meeting.factCheckNotice ? (
-          <p>{meeting.factCheckNotice}</p>
-        ) : null}
-        {meeting.evidencePack?.evidenceStatus ? (
-          <p>
-            {text.meetingBoard.evidenceStatusTitle}：
-            {text.meetingBoard.evidenceStatus[meeting.evidencePack.evidenceStatus]}
-          </p>
-        ) : null}
-        {meeting.evidencePack?.delivery ? (
-          <p>
-            {text.evidence.deliveryTitle}：
-            {meeting.evidencePack.delivery.effectiveMode === "native_file"
-              ? text.evidence.deliveryNative
-              : text.evidence.deliveryTextPack}
-            。{meeting.evidencePack.delivery.reason}
-          </p>
-        ) : null}
-        {meeting.citationCheck?.hasInvalidCitations ? (
-          <p>
-            {text.meetingBoard.citationInvalid}
-            {meeting.citationCheck.invalidCitationIds.join("、")}
-          </p>
-        ) : null}
-        {meeting.hasPartialFailures && meeting.failures ? (
-          <div>
-            <p>{text.meetingRoom.partialFailureKept}</p>
-            <ul className="mt-2 space-y-1">
-              {meeting.failures.map((failure) => {
-                const formatted = formatFailureForDisplay(failure);
-
-                return (
-                  <li key={`${failure.stage}-${failure.providerId}`}>
-                    {formatted.providerName} / {formatted.stageLabel}：
-                    {formatted.message}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ) : null}
-      </div>
     </section>
   );
 }

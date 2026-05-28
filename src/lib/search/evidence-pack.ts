@@ -196,6 +196,7 @@ export type EvidenceDebugSummary = {
     scoreTooLow: number;
     extractionFailed: number;
     socialVideoSource: number;
+    missingTopicRelevanceScore: number;
   };
   lowEvidenceTriggerReasons: {
     coreEvidenceLessThan3: boolean;
@@ -258,6 +259,7 @@ export type SearchProcess = {
   targetedSearchRetryReason?: string;
   passStats?: EvidenceSearchPassStats[];
   skippedPasses?: string[];
+  skippedPassReasons?: Record<string, string>;
   qualityDistribution?: Record<EvidenceReliability, number>;
   searchIntents: SearchIntentRecord[];
   executedQueries: string[];
@@ -269,6 +271,15 @@ export type SearchProcess = {
   filteredReasons: { reason: string; count: number }[];
   results: SearchProcessResult[];
   warnings: string[];
+  zeroResultFallbackTriggered?: boolean;
+  fallbackQueries?: string[];
+  providerReturnedZeroCount?: number;
+  relaxedQueryCount?: number;
+  effectiveSearchRegion?: string;
+  effectiveCountry?: string;
+  searchRegionSource?: "user_preference" | "auto_detected" | "default_global" | "region_unsupported_fallback";
+  regionFallbackReason?: string;
+  requestedSearchRegion?: string;
 };
 
 export type SearchSummaryStatus =
@@ -387,6 +398,7 @@ export type EvidenceQualityOverview = {
   missingDimensions: string[];
   coverageCompleteness: number;
   overallReliability: "高" | "中" | "低";
+  reliabilityLimitReason?: string;
 };
 
 export const MAX_EVIDENCE_ITEMS = 10;
@@ -767,6 +779,7 @@ export function scoreEvidence(input: {
 
 export function summarizeEvidenceQuality(
   evidencePack: EvidencePack | undefined,
+  options?: { evidenceStatus?: EvidenceStatus },
 ): EvidenceQualityOverview {
   const items = evidencePack?.enabled ? evidencePack.items : [];
   const strongOfficialCount = items.filter(
@@ -806,12 +819,24 @@ export function summarizeEvidenceQuality(
   ).length;
   const hasMedium = items.some((item) => item.quality?.reliability === "medium");
   const coverage = summarizeCoverage(items);
-  const baseReliability =
+  const isLowEvidenceMode = options?.evidenceStatus === "low" ||
+    (!options?.evidenceStatus && (coreEvidenceCount < 3 || highOrMediumCount < 3 || items.length === 0));
+  let baseReliability: EvidenceQualityOverview["overallReliability"] =
     highOrMediumCount >= 2 && hasCoreEvidence
       ? "高"
       : hasMedium
         ? "中"
         : "低";
+
+  if (isLowEvidenceMode && baseReliability === "高") {
+    baseReliability = "中";
+  }
+
+  const reliabilityLimitReason = isLowEvidenceMode
+    ? "核心证据不足 3 条，结论可靠性已限制。"
+    : coreEvidenceCount === 0 && coverage.weakCoveredDimensions.length > 0
+      ? "当前仅有低质量或低相关资料覆盖了部分维度，但缺少核心证据，不能确认覆盖。"
+      : undefined;
 
   return {
     strongOfficialCount,
@@ -828,7 +853,113 @@ export function summarizeEvidenceQuality(
     missingDimensions: coverage.missingDimensions,
     coverageCompleteness: coverage.coverageCompleteness,
     overallReliability: capReliabilityByCoverage(baseReliability, coverage),
+    reliabilityLimitReason,
   };
+}
+
+function getDominantTopicType(items: SearchEvidence[]): EvidenceTopicType {
+  const counts = new Map<EvidenceTopicType, number>();
+
+  for (const item of items) {
+    const topicType = item.quality?.topicType;
+
+    if (topicType) {
+      counts.set(topicType, (counts.get(topicType) ?? 0) + 1);
+    }
+  }
+
+  let maxCount = 0;
+  let dominant: EvidenceTopicType = "general_discussion";
+
+  for (const [type, count] of counts) {
+    if (count > maxCount) {
+      maxCount = count;
+      dominant = type;
+    }
+  }
+
+  return dominant;
+}
+
+function getRequiredCoverageGroups(
+  topicType: EvidenceTopicType,
+): { label: string; dimensions: readonly EvidenceCoverageDimension[] }[] {
+  switch (topicType) {
+    case "entity_competition":
+      return [
+        {
+          label: "technical_capability_or_product_release",
+          dimensions: ["technical_capability", "product_release"],
+        },
+        {
+          label: "business_revenue_or_enterprise_adoption",
+          dimensions: ["business_revenue", "enterprise_adoption"],
+        },
+        {
+          label: "funding_capital_or_market_analysis",
+          dimensions: ["funding_capital", "market_analysis"],
+        },
+        {
+          label: "regulation_governance_or_legal_lawsuit",
+          dimensions: ["regulation_governance", "legal_lawsuit"],
+        },
+      ];
+
+    case "product_release_analysis":
+    case "technical_research_analysis":
+    case "capability_comparison":
+      return [
+        {
+          label: "technical_capability_or_product_release",
+          dimensions: ["technical_capability", "product_release", "benchmark_evaluation", "safety_alignment"],
+        },
+        {
+          label: "official_or_independent_confirmation",
+          dimensions: ["official_position", "expert_opinion"],
+        },
+      ];
+
+    case "policy_regulation":
+      return [
+        {
+          label: "governance_and_compliance",
+          dimensions: ["regulation_governance", "legal_lawsuit"],
+        },
+        {
+          label: "official_or_expert_position",
+          dimensions: ["official_position", "expert_opinion"],
+        },
+      ];
+
+    case "market_outlook":
+    case "investment_business_analysis":
+      return [
+        {
+          label: "business_and_market",
+          dimensions: ["business_revenue", "enterprise_adoption", "funding_capital", "market_analysis"],
+        },
+        {
+          label: "technical_background",
+          dimensions: ["technical_capability", "product_release"],
+        },
+      ];
+
+    default:
+      return [
+        {
+          label: "technical_and_product",
+          dimensions: ["technical_capability", "product_release", "benchmark_evaluation", "safety_alignment"],
+        },
+        {
+          label: "business_and_market",
+          dimensions: ["business_revenue", "enterprise_adoption", "funding_capital", "market_analysis"],
+        },
+        {
+          label: "governance_and_ecosystem",
+          dimensions: ["regulation_governance", "legal_lawsuit", "ecosystem_developer"],
+        },
+      ];
+  }
 }
 
 function summarizeCoverage(items: SearchEvidence[]): {
@@ -848,39 +979,9 @@ function summarizeCoverage(items: SearchEvidence[]): {
   const coveredDimensions = Array.from(
     new Set([...strongCoveredDimensions, ...weakCoveredDimensions]),
   );
-  const isEntityCompetitionCoverage = items.some(
-    (item) => item.quality?.topicType === "entity_competition",
-  );
-
-  if (!isEntityCompetitionCoverage) {
-    return {
-      coveredDimensions,
-      strongCoveredDimensions,
-      weakCoveredDimensions,
-      missingDimensions: [],
-      coverageCompleteness: strongCoveredDimensions.length > 0 ? 1 : 0,
-      isEntityCompetitionCoverage,
-    };
-  }
-
-  const requiredGroups = [
-    {
-      label: "technical_capability_or_product_release",
-      dimensions: ["technical_capability", "product_release"] as const,
-    },
-    {
-      label: "business_revenue_or_enterprise_adoption",
-      dimensions: ["business_revenue", "enterprise_adoption"] as const,
-    },
-    {
-      label: "funding_capital_or_market_analysis",
-      dimensions: ["funding_capital", "market_analysis"] as const,
-    },
-    {
-      label: "regulation_governance_or_legal_lawsuit",
-      dimensions: ["regulation_governance", "legal_lawsuit"] as const,
-    },
-  ];
+  const dominantTopicType = getDominantTopicType(items);
+  const isEntityCompetitionCoverage = dominantTopicType === "entity_competition";
+  const requiredGroups = getRequiredCoverageGroups(dominantTopicType);
   const coveredSet = new Set(strongCoveredDimensions);
   const missingDimensions = requiredGroups
     .filter(
@@ -1006,17 +1107,11 @@ export function isCoreEvidenceItem(item: SearchEvidence): boolean {
 }
 
 function isTopicRelevantEnoughForCoreEvidence(quality: EvidenceQuality): boolean {
-  if (quality.topicType === undefined) {
-    return typeof quality.topicRelevanceScore === "number"
-      ? quality.topicRelevanceScore >= 60
-      : true;
+  if (typeof quality.topicRelevanceScore === "number") {
+    return quality.topicRelevanceScore >= 60;
   }
 
-  if (quality.topicType !== "entity_competition") {
-    return true;
-  }
-
-  return (quality.topicRelevanceScore ?? quality.relevanceScore ?? 0) >= 60;
+  return false;
 }
 
 export function isPublicOpinionEvidenceItem(item: SearchEvidence): boolean {
@@ -1164,10 +1259,12 @@ function formatCoverageForPrompt(evidencePack: EvidencePack): string {
 
   return [
     "议题覆盖纪律：",
-    `- 已覆盖维度：${formatListForPrompt(overview.coveredDimensions)}`,
+    `- 强覆盖维度（可支撑结论）：${formatListForPrompt(overview.strongCoveredDimensions)}`,
+    `- 弱覆盖维度（仅作背景）：${formatListForPrompt(overview.weakCoveredDimensions)}`,
     `- 缺失维度：${formatListForPrompt(overview.missingDimensions)}`,
     `- 覆盖度评分：${overview.coverageCompleteness}`,
-    "- 只能用相同覆盖维度的资料支撑对应结论；维度缺失时不要把局部技术事实升级为综合胜负判断。",
+    "- 只能用强覆盖维度的资料支撑对应结论；弱覆盖维度的资料只能作为背景参考，不能单独支撑事实性判断。",
+    "- 维度缺失时不要把局部技术事实升级为综合胜负判断。",
   ].join("\n");
 }
 
@@ -1348,6 +1445,36 @@ function createSearchProcess(input: {
     filteredReasons: summarizeFilteredReasons(results),
     results,
     warnings: normalizeStringArray(input.input.warnings),
+    ...(typeof input.input.zeroResultFallbackTriggered === "boolean"
+      ? { zeroResultFallbackTriggered: input.input.zeroResultFallbackTriggered }
+      : {}),
+    ...(Array.isArray(input.input.fallbackQueries)
+      ? { fallbackQueries: input.input.fallbackQueries as string[] }
+      : {}),
+    ...(typeof input.input.providerReturnedZeroCount === "number"
+      ? { providerReturnedZeroCount: input.input.providerReturnedZeroCount }
+      : {}),
+    ...(typeof input.input.relaxedQueryCount === "number"
+      ? { relaxedQueryCount: input.input.relaxedQueryCount }
+      : {}),
+    ...(isObject(input.input.skippedPassReasons)
+      ? { skippedPassReasons: input.input.skippedPassReasons as Record<string, string> }
+      : {}),
+    ...(typeof input.input.effectiveSearchRegion === "string"
+      ? { effectiveSearchRegion: input.input.effectiveSearchRegion }
+      : {}),
+    ...(typeof input.input.effectiveCountry === "string"
+      ? { effectiveCountry: input.input.effectiveCountry }
+      : {}),
+    ...(typeof input.input.searchRegionSource === "string"
+      ? { searchRegionSource: input.input.searchRegionSource as "user_preference" | "auto_detected" | "default_global" | "region_unsupported_fallback" }
+      : {}),
+    ...(typeof input.input.regionFallbackReason === "string"
+      ? { regionFallbackReason: input.input.regionFallbackReason }
+      : {}),
+    ...(typeof input.input.requestedSearchRegion === "string"
+      ? { requestedSearchRegion: input.input.requestedSearchRegion }
+      : {}),
   };
 }
 
@@ -1880,6 +2007,9 @@ function createEvidenceDebugSummary(input: {
         input.officialExtractFailed,
       ),
       socialVideoSource: socialVideoCount,
+      missingTopicRelevanceScore: input.results.filter(
+        (result) => typeof result.topicRelevanceScore !== "number",
+      ).length,
     },
     lowEvidenceTriggerReasons: {
       coreEvidenceLessThan3: coreEvidenceCount < 3,
@@ -1934,17 +2064,11 @@ function isCoreEvidenceResult(result: SearchProcessResult): boolean {
 function isSearchResultTopicRelevantEnoughForCoreEvidence(
   result: SearchProcessResult,
 ): boolean {
-  if (result.topicType === undefined) {
-    return typeof result.topicRelevanceScore === "number"
-      ? result.topicRelevanceScore >= 60
-      : true;
+  if (typeof result.topicRelevanceScore === "number") {
+    return result.topicRelevanceScore >= 60;
   }
 
-  if (result.topicType !== "entity_competition") {
-    return true;
-  }
-
-  return (result.topicRelevanceScore ?? 0) >= 60;
+  return false;
 }
 
 function isWeakEvidenceSource(sourceType: EvidenceSourceType): boolean {
@@ -2599,12 +2723,18 @@ function analyzeEvidenceTopicCoverage(
   const coverageDimension = detectCoverageDimension(text);
   const topicType = classifyEvidenceTopic(topic);
   const keywordRelevanceScore = getRelevanceScore(topic, title, snippet);
+  const topicEntities = topic ? extractTopicEntities(topic) : [];
+  const disassociationPenalty = getDisassociationPenalty(topicEntities, title, snippet);
 
   if (topicType !== "entity_competition") {
+    const adjustedScore = Math.max(0, keywordRelevanceScore + disassociationPenalty);
+
     return {
       topicType,
-      topicRelevanceScore: keywordRelevanceScore,
-      relevanceReason: "资料与议题关键词存在一般相关性。",
+      topicRelevanceScore: adjustedScore,
+      relevanceReason: disassociationPenalty < 0
+        ? "资料包含与议题实体的澄清或无关声明，相关性已降低。"
+        : "资料与议题关键词存在一般相关性。",
       matchedQuestionAspects:
         coverageDimension === "unknown" ? [] : [coverageDimension],
       coverageDimension,
@@ -2615,18 +2745,21 @@ function analyzeEvidenceTopicCoverage(
     getEntityCompetitionMatchedAspects(coverageDimension);
   const dimensionRelevanceScore =
     getEntityCompetitionRelevanceScore(coverageDimension);
-  const topicRelevanceScore = capEntityCompetitionKeywordRelevance(
-    coverageDimension,
-    Math.max(dimensionRelevanceScore, keywordRelevanceScore),
+  const baseScore = Math.max(dimensionRelevanceScore, keywordRelevanceScore);
+  const topicRelevanceScore = Math.max(
+    0,
+    capEntityCompetitionKeywordRelevance(coverageDimension, baseScore) + disassociationPenalty,
   );
 
   return {
     topicType,
     topicRelevanceScore,
-    relevanceReason: getEntityCompetitionRelevanceReason(
-      coverageDimension,
-      topicRelevanceScore,
-    ),
+    relevanceReason: disassociationPenalty < 0
+      ? "资料包含与议题实体的澄清或无关声明，相关性已降低。"
+      : getEntityCompetitionRelevanceReason(
+          coverageDimension,
+          topicRelevanceScore,
+        ),
     matchedQuestionAspects,
     coverageDimension,
   };
@@ -2795,7 +2928,7 @@ function detectCoverageDimension(text: string): EvidenceCoverageDimension {
     return "ecosystem_developer";
   }
 
-  if (matchesAny(text, ["official statement", "official position", "announcement", "声明", "官方立场", "公告"])) {
+  if (matchesAny(text, ["official statement", "official position", "official announcement", "官方声明", "官方立场", "官方公告", "公司声明", "企业声明"])) {
     return "official_position";
   }
 
@@ -2930,7 +3063,8 @@ function getSearchTokens(value: string): string[] {
 }
 
 function getCjkSearchTokens(value: string): string[] {
-  const chunks = value.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const normalizedValue = normalizeTextForMatching(value);
+  const chunks = normalizedValue.match(/[一-鿿]{2,}/g) ?? [];
   const stopPhrases = [
     "怎么看",
     "如何看",
@@ -2957,7 +3091,9 @@ function getCjkSearchTokens(value: string): string[] {
       chunk,
     );
 
-    for (const segment of compact.split(/\s+/).filter((item) => item.length >= 2)) {
+    const segments = compact.split(/\s+/).filter((item) => item.length >= 2);
+
+    for (const segment of segments) {
       tokens.push(segment);
 
       if (segment.length > 2) {
@@ -2993,18 +3129,93 @@ function capEntityCompetitionKeywordRelevance(
   return score;
 }
 
+const TRADITIONAL_TO_SIMPLIFIED: Record<string, string> = {
+  "華": "华", "國": "国", "韜": "韬", "論": "论",
+  "療": "疗", "產": "产", "業": "业", "發": "发",
+  "訊": "讯", "資": "资", "報": "报",
+  "開": "开", "關": "关", "問": "问", "題": "题",
+  "議": "议", "點": "点", "結": "结", "網": "网",
+  "絡": "络", "體": "体", "驗": "验", "證": "证",
+  "據": "据", "實": "实", "認": "认", "識": "识",
+  "導": "导", "師": "师", "術": "术", "標": "标",
+  "準": "准", "規": "规", "則": "则", "計": "计",
+  "劃": "划", "設": "设", "討": "讨", "評": "评",
+  "價": "价", "質": "质", "機": "机", "構": "构",
+  "營": "营", "銷": "销", "競": "竞", "爭": "争",
+  "勢": "势", "範": "范", "圍": "围", "內": "内",
+  "區": "区", "塊": "块", "鏈": "链", "環": "环",
+  "險": "险", "戰": "战", "進": "进", "態": "态",
+  "變": "变", "現": "现", "測": "测", "試": "试",
+  "確": "确", "張": "张", "後": "后",
+  "領": "领", "層": "层", "統": "统",
+  "備": "备", "懷": "怀", "轉": "转",
+};
+
 function normalizeTextForMatching(value: string): string {
-  return value
+  let result = value
     .toLowerCase()
     .normalize("NFKC")
     .replace(/[αΑ]/g, "alpha")
     .replace(/[βΒ]/g, "beta")
     .replace(/[γΓ]/g, "gamma")
-    .replace(/[·•・]/g, "")
-    .replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, " ")
+    .replace(/[·•・]/g, "");
+
+  for (const [traditional, simplified] of Object.entries(TRADITIONAL_TO_SIMPLIFIED)) {
+    result = result.replaceAll(traditional, simplified);
+  }
+
+  return result
+    .replace(/[^\p{L}\p{N}一-鿿]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
+
+const DISASSOCIATION_SIGNALS = [
+  "澄清", "无关", "否认", "不涉及", "无合作", "无关系",
+  "撇清", "没有关系", "不相关", "已澄清", "紧急澄清",
+  "并非", "实为", "误读", "被误认", "易混淆",
+  "名称相似", "名称相近", "名字相似", "名字相近",
+  "被误传", "误传", "谣传", "系误读", "系谣传",
+];
+
+function extractTopicEntities(topic: string): string[] {
+  const normalized = normalizeTextForMatching(topic);
+  const cjkEntities = normalized.match(/[一-鿿]{2,}/g) ?? [];
+  const englishEntities = normalized.match(/[a-z][a-z0-9-]{1,}/g) ?? [];
+  const stopWords = new Set([
+    "怎么看", "如何看", "最近", "发布", "哪个", "哪家",
+    "公司", "企业", "长期", "竞争", "优势", "更有",
+    "谁更", "以及", "相关", "资料", "认为", "觉得",
+    "评价", "分析", "怎么样", "如何看待", "比较",
+    "什么", "如何", "怎样", "为啥", "为什么",
+  ]);
+
+  return [...cjkEntities, ...englishEntities]
+    .filter((entity) => !stopWords.has(entity) && entity.length >= 2);
+}
+
+function getDisassociationPenalty(
+  topicEntities: string[],
+  title: string,
+  snippet: string,
+): number {
+  if (topicEntities.length === 0) return 0;
+
+  const text = normalizeTextForMatching(`${title} ${snippet}`);
+
+  const hasEntityOverlap = topicEntities.some(
+    (entity) => entity.length >= 2 && text.includes(entity),
+  );
+  if (!hasEntityOverlap) return 0;
+
+  const normalizedSignals = DISASSOCIATION_SIGNALS.map(normalizeTextForMatching);
+  const signalCount = normalizedSignals.filter((signal) => text.includes(signal)).length;
+
+  if (signalCount === 0) return 0;
+  if (signalCount >= 2) return -50;
+  return -30;
+}
+
 
 function getHostname(url: string | undefined): string {
   if (!url) {

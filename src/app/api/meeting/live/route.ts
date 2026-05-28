@@ -23,6 +23,7 @@ import { TavilySearchError } from "../../../../lib/search/tavily-search";
 import type {
   LiveMeetingEvent,
   ModelParticipant,
+  SearchPreferences,
 } from "../../../../lib/types";
 
 type MeetingRequestBody = {
@@ -31,6 +32,7 @@ type MeetingRequestBody = {
   participantIds?: unknown;
   question?: unknown;
   searchMode?: unknown;
+  searchPreferences?: unknown;
   searchDriverParticipantId?: unknown;
   summaryParticipantId?: unknown;
   webSearchEnabled?: unknown;
@@ -94,6 +96,7 @@ export async function POST(request: Request) {
           : participants,
         provider: registry.provider,
         searchMode,
+        searchPreferences: normalizeSearchPreferences(body.searchPreferences),
         signal: request.signal,
         topic: question,
       });
@@ -318,4 +321,29 @@ function getErrorStatus(error: unknown): number {
 
 class BadRequestError extends Error {
   status = 400;
+}
+
+function normalizeSearchPreferences(value: unknown): SearchPreferences | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const obj = value as Record<string, unknown>;
+  const result: SearchPreferences = {};
+
+  if (typeof obj.searchRegion === "string") {
+    const validRegions = ["auto", "global", "china", "us", "europe", "japan", "korea"];
+
+    if (validRegions.includes(obj.searchRegion)) {
+      result.searchRegion = obj.searchRegion as SearchPreferences["searchRegion"];
+    }
+  }
+
+  if (typeof obj.searchIntensity === "string") {
+    if (obj.searchIntensity === "standard" || obj.searchIntensity === "deep") {
+      result.searchIntensity = obj.searchIntensity;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }

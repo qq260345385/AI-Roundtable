@@ -8,6 +8,7 @@ import type {
   SearchProviderRequest,
   SearchProviderResponse,
 } from "./search-provider";
+import type { SearchRegion } from "../types";
 
 type FetchLike = typeof fetch;
 
@@ -28,6 +29,7 @@ type TavilySearchOptions = {
   onCacheEvent?: (event: TavilySearchCacheEvent) => void;
   onResponseMetadata?: (metadata: TavilySearchResponseMetadata) => void;
   searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
+  searchRegion?: SearchRegion;
   signal?: AbortSignal;
   timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";
   timeoutMs?: number;
@@ -106,9 +108,18 @@ export type SafeTavilyDiagnostics = {
 };
 
 const DEFAULT_TAVILY_ENDPOINT = "https://api.tavily.com/search";
-const DEFAULT_MAX_RESULTS = 20;
+const DEFAULT_MAX_RESULTS = 5;
 const DEFAULT_TIMEOUT_MS = 30000;
-const DEFAULT_COUNTRY = "china";
+
+export const SEARCH_REGION_COUNTRY_MAP: Record<SearchRegion, string | undefined> = {
+  auto: undefined,
+  global: undefined,
+  china: "china",
+  us: "united states",
+  europe: undefined,
+  japan: "japan",
+  korea: "south korea",
+};
 const DEFAULT_CHUNKS_PER_SOURCE = 5;
 const DEFAULT_INCLUDE_RAW_CONTENT = "text";
 const REALTIME_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -211,6 +222,7 @@ export class TavilySearchProvider implements SearchProvider {
         metadata = event;
       },
       searchDepth: request.searchDepth,
+      searchRegion: request.searchRegion,
       signal: request.signal,
       timeRange: request.timeRange,
       topic: request.searchTopic,
@@ -311,7 +323,7 @@ export async function searchTavilyEvidence(
     timeRange: options.timeRange,
     topic: options.topic ?? getEnvTopic(),
   };
-  const country = getEffectiveCountry(options.country);
+  const country = getEffectiveCountry(options.country, options.searchRegion);
   const cacheKey = getTavilyCacheKey(query, effectiveOptions, options.freshness);
   const ttlMs = getTavilyCacheTtlMs(query, options.freshness);
   const cached = tavilySearchCache.get(cacheKey);
@@ -361,6 +373,7 @@ export async function searchTavilyEvidence(
         body: JSON.stringify(
           buildTavilySearchRequestBody(query, {
             ...effectiveOptions,
+            searchTopic: effectiveOptions.topic,
             country,
           }),
         ),
@@ -401,6 +414,21 @@ export async function searchTavilyEvidence(
           safeMessage: "Search response was not valid JSON.",
         }),
         reason: "invalid_response",
+      });
+    }
+
+    const providerError = extractTavilyProviderError(data);
+
+    if (providerError) {
+      throw new TavilySearchError("invalid_request", {
+        diagnostics: createSafeTavilyDiagnostics({
+          apiKey,
+          endpoint: "/search",
+          errorKind: "invalid_request",
+          responseTextSnippet: providerError,
+          safeMessage: providerError,
+        }),
+        reason: "invalid_request",
       });
     }
 
@@ -510,6 +538,9 @@ function getHttpFailureReason(status: number): TavilyFailureReason {
   return "unknown_error";
 }
 
+const MAX_INCLUDE_DOMAINS = 300;
+const MAX_EXCLUDE_DOMAINS = 150;
+
 function buildTavilySearchRequestBody(
   query: string,
   options: {
@@ -523,9 +554,13 @@ function buildTavilySearchRequestBody(
     includeUsage?: boolean;
     maxResults: number;
     searchDepth: NonNullable<TavilySearchOptions["searchDepth"]>;
+    searchTopic?: "general" | "news" | "finance";
     timeRange?: TavilySearchOptions["timeRange"];
   },
 ) {
+  const includeDomains = options.includeDomains.slice(0, MAX_INCLUDE_DOMAINS);
+  const excludeDomains = options.excludeDomains.slice(0, MAX_EXCLUDE_DOMAINS);
+
   return {
     include_answer: false,
     include_images: false,
@@ -536,16 +571,18 @@ function buildTavilySearchRequestBody(
     ...(options.autoParameters !== undefined
       ? { auto_parameters: options.autoParameters }
       : {}),
-    ...(options.chunksPerSource !== undefined
+    ...(options.searchDepth === "advanced" && options.chunksPerSource !== undefined
       ? { chunks_per_source: options.chunksPerSource }
       : {}),
     ...(options.timeRange ? { time_range: options.timeRange } : {}),
-    ...(options.country ? { country: options.country } : {}),
-    ...(options.includeDomains.length > 0
-      ? { include_domains: options.includeDomains }
+    ...(options.country && (options.searchTopic === undefined || options.searchTopic === "general")
+      ? { country: options.country }
       : {}),
-    ...(options.excludeDomains.length > 0
-      ? { exclude_domains: options.excludeDomains }
+    ...(includeDomains.length > 0
+      ? { include_domains: includeDomains }
+      : {}),
+    ...(excludeDomains.length > 0
+      ? { exclude_domains: excludeDomains }
       : {}),
     ...(options.exactMatch !== undefined ? { exact_match: options.exactMatch } : {}),
     ...(options.includeUsage !== undefined
@@ -575,6 +612,28 @@ function extractTavilyResponseMetadata(
       ? { autoParameters: data.auto_parameters }
       : {}),
   };
+}
+
+function extractTavilyProviderError(data: unknown): string | undefined {
+  if (!isObject(data)) {
+    return undefined;
+  }
+
+  const detail = data.detail;
+
+  if (typeof detail === "string") {
+    return sanitizeSearchText(detail).slice(0, 300);
+  }
+
+  if (isObject(detail) && typeof detail.error === "string") {
+    return sanitizeSearchText(detail.error).slice(0, 300);
+  }
+
+  if (typeof data.error === "string") {
+    return sanitizeSearchText(data.error).slice(0, 300);
+  }
+
+  return undefined;
 }
 
 function createCombinedAbortSignal(
@@ -756,8 +815,13 @@ function normalizeIncludeRawContent(
 
 function getEffectiveCountry(
   explicitCountry: string | undefined,
+  searchRegion?: SearchRegion,
 ) {
-  return normalizeOptionalSearchText(explicitCountry) || DEFAULT_COUNTRY;
+  if (searchRegion) {
+    return SEARCH_REGION_COUNTRY_MAP[searchRegion];
+  }
+
+  return normalizeOptionalSearchText(explicitCountry) || undefined;
 }
 
 function normalizeOptionalSearchText(value: string | undefined) {
@@ -778,7 +842,7 @@ function getEnvSearchDepth(): NonNullable<TavilySearchOptions["searchDepth"]> {
     return value;
   }
 
-  return "basic";
+  return "advanced";
 }
 
 function getEnvTopic(): NonNullable<TavilySearchOptions["topic"]> {

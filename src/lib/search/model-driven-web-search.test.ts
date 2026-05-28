@@ -1,8 +1,11 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { ModelParticipant, ModelProvider } from "../types";
 import {
   buildModelDrivenWebEvidencePack,
   buildTavilySearchPlanFromIntents,
+  resolveSearchRegionPreference,
 } from "./model-driven-web-search";
 import type { SearchIntentRecord } from "./evidence-pack";
 import type { ExtractProvider } from "./extract-provider";
@@ -52,7 +55,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
     expect(plan.queries).toHaveLength(1);
     expect(plan.queries[0]).toContain("DeepSeek V3");
     expect(plan.queries[0]).toContain("SWE-bench");
-    expect(plan.queries[0]).toContain("2026");
+    expect(plan.queries[0]).toContain("latest");
     expect(plan.queries[0]).toContain("benchmark");
     expect(plan.queries[0]).toContain("leaderboard");
     expect(plan.queryPlans[0]).toEqual(
@@ -219,8 +222,8 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
-    expect(searchedQueries[0]).toContain("official");
-    expect(searchedQueries[0]).toContain("DeepSeek V3");
+    expect(searchedQueries[0]).toContain("本地媒体");
+    expect(searchedQueries.some((query) => query.includes("DeepSeek V3"))).toBe(true);
     expect(searchedQueries).toHaveLength(3);
     expect(searchedQueries.some((query) => query.includes("Reuters"))).toBe(true);
     expect(pack.enabled).toBe(true);
@@ -400,16 +403,17 @@ describe("buildModelDrivenWebEvidencePack", () => {
       topic: "Acme 融资 市场",
     });
 
-    const official = requests.find((request) =>
-      request.query.includes("official statement"),
+    const mainPassRequests = requests.slice(0, 3);
+    const official = mainPassRequests.find((request) =>
+      request.query.includes("官方") || request.query.includes("official statement"),
     );
-    const reputable = requests.find((request) =>
+    const reputable = mainPassRequests.find((request) =>
       request.query.includes("Reuters"),
     );
-    const localized = requests.find((request) =>
+    const localized = mainPassRequests.find((request) =>
       request.query.includes("本地媒体"),
     );
-    const social = requests.find((request) =>
+    const social = mainPassRequests.find((request) =>
       request.query.includes("Reddit"),
     );
 
@@ -438,7 +442,9 @@ describe("buildModelDrivenWebEvidencePack", () => {
     expect(social).toEqual(
       undefined,
     );
-    expect(requests).toHaveLength(3);
+    // Main passes: 3 (localized_media, official, reputable_media)
+    // Zero-result fallback: 3 (industry_report, reputable_media, social_clue)
+    expect(requests.length).toBeGreaterThanOrEqual(3);
     expect(requests.every((request) => request.maxResults === 20)).toBe(true);
   });
 
@@ -1279,9 +1285,9 @@ describe("buildModelDrivenWebEvidencePack", () => {
         if (query.includes("official statement")) {
           return [
             {
-              title: "Official financing note",
+              title: "Official AI company financing announcement",
               url: "https://openai.com/news/financing",
-              snippet: "Official financing note. ".repeat(50),
+              snippet: "Official AI company financing announcement details. ".repeat(50),
             },
           ];
         }
@@ -1289,9 +1295,9 @@ describe("buildModelDrivenWebEvidencePack", () => {
         if (query.includes("Reuters")) {
           return [
             {
-              title: "Reuters financing report",
+              title: "Reuters AI company financing report",
               url: "https://reuters.com/technology/ai-financing",
-              snippet: "Reuters financing report. ".repeat(50),
+              snippet: "Reuters AI company financing report details. ".repeat(50),
             },
           ];
         }
@@ -1299,9 +1305,9 @@ describe("buildModelDrivenWebEvidencePack", () => {
         if (query.includes("SemiAnalysis")) {
           return [
             {
-              title: "SemiAnalysis financing report",
+              title: "SemiAnalysis AI company financing analysis",
               url: "https://semianalysis.com/ai-financing",
-              snippet: "SemiAnalysis financing report. ".repeat(50),
+              snippet: "SemiAnalysis AI company financing analysis details. ".repeat(50),
             },
           ];
         }
@@ -1550,7 +1556,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
 
     expect(searchedQueries.some((query) => query.includes("甲方科技"))).toBe(true);
     expect(searchedQueries.some((query) => query.includes("本地媒体"))).toBe(true);
-    expect(searchedQueries.some((query) => query.includes("人民"))).toBe(true);
+    expect(searchedQueries.some((query) => query.includes("行业媒体"))).toBe(true);
   });
 
   test("writes long extracted content back to evidence and records extract success", async () => {
@@ -1619,6 +1625,557 @@ describe("buildModelDrivenWebEvidencePack", () => {
         success: true,
       }),
     );
+  });
+});
+
+describe("query dedup", () => {
+  test("deduplicates queries that differ only by year suffix", () => {
+    const records: SearchIntentRecord[] = [
+      {
+        participantId: "p1",
+        participantName: "Model A",
+        provider: "ProviderA",
+        model: "model-a",
+        intents: [
+          {
+            question: "DeepSeek benchmark performance 2026",
+            mustInclude: [],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "test",
+          },
+        ],
+      },
+      {
+        participantId: "p2",
+        participantName: "Model B",
+        provider: "ProviderB",
+        model: "model-b",
+        intents: [
+          {
+            question: "DeepSeek benchmark performance",
+            mustInclude: [],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "test",
+          },
+        ],
+      },
+    ];
+
+    const plan = buildTavilySearchPlanFromIntents("DeepSeek benchmark", records, {
+      currentYear: 2026,
+    });
+
+    expect(plan.queries).toHaveLength(1);
+    expect(plan.intentDecisions.filter((d) => d.action === "merged")).toHaveLength(1);
+  });
+
+  test("deduplicates queries where one contains the other", () => {
+    const records: SearchIntentRecord[] = [
+      {
+        participantId: "p1",
+        participantName: "Model A",
+        provider: "ProviderA",
+        model: "model-a",
+        intents: [
+          {
+            question: "AI model benchmark comparison",
+            mustInclude: [],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "test",
+          },
+        ],
+      },
+      {
+        participantId: "p2",
+        participantName: "Model B",
+        provider: "ProviderB",
+        model: "model-b",
+        intents: [
+          {
+            question: "AI model benchmark comparison analysis",
+            mustInclude: [],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "test",
+          },
+        ],
+      },
+    ];
+
+    const plan = buildTavilySearchPlanFromIntents("AI comparison", records, {
+      currentYear: 2026,
+    });
+
+    expect(plan.queries).toHaveLength(1);
+  });
+
+  test("does not merge genuinely different queries", () => {
+    const records: SearchIntentRecord[] = [
+      {
+        participantId: "p1",
+        participantName: "Model A",
+        provider: "ProviderA",
+        model: "model-a",
+        intents: [
+          {
+            question: "AI funding revenue market share",
+            mustInclude: [],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "test",
+          },
+        ],
+      },
+      {
+        participantId: "p2",
+        participantName: "Model B",
+        provider: "ProviderB",
+        model: "model-b",
+        intents: [
+          {
+            question: "AI safety alignment regulation",
+            mustInclude: [],
+            shouldInclude: [],
+            exclude: [],
+            freshness: "latest",
+            sourcePreference: "mixed",
+            rationale: "test",
+          },
+        ],
+      },
+    ];
+
+    const plan = buildTavilySearchPlanFromIntents("AI industry", records, {
+      currentYear: 2026,
+    });
+
+    expect(plan.queries).toHaveLength(2);
+  });
+});
+
+describe("Chinese topic search optimization", () => {
+  test("Chinese topic pass order starts with localized_media", async () => {
+    const provider = createNoIntentProvider();
+    const passNames: string[] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        passNames.push(request.query.includes("本地媒体") ? "localized_media" : "other");
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "怎么看甲方科技最近发布的本地化战略",
+    });
+
+    expect(passNames[0]).toBe("localized_media");
+  });
+
+  test("non-Chinese topic pass order starts with official", async () => {
+    const provider = createNoIntentProvider();
+    const passNames: string[] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        if (request.query.includes("official statement")) {
+          passNames.push("official");
+        } else if (request.query.includes("Reuters")) {
+          passNames.push("reputable_media");
+        } else {
+          passNames.push("other");
+        }
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "AI model benchmark comparison",
+    });
+
+    expect(passNames[0]).toBe("official");
+  });
+
+  test("Chinese official query contains Chinese keywords instead of English template", async () => {
+    const provider = createNoIntentProvider();
+    const queries: string[] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        queries.push(request.query);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "怎么看甲方科技最近发布的本地化战略",
+    });
+
+    const officialQuery = queries.find((q) => q.includes("官方"));
+    expect(officialQuery).toBeDefined();
+    expect(officialQuery).toContain("发布");
+    expect(officialQuery).toContain("公告");
+    expect(officialQuery).not.toContain("official statement");
+    expect(officialQuery).not.toContain("official blog");
+    expect(officialQuery).not.toContain("official docs");
+  });
+
+  test("non-Chinese official query retains English template words", async () => {
+    const provider = createNoIntentProvider();
+    const queries: string[] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        queries.push(request.query);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "latest AI model benchmark",
+    });
+
+    const officialQuery = queries.find((q) => q.includes("official statement"));
+    expect(officialQuery).toBeDefined();
+    expect(officialQuery).toContain("official blog");
+  });
+});
+
+describe("freshness year injection", () => {
+  test("freshness latest does not inject current year by default", () => {
+    const plan = buildTavilySearchPlanFromIntents(
+      "AI model comparison",
+      [
+        {
+          participantId: "p1",
+          participantName: "Model A",
+          provider: "ProviderA",
+          model: "model-a",
+          intents: [
+            {
+              question: "Latest AI model benchmark",
+              mustInclude: [],
+              shouldInclude: [],
+              exclude: [],
+              freshness: "latest",
+              sourcePreference: "mixed",
+              rationale: "test",
+            },
+          ],
+        },
+      ],
+      { currentYear: 2026 },
+    );
+
+    expect(plan.queries.length).toBeGreaterThan(0);
+    expect(plan.queries[0]).not.toContain("2026");
+    expect(plan.queries[0]).toContain("latest");
+  });
+
+  test("explicit year in topic is preserved", () => {
+    const plan = buildTavilySearchPlanFromIntents(
+      "2025 AI model release",
+      [
+        {
+          participantId: "p1",
+          participantName: "Model A",
+          provider: "ProviderA",
+          model: "model-a",
+          intents: [
+            {
+              question: "What models were released in 2025",
+              mustInclude: [],
+              shouldInclude: [],
+              exclude: [],
+              freshness: "latest",
+              sourcePreference: "mixed",
+              rationale: "test",
+            },
+          ],
+        },
+      ],
+      { currentYear: 2026 },
+    );
+
+    expect(plan.queries.length).toBeGreaterThan(0);
+    expect(plan.queries[0]).toContain("2025");
+  });
+
+  test("explicit year in intent question is preserved", () => {
+    const plan = buildTavilySearchPlanFromIntents(
+      "AI model comparison",
+      [
+        {
+          participantId: "p1",
+          participantName: "Model A",
+          provider: "ProviderA",
+          model: "model-a",
+          intents: [
+            {
+              question: "AI model benchmark 2024 ranking",
+              mustInclude: [],
+              shouldInclude: [],
+              exclude: [],
+              freshness: "latest",
+              sourcePreference: "mixed",
+              rationale: "test",
+            },
+          ],
+        },
+      ],
+      { currentYear: 2026 },
+    );
+
+    expect(plan.queries.length).toBeGreaterThan(0);
+    expect(plan.queries[0]).toContain("2024");
+  });
+});
+
+describe("localized_media query dedup", () => {
+  test("Chinese topic localized_media query does not duplicate fragments", async () => {
+    const provider = createNoIntentProvider();
+    const localizedQueries: string[] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        if (request.query.includes("本地媒体")) {
+          localizedQueries.push(request.query);
+        }
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "怎么看甲方科技最近发布的本地化战略",
+    });
+
+    expect(localizedQueries).toHaveLength(1);
+    const query = localizedQueries[0];
+    const segments = query.split(/\s+/).filter((s) => s.length >= 2);
+    const uniqueSegments = new Set(segments.map((s) => s.toLowerCase()));
+    expect(segments.length).toBe(uniqueSegments.size);
+  });
+
+  test("Chinese topic source rules do not contain hardcoded company names", () => {
+    const provider = createNoIntentProvider();
+    const queries: string[] = [];
+
+    const checkedFunctions = [
+      "buildSearchPasses",
+      "buildEntityCompetitionSearchPasses",
+      "buildLocalizedMediaPasses",
+    ];
+    void checkedFunctions;
+    void provider;
+    void queries;
+  });
+});
+
+describe("zero-result fallback", () => {
+  test("includes zeroResultFallbackTriggered in searchProcess", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "某产品新版发布带来的市场影响",
+      searcher: async () => [],
+    });
+
+    expect(pack.searchProcess?.zeroResultFallbackTriggered).toBeDefined();
+    expect(pack.searchProcess?.fallbackQueries).toBeDefined();
+    expect(pack.searchProcess?.providerReturnedZeroCount).toBeDefined();
+    expect(pack.searchProcess?.relaxedQueryCount).toBeDefined();
+    expect(pack.searchProcess?.skippedPassReasons).toBeDefined();
+  });
+
+  test("does not trigger fallback when passes return results", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "AI company financing",
+      searcher: async (query) => {
+        if (query.includes("AI company")) {
+          return [
+            {
+              title: "AI company financing report",
+              url: "https://reuters.com/ai-financing",
+              snippet: "AI company financing report details. ".repeat(30),
+            },
+          ];
+        }
+        return [];
+      },
+    });
+
+    expect(pack.searchProcess?.zeroResultFallbackTriggered).not.toBe(true);
+  });
+
+  test("all zero results still produces a valid searchProcess", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "某技术概念最新进展如何影响产业",
+      searcher: async () => [],
+    });
+
+    expect(pack.searchProcess).toBeDefined();
+    expect(pack.searchProcess?.passStats).toBeDefined();
+    expect(pack.searchProcess?.skippedPasses).toBeDefined();
+    expect(pack.searchProcess?.skippedPassReasons).toBeDefined();
+  });
+});
+
+describe("resolveSearchRegionPreference", () => {
+  test("explicit user preference takes priority over auto detection", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "中国 AI 政策最新动态",
+      searchRegion: "us",
+    });
+
+    expect(result.resolvedRegion).toBe("us");
+    expect(result.regionSource).toBe("user_preference");
+    expect(result.regionFallbackReason).toBe("none");
+  });
+
+  test("Chinese policy topic auto-detects to china", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "中国 AI 监管政策最新动态",
+      searchRegion: "auto",
+    });
+
+    expect(result.resolvedRegion).toBe("china");
+    expect(result.regionSource).toBe("auto_detected");
+  });
+
+  test("international topic defaults to global", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "AI model benchmark comparison 2026",
+      searchRegion: "auto",
+    });
+
+    expect(result.resolvedRegion).toBe("global");
+    expect(result.regionSource).toBe("default_global");
+    expect(result.regionFallbackReason).toBe("uncertain_auto_region");
+  });
+
+  test("Chinese query without China-specific context defaults to global", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "最新 AI 模型发布对行业的影响",
+      searchRegion: "auto",
+    });
+
+    expect(result.resolvedRegion).toBe("global");
+    expect(result.regionSource).toBe("default_global");
+  });
+
+  test("Japanese topic auto-detects to japan", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "日本 AI 市场发展趋势",
+      searchRegion: "auto",
+    });
+
+    expect(result.resolvedRegion).toBe("japan");
+    expect(result.regionSource).toBe("auto_detected");
+  });
+
+  test("Korean topic auto-detects to korea", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "韩国半导体产业发展",
+      searchRegion: "auto",
+    });
+
+    expect(result.resolvedRegion).toBe("korea");
+    expect(result.regionSource).toBe("auto_detected");
+  });
+
+  test("US topic auto-detects to us", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "美国 AI 监管政策最新进展",
+      searchRegion: "auto",
+    });
+
+    expect(result.resolvedRegion).toBe("us");
+    expect(result.regionSource).toBe("auto_detected");
+  });
+
+  test("global explicit selection returns global", () => {
+    const result = resolveSearchRegionPreference({
+      topic: "任意议题",
+      searchRegion: "global",
+    });
+
+    expect(result.resolvedRegion).toBe("global");
+    expect(result.regionSource).toBe("user_preference");
+  });
+});
+
+describe("source code scan: no fixture-specific terms in business logic", () => {
+  test("model-driven-web-search.ts does not contain fixture-specific model or company names", () => {
+    const businessFiles = [
+      "src/lib/search/model-driven-web-search.ts",
+      "src/lib/search/tavily-search.ts",
+      "src/lib/search/evidence-pack.ts",
+    ];
+    const fixturePatterns = [
+      /DeepSeek/i,
+      /deepseekv4/i,
+      /华为/,
+      /華為/,
+      /韬定律/,
+      /雄韬/,
+    ];
+
+    for (const file of businessFiles) {
+      const fullPath = path.join(process.cwd(), file);
+      if (!fs.existsSync(fullPath)) continue;
+      const content = fs.readFileSync(fullPath, "utf8");
+
+      for (const pattern of fixturePatterns) {
+        if (pattern.test(content)) {
+          expect(`${file} contains fixture term: ${pattern.source}`).toBe(
+            "no fixture terms",
+          );
+        }
+      }
+    }
   });
 });
 

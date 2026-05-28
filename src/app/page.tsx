@@ -32,6 +32,8 @@ import type {
   ModelsApiResponse,
   ModelParticipant,
   RoundtableMode,
+  SearchIntensity,
+  SearchRegion,
   UnavailableProvider,
 } from "@/lib/types";
 import type {
@@ -41,6 +43,8 @@ import type {
 type MeetingStatus = "initial" | "loading" | "success" | "error";
 type ModelLoadStatus = "loading" | "success" | "error";
 const LOCALE_STORAGE_KEY = "ai-roundtable-locale";
+const SEARCH_REGION_STORAGE_KEY = "ai-roundtable-search-region";
+const SEARCH_INTENSITY_STORAGE_KEY = "ai-roundtable-search-intensity";
 const MAX_EVIDENCE_DRAFTS = 10;
 
 type EvidenceDraft = {
@@ -104,6 +108,23 @@ export default function Home() {
 
     const storedLocale = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     return isLocale(storedLocale) ? storedLocale : "zh";
+  });
+  const [searchRegion, setSearchRegion] = useState<SearchRegion>(() => {
+    if (typeof window === "undefined") {
+      return "auto";
+    }
+
+    const stored = window.localStorage.getItem(SEARCH_REGION_STORAGE_KEY);
+    const validRegions: SearchRegion[] = ["auto", "global", "china", "us", "europe", "japan", "korea"];
+    return validRegions.includes(stored as SearchRegion) ? (stored as SearchRegion) : "auto";
+  });
+  const [searchIntensity, setSearchIntensity] = useState<SearchIntensity>(() => {
+    if (typeof window === "undefined") {
+      return "deep";
+    }
+
+    const stored = window.localStorage.getItem(SEARCH_INTENSITY_STORAGE_KEY);
+    return stored === "standard" ? "standard" : "deep";
   });
   const meetingAbortControllerRef = useRef<AbortController | null>(null);
   const uiText = getUiText(locale);
@@ -251,7 +272,11 @@ export default function Home() {
           searchDriverParticipantId: isWebSearchEnabled
             ? searchDriverParticipantId || undefined
             : undefined,
-          searchMode: "deep",
+          searchMode: searchIntensity === "standard" ? "standard" : "deep",
+          searchPreferences: {
+            searchRegion,
+            searchIntensity,
+          },
           summaryParticipantId: summaryParticipantId || undefined,
           webSearchEnabled: isWebSearchEnabled,
         }),
@@ -467,6 +492,16 @@ export default function Home() {
         mode={mode}
         locale={locale}
         onLocaleChange={changeLocale}
+        searchRegion={searchRegion}
+        onSearchRegionChange={(region) => {
+          setSearchRegion(region);
+          window.localStorage.setItem(SEARCH_REGION_STORAGE_KEY, region);
+        }}
+        searchIntensity={searchIntensity}
+        onSearchIntensityChange={(intensity) => {
+          setSearchIntensity(intensity);
+          window.localStorage.setItem(SEARCH_INTENSITY_STORAGE_KEY, intensity);
+        }}
         text={uiText}
       />
 

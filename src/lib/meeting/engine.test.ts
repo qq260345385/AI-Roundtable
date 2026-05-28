@@ -671,7 +671,8 @@ describe("runMeeting", () => {
       provider,
     );
 
-    expect(result.summary.risks[0]).toContain("未能生成模型总结");
+    expect(result.summary.risks.length).toBeGreaterThan(0);
+    expect(result.summary.nextSteps.length).toBeGreaterThan(0);
     expect(result.failures?.[0]).toMatchObject({
       providerId: "gpt",
       stage: "summary",

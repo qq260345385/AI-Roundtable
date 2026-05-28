@@ -28,6 +28,18 @@ describe("topic and evidence rules", () => {
         "src/lib/search/model-driven-web-search.ts",
         "buildEntityCompetitionSearchPasses",
       ),
+      readFunctionBody(
+        "src/lib/search/model-driven-web-search.ts",
+        "buildLocalizedMediaPasses",
+      ),
+      readFunctionBody(
+        "src/lib/search/model-driven-web-search.ts",
+        "getFreshnessTerms",
+      ),
+      readFunctionBody(
+        "src/lib/search/model-driven-web-search.ts",
+        "buildEntityCompetitionSearchPasses",
+      ),
     ].join("\n");
 
     expect(checkedRules).not.toMatch(FORBIDDEN_FIXED_OBJECTS);
