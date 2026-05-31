@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { getFactHygienePrompt } from "../meeting/fact-hygiene";
 import {
+  classifyEvidenceTopic,
   formatEvidencePackForPrompt,
   type EvidencePack,
   type SearchIntent,
@@ -114,11 +115,6 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
     const briefModePrompt = getBriefModePrompt(options);
-    const discussionFocusPrompt = getDiscussionFocusPrompt(options);
-    const discussionFocusGuardrails = getDiscussionFocusGuardrails(
-      options,
-      evidencePack,
-    );
 
     return this.callChat([
       getSystemMessage(participant),
@@ -127,11 +123,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
         content: [
           `会议议题：${topic}`,
           "这是第一阶段：独立观点。",
-          discussionFocusPrompt,
-          "请给出你的独立观点。系统给你的关注点只是为了减少重复，不是固定身份。你不需要自称角色，也可以超出该关注点自由表达。",
-          "不要自称固定角色，也不要使用身份式开头；可以用“我更关注的是……”“这里可能被低估的是……”“这个判断要加一个条件……”等自然圆桌语气。",
+          "请对本轮议题提出一个明确立场，并用你认为最有说服力的理由支持它。",
+          "不要只是列举多个可能性，也不要为了覆盖维度而套固定分析框架。你可以自由选择论证角度，但必须直接回答问题。",
+          "允许承认不确定性，但不要用不确定性逃避判断。你的目标是说服其他参会模型理解并接受你的立场。",
+          "不要自称固定角色，也不要使用身份式开头；可以用“我认为……”“我的判断是……”“这里被低估的是……”等自然圆桌语气。",
           "发言控制在 500～800 字；只保留与结论有关的证据、判断和不确定性。",
-          discussionFocusGuardrails,
           briefModePrompt,
           factHygienePrompt,
           evidencePackPrompt,
@@ -153,11 +149,6 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
     const briefModePrompt = getBriefModePrompt(options);
-    const discussionFocusPrompt = getDiscussionFocusPrompt(options);
-    const discussionFocusGuardrails = getDiscussionFocusGuardrails(
-      options,
-      evidencePack,
-    );
 
     return this.callChat([
       getSystemMessage(participant),
@@ -169,13 +160,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
           `你当前是 ${currentSeatNumber}号。`,
           "下面是其他参会者在第一阶段的独立观点，已按圆桌席位编号列出：",
           formatTurnsWithSeatNumbers(previousTurns, participant.name),
-          discussionFocusPrompt,
-          "请回应其他模型中你最想补充、质疑或修正的一点。避免重复上一阶段已有观点，除非你是在反驳、加条件或指出证据不足。",
-          "关注点只是为了减少重复，不是固定身份；不要自称固定角色，也可以超出该关注点自由表达。",
+          "请基于第一阶段其他模型的发言进行回应。你必须至少明确回应一个其他观点，说明你同意、反对或部分修正的理由。",
+          "不要只是继续展开自己的原始框架。你的目标是推进争论：指出对方论证中最强或最弱的地方，并尝试说服其他模型接受你的判断。",
+          "可以坚持原立场，也可以调整立场，但要解释为什么。",
           "回应其他参会者时，请使用席位编号称呼对方，例如“1号的观点”或“我想补充 2号”。",
           "不要直接称呼对方的模型名或显示名，例如不要写“感谢 Pro”或“Flash 提到”。",
           "语气自然一点，避免部门报告式结构。",
-          discussionFocusGuardrails,
           briefModePrompt,
           factHygienePrompt,
           evidencePackPrompt,
@@ -193,6 +183,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
     const briefModePrompt = getBriefModePrompt(options);
+    const topicType = classifyEvidenceTopic(topic);
+    const isStanceOriented = topicType === "general_discussion";
+    const summarySystemPrompt = isStanceOriented
+      ? getStanceOrientedSummaryPrompt()
+      : getEvidenceOrientedSummaryPrompt();
     const content = await this.callChat([
       {
         role: "system",
@@ -201,21 +196,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           factHygienePrompt,
           evidencePackPrompt,
           briefModePrompt,
-          "第三阶段由你压缩和归类观点，不按身份归因，只按观点归类。",
-          "共识整理阶段不能把未经验证的说法升级为事实，只能标记为参会模型倾向或需要外部核验。",
-          "整理共识时，请使用资料质量门控：可确认事实只能放入 high / medium 资料支持的事实性结论，且必须带资料编号，例如 [S1]。",
-          "第三阶段需要区分：与议题直接相关的可确认事实、技术/产品背景事实、未覆盖的关键事实；不要把局部技术 benchmark 或模型发布事实包装成综合竞争结论。",
-          "如果商业、资本、市场或监管资料缺失，请在可确认事实中明确说明：当前可确认事实主要集中在技术与安全评估，尚不足以确认两家公司长期竞争胜负。",
-          "维度引用纪律：GDPval、SimpleQA、model card、benchmark 只能支持模型能力、评估体系或技术背景判断，不能支持融资能力、收入质量、资本效率、企业合同等商业结论。",
-          "商业结论必须由 business_revenue / enterprise_adoption / funding_capital / market_analysis 类资料支撑；如果缺少对应维度资料，必须说“当前资料未覆盖该维度，不能判断”。",
-          "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
-          "禁止基于 low / very_low 资料使用“证明”“显示”“已经超越”“确定领先”“吊打”“追平”“实锤”等强断言。",
-          "如果结论只被 low / very_low 资料支持，请放入“社区观点”或“不足以确认”，并使用“有资料声称”“社区讨论认为”“尚未核验”“不能据此确认”等措辞。",
-          "low-evidence mode 下，低质量资料里的融资额、估值、营收、收入、IPO 时间表等具体数字只能放入低置信推测或不能确认的关键问题，不能作为正文论据或可确认事实。",
-          "引用低质量资料时必须写成“资料[Sx]提供了一个待核验线索，但因来源质量低/正文不足，不能确认。”或“有低可信资料声称xxx，但本轮无法确认，不能作为结论依据。”",
-          "禁止写“根据[Sx]，某公司融资xxx”“资料显示某机构估值xxx”这类把低可信资料声称包装成事实的句式。",
-          "第三阶段必须压缩重复观点，避免同一句同时出现在“低置信推测”和“不能确认的关键问题”。",
-          "如果没有可确认事实，confirmableFacts 必须返回 [\"无。当前资料不足以确认关键事实。\"]。",
+          summarySystemPrompt,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -227,7 +208,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "这是第三阶段：共识整理。",
           "会议发言：",
           formatTurns(turns),
-          "请按以下结构整理：可确认事实、低置信推测、不能确认的关键问题、风险点、下一步核验建议。",
+          isStanceOriented
+            ? "请按以下结构整理：主要立场及理由、核心分歧、较有说服力的论点、仍未解决的问题、风险点。"
+            : "请按以下结构整理：可确认事实、低置信推测、不能确认的关键问题、风险点、下一步核验建议。",
           options?.isBriefMode
             ? "简要会议模式下，每个字段最多 3 条，每条尽量不超过 60 字。"
             : "",
@@ -300,42 +283,37 @@ function getSystemMessage(participant: ModelParticipant): ChatMessage {
   };
 }
 
-function getDiscussionFocusPrompt(options?: MeetingPromptOptions): string {
-  if (!options?.discussionFocus) {
-    return "";
-  }
-
-  return `本轮讨论关注点：${options.discussionFocus}。`;
+function getEvidenceOrientedSummaryPrompt(): string {
+  return [
+    "第三阶段由你压缩和归类观点，不按身份归因，只按观点归类。",
+    "共识整理阶段不能把未经验证的说法升级为事实，只能标记为参会模型倾向或需要外部核验。",
+    "整理共识时，请使用资料质量门控：可确认事实只能放入 high / medium 资料支持的事实性结论，且必须带资料编号，例如 [S1]。",
+    "第三阶段需要区分：与议题直接相关的可确认事实、技术/产品背景事实、未覆盖的关键事实；不要把局部技术 benchmark 或模型发布事实包装成综合竞争结论。",
+    "如果商业、资本、市场或监管资料缺失，请在可确认事实中明确说明：当前可确认事实主要集中在技术与安全评估，尚不足以确认两家公司长期竞争胜负。",
+    "维度引用纪律：GDPval、SimpleQA、model card、benchmark 只能支持模型能力、评估体系或技术背景判断，不能支持融资能力、收入质量、资本效率、企业合同等商业结论。",
+    "商业结论必须由 business_revenue / enterprise_adoption / funding_capital / market_analysis 类资料支撑；如果缺少对应维度资料，必须说“当前资料未覆盖该维度，不能判断”。",
+    "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
+    "禁止基于 low / very_low 资料使用“证明”“显示”“已经超越”“确定领先”“吊打”“追平”“实锤”等强断言。",
+    "如果结论只被 low / very_low 资料支持，请放入“社区观点”或“不足以确认”，并使用“有资料声称”“社区讨论认为”“尚未核验”“不能据此确认”等措辞。",
+    "low-evidence mode 下，低质量资料里的融资额、估值、营收、收入、IPO 时间表等具体数字只能放入低置信推测或不能确认的关键问题，不能作为正文论据或可确认事实。",
+    "引用低质量资料时必须写成“资料[Sx]提供了一个待核验线索，但因来源质量低/正文不足，不能确认。”或“有低可信资料声称xxx，但本轮无法确认，不能作为结论依据。”",
+    "禁止写“根据[Sx]，某公司融资xxx”“资料显示某机构估值xxx”这类把低可信资料声称包装成事实的句式。",
+    "第三阶段必须压缩重复观点，避免同一句同时出现在“低置信推测”和“不能确认的关键问题”。",
+    "如果没有可确认事实，confirmableFacts 必须返回 [\"无。当前资料不足以确认关键事实。\"]。",
+  ].join("\n");
 }
 
-function getDiscussionFocusGuardrails(
-  options: MeetingPromptOptions | undefined,
-  evidencePack: EvidencePack | undefined,
-): string {
-  const focus = options?.discussionFocus ?? "";
-  const lines = [
-    "所有关注点都只能作为讨论切入点；low-evidence mode 下只能做框架分析和低置信推测，不得用低质量资料包装成事实。",
-  ];
-
-  if (focus.includes("技术与产品能力")) {
-    lines.push(
-      "技术与产品能力关注点：禁止在无可靠资料时推断未公开底层架构，只能讨论可观察的产品能力、工程效率信号和需要核验的问题。",
-    );
-  }
-
-  if (focus.includes("商业与资本效率")) {
-    lines.push(
-      "商业与资本效率关注点：禁止把低可信来源中的融资额、估值、营收、收入写成确定事实。",
-    );
-  }
-
-  if (evidencePack?.evidenceStatus === "low" || evidencePack?.evidenceStatus === "none") {
-    lines.push(
-      "当前资料质量不足时，请主动降级表达，不要把具体数字、模型版本、融资、估值、营收或 IPO 时间表写成确定事实。",
-    );
-  }
-
-  return lines.join("\n");
+function getStanceOrientedSummaryPrompt(): string {
+  return [
+    "第三阶段由你压缩和归类观点，不按身份归因，只按观点归类。",
+    "本议题主要属于观点或选择讨论，不要把参会模型的判断包装成可确认事实。",
+    "请重点整理：各参会模型提出了哪些不同立场、各立场的核心理由是什么、争论焦点在哪里、哪些论点更有说服力。",
+    "confirmableFacts 用于存放本轮讨论中出现的主要立场及支持理由，不是外部事实确认。",
+    "initialHypotheses 用于存放较有说服力的论点或判断。",
+    "insufficientlyConfirmed 用于存放仍未解决的问题或需要进一步判断的分歧。",
+    "不要输出“低置信推测”“不能确认的关键问题”等事实核验式措辞；本议题不强依赖外部资料核验。",
+    "如果没有外部资料，不要把“未联网”或“搜索失败”作为风险点。",
+  ].join("\n");
 }
 
 function formatTurns(turns: MeetingTurn[], currentSpeakerName?: string): string {

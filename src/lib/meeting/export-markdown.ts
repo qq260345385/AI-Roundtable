@@ -1,6 +1,7 @@
 import type { MeetingResult, ModelParticipant } from "../types";
 import { formatFailureForDisplay } from "./failure-format";
 import {
+  classifyEvidenceTopic,
   isCoreEvidenceItem,
   isPublicOpinionEvidenceItem,
   summarizeEvidenceQuality,
@@ -429,10 +430,11 @@ function appendEvidenceStatus(lines: string[], meeting: MeetingResult) {
   }
 
   const hasItems = (meeting.evidencePack?.items?.length ?? 0) > 0;
+  const topicType = classifyEvidenceTopic(meeting.topic);
 
   lines.push("## 事实核验状态");
   lines.push("");
-  lines.push(formatEvidenceStatusMessage(status, hasItems));
+  lines.push(formatEvidenceStatusMessage(status, hasItems, topicType));
 
   const warnings = meeting.evidencePack?.evidenceWarnings ?? [];
 
@@ -443,7 +445,11 @@ function appendEvidenceStatus(lines: string[], meeting: MeetingResult) {
   lines.push("");
 }
 
-function formatEvidenceStatusMessage(status: string, hasItems: boolean): string {
+function formatEvidenceStatusMessage(
+  status: string,
+  hasItems: boolean,
+  topicType?: string,
+): string {
   if (status === "high") {
     return "本次会议参考了较可靠的联网资料。";
   }
@@ -458,6 +464,10 @@ function formatEvidenceStatusMessage(status: string, hasItems: boolean): string 
     }
 
     return "本次会议未找到高质量资料，结论仅供参考。";
+  }
+
+  if (topicType === "general_discussion") {
+    return "本议题主要属于观点讨论，未使用外部资料。以下内容反映参会模型的论证与判断。";
   }
 
   return "本次会议没有可用联网资料，主要基于模型已有知识和推理。";

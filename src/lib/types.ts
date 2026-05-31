@@ -17,7 +17,6 @@ export type ParticipantStatus =
 export type RoundtableMode = "mock" | "real";
 
 export type MeetingPromptOptions = {
-  discussionFocus?: string;
   isBriefMode?: boolean;
   signal?: AbortSignal;
 };

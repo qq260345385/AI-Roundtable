@@ -309,6 +309,8 @@ export const UI_TEXT = {
       participantStatus: {
         waiting: "等待中",
         speaking: "发言中",
+        responding: "回应中",
+        summarizing: "总结中",
         completed: "已完成",
         failed: "调用失败",
       },
@@ -621,6 +623,8 @@ export const UI_TEXT = {
       participantStatus: {
         waiting: "Waiting",
         speaking: "Speaking",
+        responding: "Responding",
+        summarizing: "Summarizing",
         completed: "Completed",
         failed: "Failed",
       },

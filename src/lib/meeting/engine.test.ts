@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { runMeeting } from "./engine";
 import { runLiveMeeting } from "./live-engine";
 import type {
+  MeetingPromptOptions,
   MeetingRequest,
   MeetingSummary,
   MeetingTurn,
@@ -93,7 +94,7 @@ describe("runMeeting", () => {
 
     const result = await runMeeting(
       {
-        topic: "现在最强的 AI 模型排名是什么？",
+        topic: "最新 AI 模型发布排名",
         participants: [gptParticipant],
       },
       provider,
@@ -146,7 +147,7 @@ describe("runMeeting", () => {
     expect(result.isBriefMode).toBe(true);
   });
 
-  test("assigns mostly unique discussion focuses to four participants", async () => {
+  test("does not assign fixed discussion focuses to participants", async () => {
     const participants: ModelParticipant[] = [
       gptParticipant,
       claudeParticipant,
@@ -167,11 +168,11 @@ describe("runMeeting", () => {
         statusLabel: "Mock / 无需 API",
       },
     ];
-    const focuses: string[] = [];
+    const options: (MeetingPromptOptions | undefined)[] = [];
     const provider: ModelProvider = {
       name: "TestProvider",
-      async generateIndependentView(_participant, _topic, _evidencePack, options) {
-        focuses.push(options?.discussionFocus ?? "");
+      async generateIndependentView(_participant, _topic, _evidencePack, opts) {
+        options.push(opts);
         return "独立观点";
       },
       async generateResponse() {
@@ -190,20 +191,15 @@ describe("runMeeting", () => {
 
     await runMeeting(
       {
-        topic: "讨论关注点分配",
+        topic: "立场驱动讨论",
         participants,
       },
       provider,
     );
 
-    expect(new Set(focuses).size).toBe(4);
-    expect(focuses).toEqual([
-      "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
-      "商业与资本效率：收入、成本、融资、客户结构、商业闭环",
-      "技术与产品能力：模型能力、产品化、工程效率、技术路线",
-      "生态与用户采用：开发者生态、用户迁移成本、开源竞争、企业采用、长期格局",
-    ]);
-    expect(focuses.join("\n")).not.toContain("分析师");
+    for (const opts of options) {
+      expect(opts).toBeDefined();
+    }
   });
 
   test("keeps debugSearchProcess from the evidence pack on the meeting result", async () => {

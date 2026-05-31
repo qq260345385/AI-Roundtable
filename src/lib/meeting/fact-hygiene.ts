@@ -1,5 +1,10 @@
+import { classifyEvidenceTopic } from "../search/evidence-pack";
+
 export const FACT_HYGIENE_NOTICE =
   "当前议题可能涉及实时信息。参会模型无法联网，输出仅代表模型已有知识或推测，请勿作为最新事实依据，并请人工核验。";
+
+export const OPINION_TOPIC_NOTICE =
+  "本议题主要属于观点或偏好讨论，未强依赖联网资料。以下内容反映参会模型的论证与判断。";
 
 const TIME_SENSITIVE_PATTERNS = [
   /当前|现在|今天|昨日|昨天|明天|今年|本月|最近|最新|实时|新闻|资讯/u,
@@ -30,6 +35,15 @@ export function shouldShowFactHygieneNotice(
 export function getFactHygienePrompt(topic: string): string {
   if (!detectTimeSensitiveTopic(topic)) {
     return "";
+  }
+
+  const topicType = classifyEvidenceTopic(topic);
+
+  if (topicType === "general_discussion") {
+    return [
+      "本议题主要属于观点或偏好讨论，未强依赖联网资料。",
+      "以下内容反映参会模型的论证与判断，不作为事实依据。",
+    ].join("\n");
   }
 
   return [

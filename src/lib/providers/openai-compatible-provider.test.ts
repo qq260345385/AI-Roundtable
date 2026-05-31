@@ -193,7 +193,7 @@ describe("OpenAICompatibleProvider", () => {
         status: "available",
         statusLabel: "已连接",
       },
-      "现在最强的 AI 模型排名是什么？",
+      "最新 AI 模型发布影响分析",
     );
 
     const body = JSON.parse(requestBody) as {
@@ -288,7 +288,7 @@ describe("OpenAICompatibleProvider", () => {
     }
   });
 
-  test("uses lightweight discussion focuses without fixed analyst identity", async () => {
+  test("uses stance-driven prompts without fixed perspective assignment", async () => {
     const requestBodies: string[] = [];
     const provider = new OpenAICompatibleProvider({
       providerName: "DeepSeek",
@@ -311,19 +311,11 @@ describe("OpenAICompatibleProvider", () => {
       status: "available" as const,
       statusLabel: "Connected",
     }));
-    const focuses = [
-      "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
-      "商业与资本效率：收入、成本、融资、客户结构、商业闭环",
-      "技术与产品能力：模型能力、产品化、工程效率、技术路线",
-      "生态与用户采用：开发者生态、用户迁移成本、开源竞争、企业采用、长期格局",
-    ];
 
-    for (const [index, participant] of participants.entries()) {
+    for (const participant of participants) {
       await provider.generateIndependentView(
         participant,
         "OpenAI 和 Anthropic 哪个公司会笑到最后",
-        undefined,
-        { discussionFocus: focuses[index] },
       );
     }
 
@@ -337,19 +329,19 @@ describe("OpenAICompatibleProvider", () => {
 
     const allPrompts = prompts.join("\n");
 
-    for (const focus of focuses) {
-      expect(allPrompts).toContain(focus);
-    }
-
-    expect(allPrompts).toContain("关注点只是为了减少重复，不是固定身份");
+    expect(allPrompts).toContain("明确立场");
+    expect(allPrompts).toContain("说服其他参会模型");
     expect(allPrompts).toContain("不要自称固定角色");
-    expect(allPrompts).not.toContain("你的分析角色");
-    expect(allPrompts).not.toContain("本轮分析角色");
+    expect(allPrompts).not.toContain("风险与不确定性");
+    expect(allPrompts).not.toContain("商业与资本效率");
+    expect(allPrompts).not.toContain("技术与产品能力");
+    expect(allPrompts).not.toContain("生态与用户采用");
+    expect(allPrompts).not.toContain("讨论关注点");
     expect(allPrompts).not.toMatch(/你是.+分析师/);
     expect(allPrompts).not.toMatch(/作为.+分析师/);
   });
 
-  test("guards technical focus against inventing unpublished architecture in low-evidence mode", async () => {
+  test("uses debate-focused prompts in response phase", async () => {
     let requestBody = "";
     const provider = new OpenAICompatibleProvider({
       providerName: "DeepSeek",
@@ -365,41 +357,26 @@ describe("OpenAICompatibleProvider", () => {
       },
     });
 
-    await provider.generateIndependentView(
+    await provider.generateResponse(
       {
-        id: "tech",
-        name: "Tech Model",
+        id: "test",
+        name: "Test Model",
         provider: "DeepSeek",
         model: "deepseek-v4-flash",
         status: "available",
         statusLabel: "Connected",
       },
-      "OpenAI 和 Anthropic 哪个公司会笑到最后",
-      {
-        enabled: true,
-        evidenceStatus: "low",
-        items: [
-          {
-            id: "S1",
-            title: "Short rumor",
-            url: "https://reddit.com/r/artificial/comments/test",
-            snippet: "short rumor",
-            quality: {
-              warnings: ["snippet only"],
-              textLength: 11,
-              wasTruncated: false,
-              sourceType: "social_forum",
-              reliability: "low",
-              score: 35,
-              snippetOnly: true,
-            },
-          },
-        ],
-      },
-      {
-        discussionFocus:
-          "技术与产品能力：模型能力、产品化、工程效率、技术路线",
-      },
+      "测试议题",
+      [
+        {
+          id: "independent-other",
+          phaseId: "independent",
+          speakerName: "Other Model",
+          provider: "Other",
+          model: "other-model",
+          content: "其他模型的观点",
+        },
+      ],
     );
 
     const body = JSON.parse(requestBody) as {
@@ -407,9 +384,12 @@ describe("OpenAICompatibleProvider", () => {
     };
     const promptText = body.messages.map((message) => message.content).join("\n");
 
-    expect(promptText).toContain("禁止在无可靠资料时推断未公开底层架构");
-    expect(promptText).toContain("low-evidence mode 下只能做框架分析和低置信推测");
-    expect(promptText).not.toMatch(/你是.+分析师/);
+    expect(promptText).toContain("回应");
+    expect(promptText).toContain("推进争论");
+    expect(promptText).toContain("说服其他模型");
+    expect(promptText).not.toContain("讨论关注点");
+    expect(promptText).not.toContain("风险与不确定性");
+    expect(promptText).not.toContain("商业与资本效率");
   });
 
   test("adds evidence quality guardrails to summary prompts", async () => {
@@ -436,7 +416,7 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     await provider.generateSummary(
-      "最新模型对比",
+      "GPT-4o 和 Claude 3.5 评测对比",
       [],
       {
         enabled: true,

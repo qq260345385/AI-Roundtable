@@ -58,6 +58,13 @@ export function MeetingRoom({
   const activeStage =
     stageViews.find((stage) => stage.id === activeStageId) ?? stageViews[0];
 
+  const speakingStatusLabel =
+    activeStage.kind === "summary"
+      ? text.meetingRoom.participantStatus.summarizing
+      : activeStage.index === 2
+        ? text.meetingRoom.participantStatus.responding
+        : text.meetingRoom.participantStatus.speaking;
+
   return (
     <main className="min-h-screen animate-[meetingFadeIn_420ms_ease-out] bg-[radial-gradient(circle_at_top_left,#ecfdf5_0,#f4f4f5_34%,#f8fafc_70%)] text-zinc-950">
       <section className="mx-auto flex max-w-7xl flex-col gap-6 px-5 py-6 lg:min-h-screen">
@@ -179,7 +186,7 @@ export function MeetingRoom({
                         {participantStatuses[participant.id] ===
                         "speaking" ? (
                           <span className="mt-2 inline-flex border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800">
-                            {text.meetingRoom.participantStatus.speaking}
+                            {speakingStatusLabel}
                           </span>
                         ) : null}
                       </div>

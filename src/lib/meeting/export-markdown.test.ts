@@ -22,7 +22,7 @@ const participants: ModelParticipant[] = [
 ];
 
 const meeting: MeetingResult = {
-  topic: "如何验证真实模型圆桌会议质量？",
+  topic: "OpenAI 和 Anthropic 公司竞争格局分析",
   phases: [
     {
       id: "independent",

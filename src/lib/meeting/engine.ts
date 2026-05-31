@@ -9,20 +9,15 @@ import type {
 } from "../types";
 import {
   FACT_HYGIENE_NOTICE,
+  OPINION_TOPIC_NOTICE,
   detectTimeSensitiveTopic,
 } from "./fact-hygiene";
+import { classifyEvidenceTopic } from "../search/evidence-pack";
 import { checkEvidenceCitations } from "../search/evidence-citations";
 import { resolveEvidencePackDelivery } from "../search/evidence-pack";
 import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
 import { sanitizeRoleLeak } from "./role-leak";
 import { generateFallbackSummaryFromTurns } from "../providers/openai-compatible-provider";
-
-const DISCUSSION_FOCUSES = [
-  "风险与不确定性：监管、安全、治理、黑天鹅、不确定性",
-  "商业与资本效率：收入、成本、融资、客户结构、商业闭环",
-  "技术与产品能力：模型能力、产品化、工程效率、技术路线",
-  "生态与用户采用：开发者生态、用户迁移成本、开源竞争、企业采用、长期格局",
-] as const;
 
 // 会议引擎只负责流程：独立观点、自由回应、共识整理。
 export async function runMeeting(
@@ -96,7 +91,11 @@ export async function runMeeting(
     hasPartialFailures: failures.length > 0,
     isBriefMode: request.isBriefMode === true,
     isTimeSensitive,
-    factCheckNotice: isTimeSensitive ? FACT_HYGIENE_NOTICE : undefined,
+    factCheckNotice: isTimeSensitive
+      ? classifyEvidenceTopic(meetingRequest.topic) === "general_discussion"
+        ? OPINION_TOPIC_NOTICE
+        : FACT_HYGIENE_NOTICE
+      : undefined,
   };
 }
 
@@ -133,7 +132,7 @@ async function runIndependentPhase(
         participant,
         request.topic,
         request.evidencePack,
-        getMeetingPromptOptions(request, participant),
+        getMeetingPromptOptions(request),
       );
 
       turns.push(createTurn("independent", participant, content));
@@ -166,7 +165,7 @@ async function runResponsePhase(
         request.topic,
         independentTurns,
         request.evidencePack,
-        getMeetingPromptOptions(request, participant),
+        getMeetingPromptOptions(request),
       );
 
       turns.push(createTurn("response", participant, content));
@@ -204,14 +203,14 @@ async function generateSummaryWithFallback(
           request.topic,
           turns,
           request.evidencePack,
-          getMeetingPromptOptions(request, participant),
+          getMeetingPromptOptions(request),
         );
       } else {
         summary = await provider.generateSummary(
           request.topic,
           turns,
           request.evidencePack,
-          getMeetingPromptOptions(request, participant),
+          getMeetingPromptOptions(request),
         );
       }
 
@@ -256,27 +255,11 @@ function getSummaryParticipants(
   ];
 }
 
-function getMeetingPromptOptions(
-  request: MeetingRequest,
-  participant: ModelParticipant,
-) {
+function getMeetingPromptOptions(request: MeetingRequest) {
   return {
-    discussionFocus: getParticipantDiscussionFocus(
-      request.participants,
-      participant,
-    ),
     isBriefMode: request.isBriefMode,
     signal: request.signal,
   };
-}
-
-function getParticipantDiscussionFocus(
-  participants: ModelParticipant[],
-  participant: ModelParticipant,
-) {
-  const index = participants.findIndex((item) => item.id === participant.id);
-
-  return DISCUSSION_FOCUSES[Math.max(0, index) % DISCUSSION_FOCUSES.length];
 }
 
 function throwIfAborted(signal: AbortSignal | undefined) {
