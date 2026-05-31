@@ -1,44 +1,87 @@
 import type { MeetingSummary } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
+import { getSummaryPresentationStyle } from "@/lib/meeting/summary-presentation";
 
 type SummaryPanelProps = {
   summary: MeetingSummary;
   text: UiText;
+  topic: string;
 };
 
-export function SummaryPanel({ summary, text }: SummaryPanelProps) {
+export function SummaryPanel({ summary, text, topic }: SummaryPanelProps) {
+  const style = getSummaryPresentationStyle(topic);
+  const sections =
+    style === "stance-oriented"
+      ? [
+          {
+            title: text.meetingBoard.stanceSummary.mainStances,
+            items: summary.confirmableFacts ?? summary.consensus,
+          },
+          {
+            title: text.meetingBoard.stanceSummary.coreReasons,
+            items: summary.initialHypotheses ?? [],
+          },
+          {
+            title: text.meetingBoard.stanceSummary.mainDifferences,
+            items:
+              summary.insufficientlyConfirmed &&
+              summary.insufficientlyConfirmed.length > 0
+                ? summary.insufficientlyConfirmed
+                : summary.differences,
+          },
+          {
+            title: text.meetingBoard.stanceSummary.discussionLimits,
+            items: summary.risks,
+          },
+          {
+            title: text.meetingBoard.stanceSummary.continueDiscussion,
+            items: summary.nextSteps,
+          },
+        ]
+      : [
+          {
+            title: text.meetingBoard.confirmableFacts,
+            items: summary.confirmableFacts ?? summary.consensus,
+          },
+          {
+            title: text.meetingBoard.initialHypotheses,
+            items: summary.initialHypotheses ?? [],
+          },
+          {
+            title: text.meetingBoard.communityViews,
+            items: summary.communityViews ?? [],
+          },
+          {
+            title: text.meetingBoard.insufficientlyConfirmed,
+            items: summary.insufficientlyConfirmed ?? [],
+          },
+          {
+            title: text.meetingBoard.differences,
+            items: summary.confirmableFacts ? [] : summary.differences,
+          },
+          {
+            title: text.meetingBoard.risks,
+            items: summary.risks,
+          },
+          {
+            title: text.meetingBoard.nextSteps,
+            items: summary.nextSteps,
+          },
+        ];
+
   return (
     <section className="border border-amber-200 bg-amber-50 p-5">
       <h2 className="text-lg font-semibold text-zinc-950">
         {text.meetingBoard.summaryTitle}
       </h2>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <SummaryList
-          title={text.meetingBoard.confirmableFacts}
-          items={summary.confirmableFacts ?? summary.consensus}
-        />
-        <SummaryList
-          title={text.meetingBoard.initialHypotheses}
-          items={summary.initialHypotheses ?? []}
-        />
-        <SummaryList
-          title={text.meetingBoard.communityViews}
-          items={summary.communityViews ?? []}
-        />
-        <SummaryList
-          title={text.meetingBoard.insufficientlyConfirmed}
-          items={summary.insufficientlyConfirmed ?? []}
-        />
-        {!summary.confirmableFacts ? (
-          <>
-            <SummaryList title={text.meetingBoard.differences} items={summary.differences} />
-            <SummaryList title={text.meetingBoard.minorityViews} items={summary.minorityViews} />
-          </>
-        ) : null}
-        <SummaryList title={text.meetingBoard.risks} items={summary.risks} />
-      </div>
-      <div className="mt-4">
-        <SummaryList title={text.meetingBoard.nextSteps} items={summary.nextSteps} />
+        {sections.map((section) => (
+          <SummaryList
+            title={section.title}
+            items={section.items}
+            key={section.title}
+          />
+        ))}
       </div>
     </section>
   );

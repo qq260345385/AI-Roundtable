@@ -20,6 +20,7 @@ import { AllProvidersFailedError } from "./engine";
 import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
 import { sanitizeRoleLeak } from "./role-leak";
 import { generateFallbackSummaryFromTurns } from "../providers/openai-compatible-provider";
+import { getSummaryPresentationStyle } from "./summary-presentation";
 
 type EmitLiveMeetingEvent = (event: LiveMeetingEvent) => void | Promise<void>;
 
@@ -78,7 +79,10 @@ export async function runLiveMeeting(
     type: "phase_started",
     phaseId: "summary",
     title: "第三阶段：共识整理",
-    description: "整理共识、分歧、少数派观点、风险和下一步建议。",
+    description:
+      getSummaryPresentationStyle(meetingRequest.topic) === "stance-oriented"
+        ? "整理主要立场、分歧、讨论局限和可以继续讨论的问题。"
+        : "整理可确认事实、低置信推测、关键问题、风险和核验建议。",
   });
 
   const successfulParticipants = getSuccessfulParticipants(request, allTurns);

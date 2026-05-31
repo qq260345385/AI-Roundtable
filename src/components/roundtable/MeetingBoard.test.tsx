@@ -304,6 +304,91 @@ describe("MeetingBoard", () => {
     expect(html).not.toContain("AI model benchmark latest");
   });
 
+  test("renders stance-oriented summary labels without minority views or empty cards", () => {
+    const meeting: MeetingResult = {
+      topic: "你们认为什么水果更好吃",
+      phases: [],
+      summary: {
+        consensus: ["多数人认可水果口味存在主观差异。"],
+        differences: ["具体偏好仍有分歧。"],
+        minorityViews: ["大樱桃支持者提出了少数派观点。"],
+        risks: ["样本偏好可能不代表所有人。"],
+        nextSteps: ["继续收集更多样本。"],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingRoom
+        activeStageId="summary"
+        copyMessage=""
+        isCompleted
+        isLive={false}
+        meeting={meeting}
+        onBackToSetup={() => undefined}
+        onCopyMarkdown={() => undefined}
+        onStageChange={() => undefined}
+        participantStatuses={{}}
+        participants={[]}
+        statusMessage=""
+        statusType="success"
+        text={getUiText("zh")}
+      />,
+    );
+
+    expect(html).toContain("主要立场");
+    expect(html).toContain("主要分歧");
+    expect(html).toContain("讨论局限");
+    expect(html).toContain("可以继续讨论");
+    expect(html).not.toContain("风险");
+    expect(html).not.toContain("下一步");
+    expect(html).not.toContain("该小节暂无内容");
+    expect(html).not.toContain("有价值的少数派观点");
+    expect(html).not.toContain("大樱桃支持者提出了少数派观点");
+  });
+
+  test("renders evidence-oriented summary labels for factual topics", () => {
+    const meeting: MeetingResult = {
+      topic: "某公司最近发布的新模型有什么影响",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        confirmableFacts: ["该公司发布了新模型。"],
+        initialHypotheses: ["可能影响产品竞争。"],
+        insufficientlyConfirmed: ["用户迁移影响仍需核验。"],
+        risks: ["资料覆盖可能不足。"],
+        nextSteps: ["核验发布公告和媒体报道。"],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingRoom
+        activeStageId="summary"
+        copyMessage=""
+        isCompleted
+        isLive={false}
+        meeting={meeting}
+        onBackToSetup={() => undefined}
+        onCopyMarkdown={() => undefined}
+        onStageChange={() => undefined}
+        participantStatuses={{}}
+        participants={[]}
+        statusMessage=""
+        statusType="success"
+        text={getUiText("zh")}
+      />,
+    );
+
+    expect(html).toContain("可确认事实");
+    expect(html).toContain("低置信推测");
+    expect(html).toContain("不能确认的关键问题");
+    expect(html).toContain("风险点");
+    expect(html).toContain("下一步核验建议");
+    expect(html).not.toContain("主要立场");
+    expect(html).not.toContain("讨论局限");
+  });
+
   test("renders a stop meeting action while a live meeting is running", () => {
     const meeting: MeetingResult = {
       topic: "Live topic",

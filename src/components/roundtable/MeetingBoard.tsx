@@ -32,7 +32,7 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
         <ProviderFailurePanel failures={meeting.failures} text={text} />
       ) : null}
       <TranscriptPanel phases={meeting.phases} text={text} />
-      <SummaryPanel summary={meeting.summary} text={text} />
+      <SummaryPanel summary={meeting.summary} text={text} topic={meeting.topic} />
     </div>
   );
 }

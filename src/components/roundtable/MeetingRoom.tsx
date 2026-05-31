@@ -14,6 +14,7 @@ import {
   buildMeetingStageViews,
   type MeetingStageView,
 } from "@/lib/meeting/meeting-room";
+import { getSummaryPresentationStyle } from "@/lib/meeting/summary-presentation";
 import { formatModelDisplayName } from "@/lib/models/model-display-name";
 import { WebSearchProcessPanel } from "./MeetingBoard";
 
@@ -221,7 +222,7 @@ export function MeetingRoom({
               </div>
             ) : null}
 
-            <StageContent stage={activeStage} text={text} />
+          <StageContent stage={activeStage} text={text} topic={meeting.topic} />
           </section>
         </div>
       </section>
@@ -255,11 +256,12 @@ export function MeetingRoom({
 type StageContentProps = {
   stage: MeetingStageView;
   text: UiText;
+  topic: string;
 };
 
-function StageContent({ stage, text }: StageContentProps) {
+function StageContent({ stage, text, topic }: StageContentProps) {
   if (stage.kind === "summary") {
-    return <SummaryStage summary={stage.summary} text={text} />;
+    return <SummaryStage summary={stage.summary} text={text} topic={topic} />;
   }
 
   if (stage.phase.turns.length === 0) {
@@ -311,24 +313,114 @@ function TurnCard({ index, text, turn }: TurnCardProps) {
 type SummaryStageProps = {
   summary: MeetingSummary;
   text: UiText;
+  topic: string;
 };
 
-function SummaryStage({ summary, text }: SummaryStageProps) {
-  const hasMinorityViews = summary.minorityViews.some((item) => item.trim().length > 0);
+type SummarySection = {
+  items: string[];
+  span?: "full";
+  title: string;
+};
+
+function SummaryStage({ summary, text, topic }: SummaryStageProps) {
+  const style = getSummaryPresentationStyle(topic);
+  const sections =
+    style === "stance-oriented"
+      ? getStanceSummarySections(summary, text)
+      : getEvidenceSummarySections(summary, text);
+  const visibleSections =
+    style === "stance-oriented"
+      ? sections.filter((section) => section.items.length > 0)
+      : sections;
+
+  if (visibleSections.length === 0) {
+    return (
+      <p className="border border-dashed border-zinc-300 bg-zinc-50 p-5 text-sm text-zinc-500">
+        {text.meetingRoom.summaryEmpty}
+      </p>
+    );
+  }
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <SummaryList title={text.meetingBoard.consensus} items={summary.consensus} text={text} />
-      <SummaryList title={text.meetingBoard.differences} items={summary.differences} text={text} />
-      {hasMinorityViews ? (
-        <SummaryList title={text.meetingBoard.minorityViews} items={summary.minorityViews} text={text} />
-      ) : null}
-      <SummaryList title={text.meetingBoard.risks} items={summary.risks} text={text} />
-      <div className="md:col-span-2">
-        <SummaryList title={text.meetingBoard.nextSteps} items={summary.nextSteps} text={text} />
-      </div>
+      {visibleSections.map((section) => (
+        <div
+          className={section.span === "full" ? "md:col-span-2" : undefined}
+          key={section.title}
+        >
+          <SummaryList
+            title={section.title}
+            items={section.items}
+            text={text}
+          />
+        </div>
+      ))}
     </div>
   );
+}
+
+function getStanceSummarySections(
+  summary: MeetingSummary,
+  text: UiText,
+): SummarySection[] {
+  const labels = text.meetingBoard.stanceSummary;
+
+  return [
+    {
+      title: labels.mainStances,
+      items: summary.confirmableFacts ?? summary.consensus,
+    },
+    {
+      title: labels.coreReasons,
+      items: summary.initialHypotheses ?? [],
+    },
+    {
+      title: labels.mainDifferences,
+      items:
+        summary.insufficientlyConfirmed &&
+        summary.insufficientlyConfirmed.length > 0
+          ? summary.insufficientlyConfirmed
+          : summary.differences,
+    },
+    {
+      title: labels.discussionLimits,
+      items: summary.risks,
+    },
+    {
+      title: labels.continueDiscussion,
+      items: summary.nextSteps,
+      span: "full",
+    },
+  ];
+}
+
+function getEvidenceSummarySections(
+  summary: MeetingSummary,
+  text: UiText,
+): SummarySection[] {
+  return [
+    {
+      title: text.meetingBoard.confirmableFacts,
+      items: summary.confirmableFacts ?? summary.consensus,
+    },
+    {
+      title: text.meetingBoard.initialHypotheses,
+      items: summary.initialHypotheses ?? [],
+    },
+    {
+      title: text.meetingBoard.insufficientlyConfirmed,
+      items: summary.insufficientlyConfirmed ?? [],
+    },
+    {
+      title: text.meetingBoard.risks,
+      items: summary.risks,
+    },
+    {
+      title: text.meetingBoard.nextSteps,
+      items: summary.nextSteps,
+      span: "full",
+    },
+  ];
 }
 
 type SummaryListProps = {

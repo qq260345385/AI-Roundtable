@@ -424,6 +424,123 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("需要额外核验");
   });
 
+  test("exports stance-oriented summary labels for preference topics", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        topic: "你们认为什么水果更好吃",
+        summary: {
+          consensus: ["芒果派认为香气和甜度上限更突出。"],
+          differences: ["风味上限和耐吃稳定性哪个更重要仍有分歧。"],
+          minorityViews: ["不应显示的少数派字段。"],
+          confirmableFacts: [
+            "芒果派认为香气、甜度和柔滑口感更有吸引力。",
+            "草莓派认为酸甜平衡和不腻更适合多数场景。",
+          ],
+          initialHypotheses: [
+            "香气、甜度、口感层次是芒果派的主要依据。",
+            "酸甜平衡、不腻和场景适配是草莓派的主要依据。",
+          ],
+          insufficientlyConfirmed: [
+            "最好吃到底看风味上限，还是看耐吃和稳定性。",
+          ],
+          risks: ["讨论基于主观体验，无法代表所有人口味。"],
+          nextSteps: ["可以按香气、甜度、口感、耐吃度分别投票。"],
+        },
+        evidencePack: {
+          enabled: false,
+          evidenceStatus: "none",
+          items: [],
+        },
+        citationCheck: {
+          validCitationIds: [],
+          usedCitationIds: [],
+          missingCitationIds: [],
+          invalidCitationIds: [],
+          hasInvalidCitations: false,
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("### 主要立场");
+    expect(markdown).toContain("### 核心理由");
+    expect(markdown).toContain("### 主要分歧");
+    expect(markdown).toContain("### 讨论局限");
+    expect(markdown).toContain("### 可以继续讨论");
+    expect(markdown).not.toContain("### 可确认事实");
+    expect(markdown).not.toContain("### 低置信推测");
+    expect(markdown).not.toContain("### 不能确认的关键问题");
+    expect(markdown).not.toContain("### 风险点");
+    expect(markdown).not.toContain("### 下一步核验建议");
+    expect(markdown).not.toContain("据资料");
+    expect(markdown).not.toContain("搜索失败");
+    expect(markdown).toContain(
+      "本议题未使用外部资料，讨论主要基于参会模型的立场、理由和相互回应。",
+    );
+    expect(markdown).toContain(
+      "本轮为观点讨论，未使用外部资料，因此没有引用检查项。",
+    );
+  });
+
+  test("keeps evidence-oriented markdown labels for factual topics", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        topic: "某公司最近发布的新模型有什么影响",
+        summary: {
+          consensus: [],
+          differences: [],
+          minorityViews: [],
+          confirmableFacts: ["该公司发布了新模型。"],
+          initialHypotheses: ["可能影响产品竞争。"],
+          insufficientlyConfirmed: ["具体用户迁移影响仍需核验。"],
+          risks: ["资料覆盖可能不足。"],
+          nextSteps: ["核验发布公告和媒体报道。"],
+        },
+        evidencePack: {
+          enabled: true,
+          evidenceStatus: "medium",
+          items: [
+            {
+              id: "S1",
+              title: "官方发布",
+              source: "Company",
+              url: "https://example.com/news/model",
+              snippet: "发布资料正文。".repeat(120),
+              quality: {
+                textLength: 1200,
+                wasTruncated: false,
+                warnings: [],
+                sourceType: "official_blog",
+                reliability: "high",
+                score: 88,
+                topicRelevanceScore: 80,
+              },
+            },
+          ],
+        },
+        citationCheck: {
+          validCitationIds: ["S1"],
+          usedCitationIds: ["S1"],
+          missingCitationIds: [],
+          invalidCitationIds: [],
+          hasInvalidCitations: false,
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("### 可确认事实");
+    expect(markdown).toContain("### 低置信推测");
+    expect(markdown).toContain("### 不能确认的关键问题");
+    expect(markdown).toContain("### 风险点");
+    expect(markdown).toContain("### 下一步核验建议");
+    expect(markdown).not.toContain("### 主要立场");
+    expect(markdown).toContain("## 引用检查");
+    expect(markdown).toContain("- 有效资料编号：S1");
+  });
+
   test("exports citation check results", () => {
     const markdown = exportMeetingToMarkdown(
       {

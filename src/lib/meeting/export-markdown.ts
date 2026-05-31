@@ -1,12 +1,15 @@
 import type { MeetingResult, ModelParticipant } from "../types";
 import { formatFailureForDisplay } from "./failure-format";
 import {
-  classifyEvidenceTopic,
   isCoreEvidenceItem,
   isPublicOpinionEvidenceItem,
   summarizeEvidenceQuality,
   type SearchEvidence,
 } from "../search/evidence-pack";
+import {
+  getSummaryTopicType,
+  isStanceOrientedTopic,
+} from "./summary-presentation";
 
 type ExportMarkdownOptions = {
   includeEvidenceDebug?: boolean;
@@ -67,6 +70,94 @@ export function exportMeetingToMarkdown(
 
   lines.push("## 第三阶段：共识整理");
   lines.push("");
+  appendSummarySections(lines, meeting);
+
+  if (options.includeSummaryDebug && meeting.summary.summaryDebug) {
+    const debug = meeting.summary.summaryDebug;
+
+    lines.push("### Summary Debug");
+    lines.push("");
+    lines.push(`- rawFormatDetected: ${debug.rawFormatDetected}`);
+    lines.push(`- parseSucceeded: ${debug.parseSucceeded}`);
+    lines.push(`- repairAttempted: ${debug.repairAttempted}`);
+    lines.push(`- fallbackUsed: ${debug.fallbackUsed}`);
+    if (debug.fallbackReason) {
+      lines.push(`- fallbackReason: ${sanitizeMarkdownText(debug.fallbackReason)}`);
+    }
+    if (debug.emptySectionsRepaired.length > 0) {
+      lines.push(`- emptySectionsRepaired: ${debug.emptySectionsRepaired.join(", ")}`);
+    }
+    lines.push("");
+  }
+
+  if (meeting.failures && meeting.failures.length > 0) {
+    lines.push("## 模型调用失败记录");
+    lines.push("");
+
+    for (const failure of meeting.failures) {
+      const formattedFailure = formatFailureForDisplay(failure);
+
+      lines.push(
+        `- ${formattedFailure.providerName} / ${formattedFailure.model} / ${formattedFailure.stageLabel}：${formattedFailure.message}`,
+      );
+      lines.push(`  建议：${formattedFailure.suggestion}`);
+    }
+
+    lines.push("");
+  }
+
+  return lines.join("\n").trim() + "\n";
+}
+
+function appendSummarySections(lines: string[], meeting: MeetingResult) {
+  if (isStanceOrientedTopic(meeting.topic)) {
+    appendStanceSummarySections(lines, meeting);
+    return;
+  }
+
+  appendEvidenceSummarySections(lines, meeting);
+}
+
+function appendStanceSummarySections(lines: string[], meeting: MeetingResult) {
+  const mainStances = sanitizeSummaryItems(
+    meeting.summary.confirmableFacts ?? meeting.summary.consensus,
+  );
+  const coreReasons = sanitizeSummaryItems(meeting.summary.initialHypotheses ?? []);
+  const mainDifferences = sanitizeSummaryItems(
+    meeting.summary.insufficientlyConfirmed &&
+      meeting.summary.insufficientlyConfirmed.length > 0
+      ? meeting.summary.insufficientlyConfirmed
+      : meeting.summary.differences,
+  );
+
+  appendList(
+    lines,
+    "主要立场",
+    mainStances.length > 0 ? mainStances : ["无。"],
+  );
+  appendList(lines, "核心理由", coreReasons.length > 0 ? coreReasons : ["无。"]);
+  appendList(
+    lines,
+    "主要分歧",
+    mainDifferences.length > 0 ? mainDifferences : ["无。"],
+  );
+  appendList(
+    lines,
+    "讨论局限",
+    sanitizeSummaryItems(meeting.summary.risks).length > 0
+      ? sanitizeSummaryItems(meeting.summary.risks)
+      : ["无。"],
+  );
+  appendList(
+    lines,
+    "可以继续讨论",
+    sanitizeSummaryItems(meeting.summary.nextSteps).length > 0
+      ? sanitizeSummaryItems(meeting.summary.nextSteps)
+      : ["无。"],
+  );
+}
+
+function appendEvidenceSummarySections(lines: string[], meeting: MeetingResult) {
   const confirmableFacts = sanitizeSummaryItems(
     meeting.summary.confirmableFacts ?? meeting.summary.consensus,
   );
@@ -110,42 +201,6 @@ export function exportMeetingToMarkdown(
       ? sanitizeSummaryItems(meeting.summary.nextSteps)
       : ["无。"],
   );
-
-  if (options.includeSummaryDebug && meeting.summary.summaryDebug) {
-    const debug = meeting.summary.summaryDebug;
-
-    lines.push("### Summary Debug");
-    lines.push("");
-    lines.push(`- rawFormatDetected: ${debug.rawFormatDetected}`);
-    lines.push(`- parseSucceeded: ${debug.parseSucceeded}`);
-    lines.push(`- repairAttempted: ${debug.repairAttempted}`);
-    lines.push(`- fallbackUsed: ${debug.fallbackUsed}`);
-    if (debug.fallbackReason) {
-      lines.push(`- fallbackReason: ${sanitizeMarkdownText(debug.fallbackReason)}`);
-    }
-    if (debug.emptySectionsRepaired.length > 0) {
-      lines.push(`- emptySectionsRepaired: ${debug.emptySectionsRepaired.join(", ")}`);
-    }
-    lines.push("");
-  }
-
-  if (meeting.failures && meeting.failures.length > 0) {
-    lines.push("## 模型调用失败记录");
-    lines.push("");
-
-    for (const failure of meeting.failures) {
-      const formattedFailure = formatFailureForDisplay(failure);
-
-      lines.push(
-        `- ${formattedFailure.providerName} / ${formattedFailure.model} / ${formattedFailure.stageLabel}：${formattedFailure.message}`,
-      );
-      lines.push(`  建议：${formattedFailure.suggestion}`);
-    }
-
-    lines.push("");
-  }
-
-  return lines.join("\n").trim() + "\n";
 }
 
 function appendEvidenceDebug(
@@ -267,7 +322,11 @@ function appendCitationCheck(lines: string[], meeting: MeetingResult) {
   lines.push("");
 
   if (!meeting.evidencePack?.enabled || meeting.evidencePack.items.length === 0) {
-    lines.push("本轮会议未启用外部资料包，无法进行资料引用完整性检查。");
+    lines.push(
+      isStanceOrientedTopic(meeting.topic)
+        ? "本轮为观点讨论，未使用外部资料，因此没有引用检查项。"
+        : "本轮会议未启用外部资料包，无法进行资料引用完整性检查。",
+    );
     lines.push("");
     return;
   }
@@ -347,7 +406,9 @@ function appendEvidencePack(lines: string[], meeting: MeetingResult) {
     lines.push("## Evidence Pack");
     lines.push("");
     lines.push(
-      "本轮会议未启用外部资料包。涉及实时信息、排名、价格、政策、版本、新闻等内容需要额外核验。",
+      isStanceOrientedTopic(meeting.topic)
+        ? "本议题未使用外部资料，讨论主要基于参会模型的立场、理由和相互回应。"
+        : "本轮会议未启用外部资料包。涉及实时信息、排名、价格、政策、版本、新闻等内容需要额外核验。",
     );
   }
 
@@ -430,9 +491,9 @@ function appendEvidenceStatus(lines: string[], meeting: MeetingResult) {
   }
 
   const hasItems = (meeting.evidencePack?.items?.length ?? 0) > 0;
-  const topicType = classifyEvidenceTopic(meeting.topic);
+  const topicType = getSummaryTopicType(meeting.topic);
 
-  lines.push("## 事实核验状态");
+  lines.push(topicType === "general_discussion" ? "## 讨论依据" : "## 事实核验状态");
   lines.push("");
   lines.push(formatEvidenceStatusMessage(status, hasItems, topicType));
 

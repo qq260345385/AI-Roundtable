@@ -214,7 +214,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           options?.isBriefMode
             ? "简要会议模式下，每个字段最多 3 条，每条尽量不超过 60 字。"
             : "",
-          "请严格返回 JSON，不要添加 Markdown。字段必须是 confirmableFacts、initialHypotheses、insufficientlyConfirmed、risks、nextSteps，每个字段都是字符串数组。communityViews 可用于舆论线索；为了兼容旧界面，也可以同时提供 consensus、differences、minorityViews。",
+          "请严格返回 JSON，不要添加 Markdown。字段必须是 confirmableFacts、initialHypotheses、insufficientlyConfirmed、risks、nextSteps，每个字段都是字符串数组。communityViews 可用于舆论线索；为了兼容旧界面，也可以同时提供 consensus、differences。",
         ]
           .filter(Boolean)
           .join("\n\n"),
