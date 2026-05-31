@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.1 internal alpha
+
+- Moved web search and meeting start controls into the chat composer.
+- Hardened web search toggle behavior while participant models are still loading.
+
 ## v0.6.0 internal alpha
 
 - Added user-selectable search driver and summary model controls for web-enabled roundtables.

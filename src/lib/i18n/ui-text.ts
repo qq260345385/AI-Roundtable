@@ -188,6 +188,7 @@ export const UI_TEXT = {
         "前端编号仅作预览；提交会议后，服务端会重新归一化为 S1-S10。",
       parseFailed: "资料文件解析失败",
       webSearchTitle: "启用联网搜索",
+      webSearchToggle: "联网搜索",
       webSearchDescription:
         "勾选后，系统会让参会模型先提出搜索方向，再联网检索资料并提供给所有模型。",
       searchDriverModelLabel: "搜索驱动模型",
@@ -502,6 +503,7 @@ export const UI_TEXT = {
         "Frontend IDs are only a preview; after submission the server normalizes them as S1-S10.",
       parseFailed: "Failed to parse evidence file",
       webSearchTitle: "Enable web search",
+      webSearchToggle: "Web search",
       webSearchDescription:
         "When enabled, participants first plan useful search queries, then the server searches the web and shares selected evidence with all models.",
       searchDriverModelLabel: "Search driver model",

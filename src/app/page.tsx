@@ -186,8 +186,13 @@ export default function Home() {
   }, [copyMessage]);
 
   function changeWebSearchEnabled(enabled: boolean) {
-    setIsWebSearchEnabled(enabled);
     setEvidenceImportMessage("");
+
+    if (enabled && participants.length === 0) {
+      return;
+    }
+
+    setIsWebSearchEnabled(enabled);
 
     if (enabled && participants.length > 0) {
       setSearchDriverParticipantId((currentId) => currentId || participants[0].id);
@@ -449,6 +454,8 @@ export default function Home() {
     (mode === "real" && participants.length === 0) ||
     selectedParticipants.length === 0 ||
     hasInvalidEvidencePack;
+  const isWebSearchToggleDisabled =
+    status === "loading" || modelLoadStatus !== "success" || participants.length === 0;
   const startButtonText = getStartButtonText({
     hasInvalidEvidencePack,
     isEvidenceImporting,
@@ -532,31 +539,37 @@ export default function Home() {
               {uiText.meetingForm.title}
             </h2>
             <form className="mt-4 space-y-4" onSubmit={startMeeting}>
-              <textarea
-                className="min-h-32 w-full border border-zinc-300 bg-white p-3 text-sm leading-6 text-zinc-900 outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-emerald-600 focus:shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
-                disabled={status === "loading"}
-                onChange={(event) => setQuestion(event.target.value)}
-                placeholder={uiText.meetingForm.placeholder}
-                value={question}
-              />
-              {shouldShowFactNotice ? <FactHygieneNotice text={uiText} /> : null}
-              <label className="flex items-start gap-2 border border-zinc-200 bg-zinc-50 p-4 text-sm font-medium text-zinc-800 transition-[border-color,background-color] duration-150 ease-out hover:border-emerald-200 hover:bg-emerald-50/40">
-                <input
-                  checked={isWebSearchEnabled}
-                  className="mt-1 h-4 w-4 accent-emerald-700"
+              <div className="rounded-[28px] border border-zinc-200 bg-white p-4 shadow-sm transition-[border-color,box-shadow] duration-200 ease-out focus-within:border-blue-300 focus-within:shadow-[0_12px_36px_rgba(37,99,235,0.10)]">
+                <textarea
+                  className="min-h-32 w-full resize-y border-0 bg-transparent p-0 text-sm leading-6 text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:text-zinc-500"
                   disabled={status === "loading"}
-                  onChange={(event) =>
-                    changeWebSearchEnabled(event.target.checked)
-                  }
-                  type="checkbox"
+                  onChange={(event) => setQuestion(event.target.value)}
+                  placeholder={uiText.meetingForm.placeholder}
+                  value={question}
                 />
-                <span>
-                  {uiText.evidence.webSearchTitle}
-                  <span className="mt-1 block text-xs font-normal leading-5 text-zinc-500">
-                    {uiText.evidence.webSearchDescription}
-                  </span>
-                </span>
-              </label>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                  <SearchTogglePill
+                    active={isWebSearchEnabled}
+                    disabled={isWebSearchToggleDisabled}
+                    label={uiText.evidence.webSearchToggle}
+                    onClick={() => {
+                      if (isWebSearchToggleDisabled) {
+                        return;
+                      }
+                      changeWebSearchEnabled(!isWebSearchEnabled);
+                    }}
+                    title={uiText.evidence.webSearchDescription}
+                  />
+                  <button
+                    className="ml-auto border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-transform duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100 disabled:hover:bg-zinc-300"
+                    disabled={isStartDisabled}
+                    type="submit"
+                  >
+                    {startButtonText}
+                  </button>
+                </div>
+              </div>
+              {shouldShowFactNotice ? <FactHygieneNotice text={uiText} /> : null}
               {isWebSearchEnabled ? (
                 <ModelSelectField
                   disabled={status === "loading"}
@@ -619,13 +632,6 @@ export default function Home() {
                   {uiText.meetingForm.evidenceWarning}
                 </p>
               ) : null}
-              <button
-                className="border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-transform duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100 disabled:hover:bg-zinc-300"
-                disabled={isStartDisabled}
-                type="submit"
-              >
-                {startButtonText}
-              </button>
             </form>
             {message ? <StatusMessage message={message} status={status} /> : null}
           </section>
@@ -650,6 +656,72 @@ export default function Home() {
 type TextProps = {
   text: ReturnType<typeof getUiText>;
 };
+
+type SearchTogglePillProps = {
+  active: boolean;
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+  title: string;
+};
+
+function SearchTogglePill({
+  active,
+  disabled,
+  label,
+  onClick,
+  title,
+}: SearchTogglePillProps) {
+  return (
+    <button
+      aria-pressed={active}
+      className={[
+        "group inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium",
+        "transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-out",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2",
+        disabled
+          ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400"
+          : active
+            ? "cursor-pointer border-blue-300 bg-blue-50 text-blue-700 shadow-[0_8px_22px_rgba(37,99,235,0.16)] hover:-translate-y-0.5 hover:border-blue-400 hover:bg-blue-100"
+            : "cursor-pointer border-zinc-200 bg-white text-zinc-800 shadow-sm hover:-translate-y-0.5 hover:border-blue-200 hover:bg-blue-50/50 hover:text-blue-700",
+      ].join(" ")}
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      type="button"
+    >
+      <span
+        className={[
+          "grid h-5 w-5 place-items-center rounded-full transition-[background-color,color,transform] duration-200 ease-out",
+          active
+            ? "bg-blue-100 text-blue-700 group-hover:scale-110"
+            : "bg-zinc-50 text-zinc-700 group-hover:bg-blue-100 group-hover:text-blue-700",
+        ].join(" ")}
+      >
+        <svg
+          aria-hidden="true"
+          className="h-4 w-4"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <path
+            d="M3.75 12h16.5M12 3.75c2.25 2.2 3.38 4.95 3.38 8.25S14.25 18.05 12 20.25C9.75 18.05 8.62 15.3 8.62 12S9.75 5.95 12 3.75Z"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+          <path
+            d="M20.25 12a8.25 8.25 0 1 1-16.5 0 8.25 8.25 0 0 1 16.5 0Z"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          />
+        </svg>
+      </span>
+      <span>{label}</span>
+    </button>
+  );
+}
 
 type ModelSelectFieldProps = {
   allowAuto?: boolean;
