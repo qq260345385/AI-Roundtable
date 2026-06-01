@@ -14,6 +14,10 @@ import { ParticipantList } from "@/components/roundtable/ParticipantList";
 import { RoundtableDiagram } from "@/components/roundtable/RoundtableDiagram";
 import { exportMeetingToMarkdown } from "@/lib/meeting/export-markdown";
 import {
+  getParticipantsInSelectionOrder,
+  swapSelectedParticipantSeats,
+} from "@/lib/models/participant-selection";
+import {
   applyLiveMeetingEvent,
   createInitialLiveMeeting,
   createInitialParticipantStatuses,
@@ -444,8 +448,9 @@ export default function Home() {
   const hasEvidenceWarnings = evidenceDrafts.some(
     (draft) => (draft.quality?.warnings.length ?? 0) > 0,
   );
-  const selectedParticipants = participants.filter((participant) =>
-    selectedParticipantIds.includes(participant.id),
+  const selectedParticipants = getParticipantsInSelectionOrder(
+    participants,
+    selectedParticipantIds,
   );
   const isStartDisabled =
     status === "loading" ||
@@ -530,7 +535,23 @@ export default function Home() {
             text={uiText}
           />
           <UnavailableProviderList providers={unavailableProviders} text={uiText} />
-          <RoundtableDiagram participants={selectedParticipants} text={uiText} />
+          <RoundtableDiagram
+            onSeatSwap={
+              status === "loading"
+                ? undefined
+                : (draggedParticipantId, targetParticipantId) => {
+                    setSelectedParticipantIds((currentIds) =>
+                      swapSelectedParticipantSeats(
+                        currentIds,
+                        draggedParticipantId,
+                        targetParticipantId,
+                      ),
+                    );
+                  }
+            }
+            participants={selectedParticipants}
+            text={uiText}
+          />
         </div>
 
         <div className="space-y-5">

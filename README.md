@@ -24,6 +24,7 @@ AI Roundtable 不希望把模型伪装成固定部门或固定专家。模型会
 - 联网搜索资料包：可启用 Tavily 搜索，把网页资料整理成统一 Evidence Pack。
 - 搜索驱动模型可选：开启联网搜索后，可以选择一个已接入模型主导搜索方向。
 - 总结模型可选：第三阶段纪要可以指定一个模型负责汇总。
+- 圆桌席位可调整：可拖动交换模型席位，后续发言顺序和编号会同步变化。
 - 本地资料导入：支持把文档解析成资料包，让所有模型基于同一批材料讨论。
 - 引用检查：会议结束后检查模型是否引用了不存在的资料编号。
 - 中英文界面切换：适合中文用户，也保留英文界面。
@@ -43,15 +44,7 @@ npm install
 npm run dev
 ```
 
-然后打开：
-
-```text
-http://localhost:3000
-```
-
-默认是 Mock 模式，不需要 API key，也不会调用外部模型。你可以先用它体验完整流程。
-
-## 接入真实模型
+### 3. 接入真实模型
 
 如果你想让真实模型参加圆桌会议，先复制环境变量示例：
 
@@ -59,36 +52,31 @@ http://localhost:3000
 copy .env.example .env.local
 ```
 
-然后在 `.env.local` 里开启 real 模式：
+然后在 `.env.local` 里开启 real 模式，并用竖排 JSON 配置所有模型：
 
 ```env
 AI_ROUNDTABLE_MODE=real
+AI_ROUNDTABLE_PROVIDERS_JSON='[
+  {
+    "id": "deepseek",
+    "name": "DeepSeek Flash",
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "你的 API key",
+    "model": "deepseek-v4-flash"
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi K2.6",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "apiKey": "你的 API key",
+    "model": "kimi-k2.6"
+  }
+]'
 ```
 
-AI Roundtable 使用 OpenAI-compatible 接口，因此可以接入 OpenAI、DeepSeek、Qwen、SiliconFlow 或其他兼容 Chat Completions API 的服务。
+AI Roundtable 使用 OpenAI-compatible 接口，因此可以接入 OpenAI、DeepSeek、Qwen、SiliconFlow、Kimi 或其他兼容 Chat Completions API 的服务。真实 API key 只应该写在 `.env.local`，不要提交到 GitHub。
 
-通用配置方式如下：
-
-```env
-AI_ROUNDTABLE_PROVIDER_IDS=openai,deepseek,qwen
-
-AI_ROUNDTABLE_PROVIDER_OPENAI_NAME=OpenAI
-AI_ROUNDTABLE_PROVIDER_OPENAI_BASE_URL=https://api.openai.com/v1
-AI_ROUNDTABLE_PROVIDER_OPENAI_API_KEY=你的 API key
-AI_ROUNDTABLE_PROVIDER_OPENAI_MODEL=你的模型名
-
-AI_ROUNDTABLE_PROVIDER_DEEPSEEK_NAME=DeepSeek
-AI_ROUNDTABLE_PROVIDER_DEEPSEEK_BASE_URL=https://api.deepseek.com
-AI_ROUNDTABLE_PROVIDER_DEEPSEEK_API_KEY=你的 API key
-AI_ROUNDTABLE_PROVIDER_DEEPSEEK_MODEL=你的模型名
-
-AI_ROUNDTABLE_PROVIDER_QWEN_NAME=Qwen
-AI_ROUNDTABLE_PROVIDER_QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-AI_ROUNDTABLE_PROVIDER_QWEN_API_KEY=你的 API key
-AI_ROUNDTABLE_PROVIDER_QWEN_MODEL=你的模型名
-```
-
-真实 API key 只应该写在 `.env.local`，不要提交到 GitHub。
+旧的逐模型 provider 环境变量和 `providers.local.json` 仍然兼容，但普通本地使用推荐只维护 `.env.local` 一个文件。
 
 ## 联网搜索
 

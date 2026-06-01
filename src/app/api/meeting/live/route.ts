@@ -3,6 +3,7 @@ import {
   AllProvidersFailedError,
 } from "../../../../lib/meeting/engine";
 import { runLiveMeeting } from "../../../../lib/meeting/live-engine";
+import { getParticipantsInSelectionOrder } from "../../../../lib/models/participant-selection";
 import { createProviderRegistry } from "../../../../lib/providers/provider-registry";
 import { buildModelDrivenWebEvidencePack } from "../../../../lib/search/model-driven-web-search";
 import {
@@ -258,9 +259,7 @@ function selectParticipants(
     throw new BadRequestError("selected participant is not available");
   }
 
-  const selectedIds = new Set(participantIds);
-
-  return participants.filter((participant) => selectedIds.has(participant.id));
+  return getParticipantsInSelectionOrder(participants, participantIds);
 }
 
 function selectOptionalParticipant(

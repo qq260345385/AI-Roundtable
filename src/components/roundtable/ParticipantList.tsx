@@ -55,7 +55,7 @@ export function ParticipantList({
           </span>
         ) : null}
       </div>
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 max-h-[19.5rem] space-y-3 overflow-y-auto overscroll-contain pr-1 scroll-smooth snap-y snap-proximity [scrollbar-color:#a7f3d0_transparent] [scrollbar-width:thin]">
         {participants.length === 0 ? (
           <p className="border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
             {getEmptyText(isLoading, mode, text)}
@@ -95,7 +95,7 @@ function ParticipantCard({
 
   return (
     <article
-      className={`border p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm ${
+      className={`min-h-[6rem] snap-start border p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm ${
         isSelected
           ? "border-emerald-200 bg-emerald-50/50"
           : "border-zinc-200 bg-zinc-50 hover:bg-white"

@@ -34,4 +34,31 @@ describe("ParticipantList", () => {
     expect(html).not.toContain("model:");
     expect(html).not.toContain("model：");
   });
+
+  test("renders model cards inside a smooth capped scroll window", () => {
+    const participants = Array.from({ length: 5 }, (_, index) => ({
+      ...participant,
+      id: `model-${index + 1}`,
+      model: `model-${index + 1}`,
+    }));
+
+    const html = renderToStaticMarkup(
+      <ParticipantList
+        disabled={false}
+        isLoading={false}
+        mode="real"
+        onSelectionChange={vi.fn()}
+        participants={participants}
+        selectedParticipantIds={participants.map((item) => item.id)}
+        text={getUiText("en")}
+      />,
+    );
+
+    expect(html).toContain("max-h-[19.5rem]");
+    expect(html).toContain("overflow-y-auto");
+    expect(html).toContain("scroll-smooth");
+    expect(html).toContain("snap-y");
+    expect(html).toContain("min-h-[6rem]");
+    expect(html).toContain("snap-start");
+  });
 });

@@ -149,6 +149,27 @@ describe("POST /api/meeting", () => {
     ).toEqual(["GPT Mock", "Claude Mock"]);
   });
 
+  test("preserves selected participant order as the meeting seat order", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    const request = new Request("http://localhost/api/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["claude-mock", "gpt-mock"],
+        question: "seat order",
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(
+      body.meeting.phases[0].turns.map(
+        (turn: { speakerName: string }) => turn.speakerName,
+      ),
+    ).toEqual(["Claude Mock", "GPT Mock"]);
+  });
+
   test("accepts brief meeting mode in the request body", async () => {
     process.env.AI_ROUNDTABLE_MODE = "mock";
     const request = new Request("http://localhost/api/meeting", {

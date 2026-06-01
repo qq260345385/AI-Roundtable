@@ -4,6 +4,7 @@ import {
   runMeeting,
 } from "../../../lib/meeting/engine";
 import { createProviderRegistry } from "../../../lib/providers/provider-registry";
+import { getParticipantsInSelectionOrder } from "../../../lib/models/participant-selection";
 import { buildModelDrivenWebEvidencePack } from "../../../lib/search/model-driven-web-search";
 import {
   normalizeEvidencePack,
@@ -180,9 +181,7 @@ function selectParticipants(
     throw new BadRequestError("selected participant is not available");
   }
 
-  const selectedIds = new Set(participantIds);
-
-  return participants.filter((participant) => selectedIds.has(participant.id));
+  return getParticipantsInSelectionOrder(participants, participantIds);
 }
 
 function selectOptionalParticipant(

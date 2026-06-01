@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadModelConfig } from "./model-config";
 
 describe("loadModelConfig", () => {
@@ -95,4 +98,99 @@ describe("loadModelConfig", () => {
       source: "env",
     });
   });
+
+  test("reads OpenAI-compatible providers from a local JSON provider file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "roundtable-providers-"));
+    const providerFile = join(dir, "providers.local.json");
+
+    try {
+      writeFileSync(
+        providerFile,
+        JSON.stringify([
+          {
+            id: "kimi",
+            name: "Kimi K2.6",
+            baseUrl: "https://api.moonshot.cn/v1",
+            apiKey: "kimi-key",
+            model: "kimi-k2.6",
+            capabilities: ["documents"],
+          },
+          {
+            id: "mimo-flash",
+            name: "Xiaomi MiMo 2.5 Flash",
+            baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+            apiKey: "mimo-key",
+            model: "mimo-v2.5",
+          },
+        ]),
+      );
+
+      const config = loadModelConfig({
+        AI_ROUNDTABLE_MODE: "real",
+        AI_ROUNDTABLE_PROVIDER_IDS: "openai",
+        AI_ROUNDTABLE_PROVIDER_OPENAI_BASE_URL: "https://api.openai.com/v1",
+        AI_ROUNDTABLE_PROVIDER_OPENAI_API_KEY: "openai-key",
+        AI_ROUNDTABLE_PROVIDER_OPENAI_MODEL: "gpt-test",
+        AI_ROUNDTABLE_PROVIDERS_FILE: providerFile,
+      });
+
+      expect(config.mode).toBe("real");
+      expect(config.providers.map((provider) => provider.id)).toEqual([
+        "kimi",
+        "mimo-flash",
+      ]);
+      expect(config.providers[0]).toMatchObject({
+        id: "kimi",
+        name: "Kimi K2.6",
+        baseUrl: "https://api.moonshot.cn/v1",
+        modelName: "kimi-k2.6",
+        capabilities: {
+          documentRecognition: true,
+          documentRecognitionStatus: "supported",
+          source: "env",
+        },
+      });
+      expect(config.providers[1]).toMatchObject({
+        id: "mimo-flash",
+        name: "Xiaomi MiMo 2.5 Flash",
+        baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+        modelName: "mimo-v2.5",
+      });
+      expect(JSON.stringify(config.providers)).not.toContain("kimi-key");
+      expect(JSON.stringify(config.providers)).not.toContain("mimo-key");
+      expect(JSON.stringify(config.providers)).not.toContain("openai");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads OpenAI-compatible providers from inline JSON env", () => {
+    const config = loadModelConfig({
+      AI_ROUNDTABLE_MODE: "real",
+      AI_ROUNDTABLE_PROVIDER_IDS: "openai",
+      AI_ROUNDTABLE_PROVIDER_OPENAI_BASE_URL: "https://api.openai.com/v1",
+      AI_ROUNDTABLE_PROVIDER_OPENAI_API_KEY: "openai-key",
+      AI_ROUNDTABLE_PROVIDER_OPENAI_MODEL: "gpt-test",
+      AI_ROUNDTABLE_PROVIDERS_JSON: `[
+        {
+          "id": "kimi",
+          "name": "Kimi K2.6",
+          "baseUrl": "https://api.moonshot.cn/v1",
+          "apiKey": "kimi-key",
+          "model": "kimi-k2.6"
+        }
+      ]`,
+    });
+
+    expect(config.providers.map((provider) => provider.id)).toEqual(["kimi"]);
+    expect(config.providers[0]).toMatchObject({
+      id: "kimi",
+      name: "Kimi K2.6",
+      baseUrl: "https://api.moonshot.cn/v1",
+      modelName: "kimi-k2.6",
+    });
+    expect(JSON.stringify(config.providers)).not.toContain("kimi-key");
+    expect(JSON.stringify(config.providers)).not.toContain("openai");
+  });
+
 });

@@ -36,6 +36,28 @@ describe("POST /api/meeting/live", () => {
     expect(events.at(-1)?.type).toBe("meeting_completed");
   });
 
+  test("streams participant events in selected seat order", async () => {
+    process.env.AI_ROUNDTABLE_MODE = "mock";
+    const request = new Request("http://localhost/api/meeting/live", {
+      method: "POST",
+      body: JSON.stringify({
+        participantIds: ["claude-mock", "gpt-mock"],
+        question: "seat order",
+      }),
+    });
+
+    const response = await POST(request);
+    const events = await readNdjsonEvents(response);
+    const independentTurns = events
+      .filter(
+        (event) => event.type === "turn" && event.turn.phaseId === "independent",
+      )
+      .map((event) => event.turn.speakerName);
+
+    expect(response.status).toBe(200);
+    expect(independentTurns).toEqual(["Claude Mock", "GPT Mock"]);
+  });
+
   test("returns normal json 400 for invalid request bodies", async () => {
     const request = new Request("http://localhost/api/meeting/live", {
       method: "POST",
