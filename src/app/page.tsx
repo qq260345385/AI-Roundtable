@@ -14,6 +14,15 @@ import { ParticipantList } from "@/components/roundtable/ParticipantList";
 import { RoundtableDiagram } from "@/components/roundtable/RoundtableDiagram";
 import { exportMeetingToMarkdown } from "@/lib/meeting/export-markdown";
 import {
+  addMeetingHistoryRecord,
+  createMeetingHistoryRecord,
+  deleteMeetingHistoryRecord,
+  MEETING_HISTORY_STORAGE_KEY,
+  type MeetingHistoryRecord,
+  parseMeetingHistory,
+  serializeMeetingHistory,
+} from "@/lib/meeting/meeting-history";
+import {
   getParticipantsInSelectionOrder,
   swapSelectedParticipantSeats,
 } from "@/lib/models/participant-selection";
@@ -87,6 +96,9 @@ export default function Home() {
   const [meetingParticipants, setMeetingParticipants] = useState<
     ModelParticipant[]
   >([]);
+  const [meetingHistory, setMeetingHistory] = useState<MeetingHistoryRecord[]>(
+    [],
+  );
   const [liveParticipantStatuses, setLiveParticipantStatuses] =
     useState<LiveParticipantStatuses>({});
   const [liveActiveStageId, setLiveActiveStageId] = useState("independent");
@@ -105,33 +117,52 @@ export default function Home() {
   const [isSearchDriverDialogOpen, setIsSearchDriverDialogOpen] =
     useState(false);
   const [isBriefMode, setIsBriefMode] = useState(false);
-  const [locale, setLocale] = useState<Locale>(() => {
-    if (typeof window === "undefined") {
-      return "zh";
-    }
-
-    const storedLocale = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    return isLocale(storedLocale) ? storedLocale : "zh";
-  });
-  const [searchRegion, setSearchRegion] = useState<SearchRegion>(() => {
-    if (typeof window === "undefined") {
-      return "auto";
-    }
-
-    const stored = window.localStorage.getItem(SEARCH_REGION_STORAGE_KEY);
-    const validRegions: SearchRegion[] = ["auto", "global", "china", "us", "europe", "japan", "korea"];
-    return validRegions.includes(stored as SearchRegion) ? (stored as SearchRegion) : "auto";
-  });
-  const [searchIntensity, setSearchIntensity] = useState<SearchIntensity>(() => {
-    if (typeof window === "undefined") {
-      return "deep";
-    }
-
-    const stored = window.localStorage.getItem(SEARCH_INTENSITY_STORAGE_KEY);
-    return stored === "standard" ? "standard" : "deep";
-  });
+  const [locale, setLocale] = useState<Locale>("zh");
+  const [searchRegion, setSearchRegion] = useState<SearchRegion>("auto");
+  const [searchIntensity, setSearchIntensity] =
+    useState<SearchIntensity>("deep");
   const meetingAbortControllerRef = useRef<AbortController | null>(null);
   const uiText = getUiText(locale);
+
+  useEffect(() => {
+    const restoreClientStateTimer = window.setTimeout(() => {
+      const storedLocale = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+      if (isLocale(storedLocale)) {
+        setLocale(storedLocale);
+      }
+
+      const storedSearchRegion = window.localStorage.getItem(
+        SEARCH_REGION_STORAGE_KEY,
+      );
+      const validRegions: SearchRegion[] = [
+        "auto",
+        "global",
+        "china",
+        "us",
+        "europe",
+        "japan",
+        "korea",
+      ];
+      if (validRegions.includes(storedSearchRegion as SearchRegion)) {
+        setSearchRegion(storedSearchRegion as SearchRegion);
+      }
+
+      const storedSearchIntensity = window.localStorage.getItem(
+        SEARCH_INTENSITY_STORAGE_KEY,
+      );
+      if (storedSearchIntensity === "standard") {
+        setSearchIntensity("standard");
+      }
+
+      setMeetingHistory(
+        parseMeetingHistory(
+          window.localStorage.getItem(MEETING_HISTORY_STORAGE_KEY),
+        ),
+      );
+    }, 0);
+
+    return () => window.clearTimeout(restoreClientStateTimer);
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
@@ -317,6 +348,10 @@ export default function Home() {
             setIsMeetingStreaming,
           },
         );
+
+        if (event.type === "meeting_completed") {
+          saveMeetingHistory(event.meeting, selectedParticipants);
+        }
       });
     } catch (error) {
       if (meetingAbortController.signal.aborted) {
@@ -343,6 +378,54 @@ export default function Home() {
     setLiveActiveStageId("independent");
     setIsMeetingStreaming(false);
     setIsStopMeetingConfirming(false);
+  }
+
+  function saveMeetingHistory(
+    completedMeeting: MeetingResult,
+    completedParticipants: ModelParticipant[],
+  ) {
+    const record = createMeetingHistoryRecord({
+      meeting: completedMeeting,
+      participants: completedParticipants,
+    });
+
+    setMeetingHistory((currentRecords) => {
+      const nextRecords = addMeetingHistoryRecord(currentRecords, record);
+      window.localStorage.setItem(
+        MEETING_HISTORY_STORAGE_KEY,
+        serializeMeetingHistory(nextRecords),
+      );
+
+      return nextRecords;
+    });
+  }
+
+  function openHistoryMeeting(record: MeetingHistoryRecord) {
+    setMeeting(record.meeting);
+    setMeetingParticipants(record.participants);
+    setLiveParticipantStatuses(
+      Object.fromEntries(
+        record.participants.map((participant) => [participant.id, "completed"]),
+      ),
+    );
+    setLiveActiveStageId("summary");
+    setStatus("success");
+    setMessage("");
+    setCopyMessage("");
+    setIsMeetingStreaming(false);
+    setIsStopMeetingConfirming(false);
+  }
+
+  function deleteHistoryMeeting(recordId: string) {
+    setMeetingHistory((currentRecords) => {
+      const nextRecords = deleteMeetingHistoryRecord(currentRecords, recordId);
+      window.localStorage.setItem(
+        MEETING_HISTORY_STORAGE_KEY,
+        serializeMeetingHistory(nextRecords),
+      );
+
+      return nextRecords;
+    });
   }
 
   function stopMeeting() {
@@ -657,7 +740,13 @@ export default function Home() {
             {message ? <StatusMessage message={message} status={status} /> : null}
           </section>
 
-          <EmptyMeetingState text={uiText} />
+          <MeetingHistoryPanel
+            history={meetingHistory}
+            locale={locale}
+            onDelete={deleteHistoryMeeting}
+            onOpen={openHistoryMeeting}
+            text={uiText}
+          />
         </div>
       </main>
       <ModelChoiceDialog
@@ -1485,15 +1574,92 @@ function StatusMessage({ message, status }: StatusMessageProps) {
   return <p className={className}>{message}</p>;
 }
 
-function EmptyMeetingState({ text }: TextProps) {
+type MeetingHistoryPanelProps = {
+  history: MeetingHistoryRecord[];
+  locale: Locale;
+  onDelete: (recordId: string) => void;
+  onOpen: (record: MeetingHistoryRecord) => void;
+  text: ReturnType<typeof getUiText>;
+};
+
+function MeetingHistoryPanel({
+  history,
+  locale,
+  onDelete,
+  onOpen,
+  text,
+}: MeetingHistoryPanelProps) {
+  const dateFormatter = new Intl.DateTimeFormat(
+    locale === "zh" ? "zh-CN" : "en-US",
+    {
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      month: "2-digit",
+    },
+  );
+
   return (
-    <section className="border border-dashed border-zinc-300 bg-white p-5">
-      <h2 className="text-lg font-semibold text-zinc-950">
-        {text.meetingBoard.contentTitle}
-      </h2>
-      <p className="mt-3 leading-7 text-zinc-600">
-        {text.meetingBoard.empty}
-      </p>
+    <section className="border border-zinc-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-950">
+            {text.history.title}
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-zinc-600">
+            {text.history.description}
+          </p>
+        </div>
+        <span className="shrink-0 border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-500">
+          {history.length}
+        </span>
+      </div>
+
+      {history.length === 0 ? (
+        <p className="mt-4 border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
+          {text.history.empty}
+        </p>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {history.map((record) => (
+            <article
+              className="border border-zinc-200 bg-zinc-50 p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-sm"
+              key={record.id}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <h3 className="line-clamp-2 font-medium text-zinc-950">
+                    {record.topic}
+                  </h3>
+                  <p className="mt-2 text-xs leading-5 text-zinc-500">
+                    {text.history.createdAt}
+                    {dateFormatter.format(new Date(record.createdAt))}
+                    <span className="mx-2 text-zinc-300">/</span>
+                    {text.history.participants}
+                    {record.participantNames.join(", ")}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    className="border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98]"
+                    onClick={() => onOpen(record)}
+                    type="button"
+                  >
+                    {text.history.open}
+                  </button>
+                  <button
+                    className="border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-[border-color,color,transform] duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:border-red-200 hover:text-red-700 active:scale-[0.98]"
+                    onClick={() => onDelete(record.id)}
+                    type="button"
+                  >
+                    {text.history.delete}
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

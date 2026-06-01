@@ -114,7 +114,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   ): Promise<string> {
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
-    const briefModePrompt = getBriefModePrompt(options);
+    const lengthPrompt = getParticipantLengthPrompt("independent", options);
 
     return this.callChat([
       getSystemMessage(participant),
@@ -124,11 +124,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
           `会议议题：${topic}`,
           "这是第一阶段：独立观点。",
           "请对本轮议题提出一个明确立场，并用你认为最有说服力的理由支持它。",
+          "你的发言应围绕一个可被其他参会者回应的核心判断展开。不要同时提出多个并列主张；如果有多个角度，请选择你认为最关键的一个。",
           "不要只是列举多个可能性，也不要为了覆盖维度而套固定分析框架。你可以自由选择论证角度，但必须直接回答问题。",
           "允许承认不确定性，但不要用不确定性逃避判断。你的目标是说服其他参会模型理解并接受你的立场。",
           "不要自称固定角色，也不要使用身份式开头；可以用“我认为……”“我的判断是……”“这里被低估的是……”等自然圆桌语气。",
-          "发言控制在 500～800 字；只保留与结论有关的证据、判断和不确定性。",
-          briefModePrompt,
+          lengthPrompt,
           factHygienePrompt,
           evidencePackPrompt,
         ]
@@ -146,9 +146,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
     options?: MeetingPromptOptions,
   ): Promise<string> {
     const currentSeatNumber = getSeatNumber(previousTurns, participant.name);
+    const currentParticipantFirstTurn = getCurrentParticipantFirstTurn(
+      previousTurns,
+      participant.name,
+    );
     const factHygienePrompt = getFactHygienePrompt(topic);
     const evidencePackPrompt = formatEvidencePackForPrompt(evidencePack);
-    const briefModePrompt = getBriefModePrompt(options);
+    const lengthPrompt = getParticipantLengthPrompt("response", options);
 
     return this.callChat([
       getSystemMessage(participant),
@@ -158,15 +162,18 @@ export class OpenAICompatibleProvider implements ModelProvider {
           `会议议题：${topic}`,
           "这是第二阶段：自由回应。",
           `你当前是 ${currentSeatNumber}号。`,
+          "你在第一阶段的观点是：",
+          currentParticipantFirstTurn,
           "下面是其他参会者在第一阶段的独立观点，已按圆桌席位编号列出：",
           formatTurnsWithSeatNumbers(previousTurns, participant.name),
           "请基于第一阶段其他模型的发言进行回应。你必须至少明确回应一个其他观点，说明你同意、反对或部分修正的理由。",
+          "优先回应你认为最值得争论、最需要修正、或最能推进讨论的观点。不要只选择最容易赞同的观点；如果你同意某个观点，也要补充它的边界、代价或遗漏前提。",
           "不要只是继续展开自己的原始框架。你的目标是推进争论：指出对方论证中最强或最弱的地方，并尝试说服其他模型接受你的判断。",
           "可以坚持原立场，也可以调整立场，但要解释为什么。",
           "回应其他参会者时，请使用席位编号称呼对方，例如“1号的观点”或“我想补充 2号”。",
           "不要直接称呼对方的模型名或显示名，例如不要写“感谢 Pro”或“Flash 提到”。",
           "语气自然一点，避免部门报告式结构。",
-          briefModePrompt,
+          lengthPrompt,
           factHygienePrompt,
           evidencePackPrompt,
         ].join("\n"),
@@ -208,13 +215,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "这是第三阶段：共识整理。",
           "会议发言：",
           formatTurns(turns),
+          "请统一按以下三个部分整理：共识、分歧、下一步。",
           isStanceOriented
-            ? "请按以下结构整理：主要立场及理由、核心分歧、较有说服力的论点、仍未解决的问题、风险点。"
-            : "请按以下结构整理：可确认事实、低置信推测、不能确认的关键问题、风险点、下一步核验建议。",
+            ? "本轮是观点讨论时，请正常总结共同判断、主要分歧和可继续讨论或行动的方向；不要套用事实核验话术。"
+            : "本轮涉及事实资料时，Evidence Pack、事实核验状态和引用检查已有独立区域；第三阶段只归纳较可靠结论、分歧或未覆盖点，以及下一步核验或行动。",
           options?.isBriefMode
             ? "简要会议模式下，每个字段最多 3 条，每条尽量不超过 60 字。"
             : "",
-          "请严格返回 JSON，不要添加 Markdown。字段必须是 confirmableFacts、initialHypotheses、insufficientlyConfirmed、risks、nextSteps，每个字段都是字符串数组。communityViews 可用于舆论线索；为了兼容旧界面，也可以同时提供 consensus、differences。",
+          "请严格返回 JSON，不要添加 Markdown。字段必须包含 consensus、differences、nextSteps，每个字段都是字符串数组。",
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -270,6 +278,19 @@ function getBriefModePrompt(options?: MeetingPromptOptions): string {
   ].join("\n");
 }
 
+function getParticipantLengthPrompt(
+  phase: "independent" | "response",
+  options?: MeetingPromptOptions,
+): string {
+  if (options?.isBriefMode) {
+    return getBriefModePrompt(options);
+  }
+
+  return phase === "independent"
+    ? "发言控制在 500～800 字；只保留与结论有关的证据、判断和不确定性。"
+    : "回应控制在 400～700 字；只保留与推进讨论有关的回应、修正和不确定性。";
+}
+
 function getSystemMessage(participant: ModelParticipant): ChatMessage {
   return {
     role: "system",
@@ -278,6 +299,7 @@ function getSystemMessage(participant: ModelParticipant): ChatMessage {
       `provider: ${participant.provider}`,
       `model: ${participant.model}`,
       "你是圆桌会议中的平等参会者；系统给出的关注点只用于减少重复，不是身份或人设。",
+      "不要重复输出模型名、provider、model、阶段标题或席位信息，系统会统一添加。",
       "面向普通用户输出，保持简洁、克制、低认知负担。",
     ].join("\n"),
   };
@@ -286,33 +308,45 @@ function getSystemMessage(participant: ModelParticipant): ChatMessage {
 function getEvidenceOrientedSummaryPrompt(): string {
   return [
     "第三阶段由你压缩和归类观点，不按身份归因，只按观点归类。",
-    "共识整理阶段不能把未经验证的说法升级为事实，只能标记为参会模型倾向或需要外部核验。",
-    "整理共识时，请使用资料质量门控：可确认事实只能放入 high / medium 资料支持的事实性结论，且必须带资料编号，例如 [S1]。",
-    "第三阶段需要区分：与议题直接相关的可确认事实、技术/产品背景事实、未覆盖的关键事实；不要把局部技术 benchmark 或模型发布事实包装成综合竞争结论。",
-    "如果商业、资本、市场或监管资料缺失，请在可确认事实中明确说明：当前可确认事实主要集中在技术与安全评估，尚不足以确认两家公司长期竞争胜负。",
+    "第三阶段固定输出共识、分歧、下一步三部分，不要使用“可确认事实 / 低置信推测 / 不能确认的关键问题 / 风险点 / 下一步核验建议”作为小节标题。",
+    "共识整理阶段不能把未经验证的说法升级为事实，只能标记为参会模型倾向、资料覆盖内的谨慎结论或需要外部核验的判断。",
+    "整理共识时，请使用资料质量门控：较可靠结论只能由 high / medium 资料支持，且必须带资料编号，例如 [S1]。",
+    "第三阶段需要区分：与议题直接相关的资料结论、背景信息、未覆盖的关键点；不要把局部技术 benchmark 或模型发布事实包装成综合竞争结论。",
+    "如果关键维度缺失，请在分歧或下一步中说明该维度需要补充资料，不要把缺失维度写成已经确认的结论。",
     "维度引用纪律：GDPval、SimpleQA、model card、benchmark 只能支持模型能力、评估体系或技术背景判断，不能支持融资能力、收入质量、资本效率、企业合同等商业结论。",
     "商业结论必须由 business_revenue / enterprise_adoption / funding_capital / market_analysis 类资料支撑；如果缺少对应维度资料，必须说“当前资料未覆盖该维度，不能判断”。",
     "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
     "禁止基于 low / very_low 资料使用“证明”“显示”“已经超越”“确定领先”“吊打”“追平”“实锤”等强断言。",
-    "如果结论只被 low / very_low 资料支持，请放入“社区观点”或“不足以确认”，并使用“有资料声称”“社区讨论认为”“尚未核验”“不能据此确认”等措辞。",
-    "low-evidence mode 下，低质量资料里的融资额、估值、营收、收入、IPO 时间表等具体数字只能放入低置信推测或不能确认的关键问题，不能作为正文论据或可确认事实。",
+    "如果结论只被 low / very_low 资料支持，请放入分歧或下一步，并使用“有资料声称”“社区讨论认为”“尚未核验”“不能据此确认”等措辞。",
+    "low-evidence mode 下，低质量资料里的融资额、估值、营收、收入、IPO 时间表等具体数字只能作为待核验问题，不能作为共识或正文论据。",
     "引用低质量资料时必须写成“资料[Sx]提供了一个待核验线索，但因来源质量低/正文不足，不能确认。”或“有低可信资料声称xxx，但本轮无法确认，不能作为结论依据。”",
     "禁止写“根据[Sx]，某公司融资xxx”“资料显示某机构估值xxx”这类把低可信资料声称包装成事实的句式。",
-    "第三阶段必须压缩重复观点，避免同一句同时出现在“低置信推测”和“不能确认的关键问题”。",
-    "如果没有可确认事实，confirmableFacts 必须返回 [\"无。当前资料不足以确认关键事实。\"]。",
+    "第三阶段必须压缩重复观点，避免同一句同时出现在多个部分。",
+    "如果本轮没有 Evidence Pack，不要写“资料不足以确认关键事实”；可以直接总结模型讨论形成的共识、分歧和下一步。",
   ].join("\n");
 }
 
 function getStanceOrientedSummaryPrompt(): string {
   return [
-    "第三阶段由你压缩和归类观点，不按身份归因，只按观点归类。",
-    "本议题主要属于观点或选择讨论，不要把参会模型的判断包装成可确认事实。",
-    "请重点整理：各参会模型提出了哪些不同立场、各立场的核心理由是什么、争论焦点在哪里、哪些论点更有说服力。",
-    "confirmableFacts 用于存放本轮讨论中出现的主要立场及支持理由，不是外部事实确认。",
-    "initialHypotheses 用于存放较有说服力的论点或判断。",
-    "insufficientlyConfirmed 用于存放仍未解决的问题或需要进一步判断的分歧。",
-    "不要输出“低置信推测”“不能确认的关键问题”等事实核验式措辞；本议题不强依赖外部资料核验。",
-    "如果没有外部资料，不要把“未联网”或“搜索失败”作为风险点。",
+    "第三阶段由你整合讨论，不按发言身份归因，只按观点内容归类。",
+    "本议题属于观点或选择讨论，不要把参会模型的判断包装成可确认事实。",
+    "",
+    "整理规则：",
+    "",
+    "【共识】只列入\"被质疑或反驳后仍然成立\"的判断。",
+    "如果一个观点只是被多方重复提出但没有人挑战，不算共识，忽略或注明为无争议前提。",
+    "",
+    "【分歧】每条分歧需注明类型：",
+    "- 价值取向分歧：两种判断各自自洽，用户需要自己选择立场，系统无法裁定",
+    "- 经验判断分歧：可以通过证据或实验验证的，说明验证方向即可",
+    "- 框架/定义分歧：双方划定问题边界不同，需先对齐定义才能推进",
+    "",
+    "【下一步】给出具体行动建议，不要给\"继续研究\"建议。",
+    "格式：用户应该先决定什么、验证什么、暂缓什么。",
+    "若讨论过程揭示了原始议题里隐含但未提出的更深层问题，在 nextSteps 里以「【新问题】」前缀单独列出。",
+    "",
+    "不要输出\"可确认事实\"\"低置信推测\"\"风险点\"\"下一步核验建议\"等事实核验式措辞。",
+    "如果没有外部资料，不要提及联网失败或资料不足。",
   ].join("\n");
 }
 
@@ -356,7 +390,17 @@ function formatTurnsWithSeatNumbers(
 function getSeatNumber(turns: MeetingTurn[], speakerName: string): number {
   const index = turns.findIndex((turn) => turn.speakerName === speakerName);
 
-  return index >= 0 ? index + 1 : 0;
+  return index >= 0 ? index + 1 : turns.length + 1;
+}
+
+function getCurrentParticipantFirstTurn(
+  turns: MeetingTurn[],
+  speakerName: string,
+): string {
+  return (
+    turns.find((turn) => turn.speakerName === speakerName)?.content ??
+    "未找到你的第一阶段发言；请以当前议题和其他参会者观点为准。"
+  );
 }
 
 const FIELD_ALIASES: Record<string, string> = {
@@ -440,7 +484,7 @@ export function generateFallbackSummaryFromTurns(
         /官方.*?发布/,
         /已确认/,
       ]).slice(0, 5)
-    : ["当前资料不足以确认关键事实。"];
+    : [];
 
   const initialHypotheses = extractConsensusPoints(allText).slice(0, 5);
   const risks = extractSentencesWithPattern(allText, [

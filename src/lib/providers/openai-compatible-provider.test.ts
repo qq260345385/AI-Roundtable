@@ -152,6 +152,8 @@ describe("OpenAICompatibleProvider", () => {
     const responsePrompt = body.messages.at(-1)?.content ?? "";
 
     expect(responsePrompt).toContain("你当前是 2号。");
+    expect(responsePrompt).toContain("你在第一阶段的观点是：");
+    expect(responsePrompt).toContain("Pro 的独立观点");
     expect(responsePrompt).toContain(
       "1号（DeepSeek Flash/deepseek-v4-flash）：Flash 的独立观点",
     );
@@ -160,6 +162,86 @@ describe("OpenAICompatibleProvider", () => {
     );
     expect(responsePrompt).toContain("请使用席位编号称呼对方");
     expect(responsePrompt).toContain("不要直接称呼对方的模型名或显示名");
+  });
+
+  test("uses dynamic length prompts without brief and normal mode conflicts", async () => {
+    const requestBodies: string[] = [];
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBodies.push(String(init?.body));
+
+        return Response.json({
+          choices: [{ message: { content: "ok" } }],
+        });
+      },
+    });
+    const participant = {
+      id: "flash",
+      name: "DeepSeek Flash",
+      provider: "DeepSeek",
+      model: "deepseek-v4-flash",
+      status: "available" as const,
+      statusLabel: "已连接",
+    };
+
+    await provider.generateIndependentView(participant, "如何优化会议体验？");
+    await provider.generateResponse(
+      participant,
+      "如何优化会议体验？",
+      [
+        {
+          id: "independent-flash",
+          phaseId: "independent",
+          speakerName: "DeepSeek Flash",
+          provider: "DeepSeek",
+          model: "deepseek-v4-flash",
+          content: "我的第一阶段观点",
+        },
+      ],
+    );
+    await provider.generateIndependentView(
+      participant,
+      "如何优化会议体验？",
+      undefined,
+      { isBriefMode: true },
+    );
+    await provider.generateResponse(
+      participant,
+      "如何优化会议体验？",
+      [
+        {
+          id: "independent-flash",
+          phaseId: "independent",
+          speakerName: "DeepSeek Flash",
+          provider: "DeepSeek",
+          model: "deepseek-v4-flash",
+          content: "我的第一阶段观点",
+        },
+      ],
+      undefined,
+      { isBriefMode: true },
+    );
+
+    const prompts = requestBodies.map((bodyText) => {
+      const body = JSON.parse(bodyText) as {
+        messages: { content: string }[];
+      };
+
+      return body.messages.map((message) => message.content).join("\n");
+    });
+
+    expect(prompts[0]).toContain("500～800 字");
+    expect(prompts[0]).not.toContain("200 字左右");
+    expect(prompts[1]).toContain("400～700 字");
+    expect(prompts[1]).not.toContain("200 字左右");
+    expect(prompts[2]).toContain("200 字左右");
+    expect(prompts[2]).not.toContain("500～800 字");
+    expect(prompts[3]).toContain("200 字左右");
+    expect(prompts[3]).not.toContain("400～700 字");
   });
 
   test("adds fact hygiene rules for time-sensitive topics", async () => {
@@ -387,9 +469,88 @@ describe("OpenAICompatibleProvider", () => {
     expect(promptText).toContain("回应");
     expect(promptText).toContain("推进争论");
     expect(promptText).toContain("说服其他模型");
+    expect(promptText).toContain("优先回应你认为最值得争论");
+    expect(promptText).toContain("不要只选择最容易赞同的观点");
+    expect(promptText).toContain("边界、代价或遗漏前提");
     expect(promptText).not.toContain("讨论关注点");
     expect(promptText).not.toContain("风险与不确定性");
     expect(promptText).not.toContain("商业与资本效率");
+  });
+
+  test("does not push no-evidence fact-check wording into opinion prompts", async () => {
+    let requestBody = "";
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBody = String(init?.body);
+
+        return Response.json({
+          choices: [{ message: { content: "观点回应" } }],
+        });
+      },
+    });
+
+    await provider.generateIndependentView(
+      {
+        id: "flash",
+        name: "DeepSeek Flash",
+        provider: "DeepSeek",
+        model: "deepseek-v4-flash",
+        status: "available",
+        statusLabel: "已连接",
+      },
+      "你们认为什么水果更好吃",
+    );
+
+    const body = JSON.parse(requestBody) as {
+      messages: { content: string }[];
+    };
+    const promptText = body.messages.map((message) => message.content).join("\n");
+
+    expect(promptText).not.toContain("资料不足以确认关键事实");
+    expect(promptText).not.toContain("参会模型无法联网检索");
+    expect(promptText).not.toContain("不能确认当前最新事实");
+  });
+
+  test("tells participants not to repeat generated metadata", async () => {
+    let requestBody = "";
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBody = String(init?.body);
+
+        return Response.json({
+          choices: [{ message: { content: "ok" } }],
+        });
+      },
+    });
+
+    await provider.generateIndependentView(
+      {
+        id: "flash",
+        name: "DeepSeek Flash",
+        provider: "DeepSeek",
+        model: "deepseek-v4-flash",
+        status: "available",
+        statusLabel: "已连接",
+      },
+      "测试议题",
+    );
+
+    const body = JSON.parse(requestBody) as {
+      messages: { content: string }[];
+    };
+    const promptText = body.messages.map((message) => message.content).join("\n");
+
+    expect(promptText).toContain(
+      "不要重复输出模型名、provider、model、阶段标题或席位信息，系统会统一添加。",
+    );
   });
 
   test("adds evidence quality guardrails to summary prompts", async () => {
@@ -449,8 +610,52 @@ describe("OpenAICompatibleProvider", () => {
     expect(promptText).toContain("低可信资料声称");
     expect(promptText).toContain("融资额");
     expect(promptText).toContain("不能作为结论依据");
-    expect(promptText).toContain("可确认事实");
+    expect(promptText).toContain("共识");
+    expect(promptText).toContain("分歧");
+    expect(promptText).toContain("下一步");
     expect(promptText).toContain("不足以确认");
+  });
+
+  test("uses stricter stance-oriented synthesis rules without legacy field compatibility in prompt", async () => {
+    let requestBody = "";
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBody = String(init?.body);
+
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  '{"consensus":["口味标准需要先明确。"],"differences":["价值取向分歧：有人重视风味上限，有人重视稳定耐吃。"],"nextSteps":["用户应该先决定更重视风味上限还是日常耐吃。"]}',
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    await provider.generateSummary("你们认为什么水果更好吃", []);
+
+    const body = JSON.parse(requestBody) as {
+      messages: { content: string }[];
+    };
+    const promptText = body.messages.map((message) => message.content).join("\n");
+
+    expect(promptText).toContain("只列入\"被质疑或反驳后仍然成立\"的判断");
+    expect(promptText).toContain("价值取向分歧");
+    expect(promptText).toContain("经验判断分歧");
+    expect(promptText).toContain("框架/定义分歧");
+    expect(promptText).toContain("用户应该先决定什么、验证什么、暂缓什么");
+    expect(promptText).toContain("【新问题】");
+    expect(promptText).not.toContain("为了兼容旧数据");
+    expect(promptText).not.toContain(
+      "也可以同时提供 confirmableFacts、initialHypotheses、insufficientlyConfirmed、risks、communityViews",
+    );
   });
 
   test("adds brief meeting rules to participant and summary prompts", async () => {
@@ -516,8 +721,10 @@ describe("OpenAICompatibleProvider", () => {
 
     expect(prompts[0]).toContain("简要会议模式");
     expect(prompts[0]).toContain("200 字左右");
+    expect(prompts[0]).not.toContain("500～800 字");
     expect(prompts[1]).toContain("简要会议模式");
     expect(prompts[1]).toContain("避免长篇列表");
+    expect(prompts[1]).not.toContain("400～700 字");
     expect(prompts[2]).toContain("简要会议模式");
     expect(prompts[2]).toContain("每个字段最多 3 条");
   });

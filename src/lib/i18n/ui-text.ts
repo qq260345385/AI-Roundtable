@@ -212,6 +212,15 @@ export const UI_TEXT = {
       copied: "Markdown 已复制。",
       failed: "复制失败，请检查浏览器剪贴板权限。",
     },
+    history: {
+      title: "历史会议",
+      description: "查看之前完成的会议，也可以手动删除本地历史记录。",
+      empty: "暂无历史会议。完成一次圆桌会议后会自动保存在这里。",
+      open: "查看",
+      delete: "删除",
+      participants: "参会模型：",
+      createdAt: "时间：",
+    },
     meetingBoard: {
       contentTitle: "会议内容",
       empty:
@@ -225,9 +234,9 @@ export const UI_TEXT = {
       initialHypotheses: "低置信推测",
       communityViews: "社区观点",
       insufficientlyConfirmed: "不能确认的关键问题",
-      differences: "主要分歧",
+      differences: "分歧",
       risks: "风险点",
-      nextSteps: "下一步核验建议",
+      nextSteps: "下一步",
       stanceSummary: {
         mainStances: "主要立场",
         coreReasons: "核心理由",
@@ -528,6 +537,15 @@ export const UI_TEXT = {
       copied: "Markdown copied.",
       failed: "Copy failed. Check browser clipboard permission.",
     },
+    history: {
+      title: "Meeting History",
+      description: "Reopen previous meetings or delete local history records.",
+      empty: "No meeting history yet. Completed roundtables will appear here.",
+      open: "Open",
+      delete: "Delete",
+      participants: "Participants: ",
+      createdAt: "Time: ",
+    },
     meetingBoard: {
       contentTitle: "Meeting Content",
       empty:
@@ -541,9 +559,9 @@ export const UI_TEXT = {
       initialHypotheses: "Low-Confidence Hypotheses",
       communityViews: "Community Views",
       insufficientlyConfirmed: "Key Questions Not Confirmed",
-      differences: "Main Differences",
+      differences: "Differences",
       risks: "Risk Points",
-      nextSteps: "Verification Next Steps",
+      nextSteps: "Next Steps",
       stanceSummary: {
         mainStances: "Main Stances",
         coreReasons: "Core Reasons",

@@ -25,6 +25,11 @@ describe("ui text", () => {
     expect(getUiText("en").meetingRoom.title).toBe("Roundtable Room");
   });
 
+  test("returns Chinese and English history labels", () => {
+    expect(getUiText("zh").history.title).toBe("历史会议");
+    expect(getUiText("en").history.title).toBe("Meeting History");
+  });
+
   test("returns Chinese and English document input strategy labels", () => {
     expect(getUiText("zh").evidence.strategyNativeFile).toContain("原生附件");
     expect(getUiText("en").evidence.strategyNativeFile).toContain("Native");

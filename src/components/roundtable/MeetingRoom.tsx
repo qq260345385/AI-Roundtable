@@ -14,7 +14,7 @@ import {
   buildMeetingStageViews,
   type MeetingStageView,
 } from "@/lib/meeting/meeting-room";
-import { getSummaryPresentationStyle } from "@/lib/meeting/summary-presentation";
+import { getThirdStageSummarySections } from "@/lib/meeting/summary-presentation";
 import { formatModelDisplayName } from "@/lib/models/model-display-name";
 import { WebSearchProcessPanel } from "./MeetingBoard";
 
@@ -222,7 +222,7 @@ export function MeetingRoom({
               </div>
             ) : null}
 
-          <StageContent stage={activeStage} text={text} topic={meeting.topic} />
+          <StageContent stage={activeStage} text={text} />
           </section>
         </div>
       </section>
@@ -256,12 +256,11 @@ export function MeetingRoom({
 type StageContentProps = {
   stage: MeetingStageView;
   text: UiText;
-  topic: string;
 };
 
-function StageContent({ stage, text, topic }: StageContentProps) {
+function StageContent({ stage, text }: StageContentProps) {
   if (stage.kind === "summary") {
-    return <SummaryStage summary={stage.summary} text={text} topic={topic} />;
+    return <SummaryStage summary={stage.summary} text={text} />;
   }
 
   if (stage.phase.turns.length === 0) {
@@ -313,7 +312,6 @@ function TurnCard({ index, text, turn }: TurnCardProps) {
 type SummaryStageProps = {
   summary: MeetingSummary;
   text: UiText;
-  topic: string;
 };
 
 type SummarySection = {
@@ -322,16 +320,9 @@ type SummarySection = {
   title: string;
 };
 
-function SummaryStage({ summary, text, topic }: SummaryStageProps) {
-  const style = getSummaryPresentationStyle(topic);
-  const sections =
-    style === "stance-oriented"
-      ? getStanceSummarySections(summary, text)
-      : getEvidenceSummarySections(summary, text);
-  const visibleSections =
-    style === "stance-oriented"
-      ? sections.filter((section) => section.items.length > 0)
-      : sections;
+function SummaryStage({ summary, text }: SummaryStageProps) {
+  const sections = getUnifiedSummarySections(summary, text);
+  const visibleSections = sections.filter((section) => section.items.length > 0);
 
   if (visibleSections.length === 0) {
     return (
@@ -359,65 +350,24 @@ function SummaryStage({ summary, text, topic }: SummaryStageProps) {
   );
 }
 
-function getStanceSummarySections(
+function getUnifiedSummarySections(
   summary: MeetingSummary,
   text: UiText,
 ): SummarySection[] {
-  const labels = text.meetingBoard.stanceSummary;
+  const sections = getThirdStageSummarySections(summary);
 
   return [
     {
-      title: labels.mainStances,
-      items: summary.confirmableFacts ?? summary.consensus,
+      title: text.meetingBoard.consensus,
+      items: sections.consensus,
     },
     {
-      title: labels.coreReasons,
-      items: summary.initialHypotheses ?? [],
-    },
-    {
-      title: labels.mainDifferences,
-      items:
-        summary.insufficientlyConfirmed &&
-        summary.insufficientlyConfirmed.length > 0
-          ? summary.insufficientlyConfirmed
-          : summary.differences,
-    },
-    {
-      title: labels.discussionLimits,
-      items: summary.risks,
-    },
-    {
-      title: labels.continueDiscussion,
-      items: summary.nextSteps,
-      span: "full",
-    },
-  ];
-}
-
-function getEvidenceSummarySections(
-  summary: MeetingSummary,
-  text: UiText,
-): SummarySection[] {
-  return [
-    {
-      title: text.meetingBoard.confirmableFacts,
-      items: summary.confirmableFacts ?? summary.consensus,
-    },
-    {
-      title: text.meetingBoard.initialHypotheses,
-      items: summary.initialHypotheses ?? [],
-    },
-    {
-      title: text.meetingBoard.insufficientlyConfirmed,
-      items: summary.insufficientlyConfirmed ?? [],
-    },
-    {
-      title: text.meetingBoard.risks,
-      items: summary.risks,
+      title: text.meetingBoard.differences,
+      items: sections.differences,
     },
     {
       title: text.meetingBoard.nextSteps,
-      items: summary.nextSteps,
+      items: sections.nextSteps,
       span: "full",
     },
   ];

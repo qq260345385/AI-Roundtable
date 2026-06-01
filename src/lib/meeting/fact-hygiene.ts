@@ -41,8 +41,8 @@ export function getFactHygienePrompt(topic: string): string {
 
   if (topicType === "general_discussion") {
     return [
-      "本议题主要属于观点或偏好讨论，未强依赖联网资料。",
-      "以下内容反映参会模型的论证与判断，不作为事实依据。",
+      "本议题主要属于观点、策略、偏好或价值判断讨论，可以基于推理给出判断，不要因为没有外部资料而回避讨论。",
+      "如果讨论中涉及具体事实、排名、价格、政策、新闻、模型版本或发布状态，仍需标注不确定性，不要编造具体事实。",
     ].join("\n");
   }
 

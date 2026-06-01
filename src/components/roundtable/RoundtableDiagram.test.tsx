@@ -24,7 +24,7 @@ describe("RoundtableDiagram", () => {
     expect(html).not.toContain("DeepSeek Flash deepseek-v4-flash");
   });
 
-  test("marks seat cards as draggable when reordering is enabled", () => {
+  test("uses pointer-driven seat cards when reordering is enabled", () => {
     const html = renderToStaticMarkup(
       <RoundtableDiagram
         onSeatSwap={() => undefined}
@@ -36,7 +36,10 @@ describe("RoundtableDiagram", () => {
       />,
     );
 
-    expect(html).toContain('draggable="true"');
+    expect(html).not.toContain('draggable="true"');
+    expect(html).toContain("data-seat-participant-id");
     expect(html).toContain("cursor-grab");
+    expect(html).toContain("touch-none");
+    expect(html).toContain("select-none");
   });
 });

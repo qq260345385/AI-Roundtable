@@ -304,7 +304,7 @@ describe("MeetingBoard", () => {
     expect(html).not.toContain("AI model benchmark latest");
   });
 
-  test("renders stance-oriented summary labels without minority views or empty cards", () => {
+  test("renders unified third-stage labels for preference topics", () => {
     const meeting: MeetingResult = {
       topic: "你们认为什么水果更好吃",
       phases: [],
@@ -335,18 +335,19 @@ describe("MeetingBoard", () => {
       />,
     );
 
-    expect(html).toContain("主要立场");
-    expect(html).toContain("主要分歧");
-    expect(html).toContain("讨论局限");
-    expect(html).toContain("可以继续讨论");
-    expect(html).not.toContain("风险");
-    expect(html).not.toContain("下一步");
+    expect(html).toContain("共识");
+    expect(html).toContain("分歧");
+    expect(html).toContain("下一步");
+    expect(html).not.toContain("主要立场");
+    expect(html).not.toContain("讨论局限");
+    expect(html).not.toContain("风险点");
+    expect(html).not.toContain("下一步核验建议");
     expect(html).not.toContain("该小节暂无内容");
     expect(html).not.toContain("有价值的少数派观点");
-    expect(html).not.toContain("大樱桃支持者提出了少数派观点");
+    expect(html).toContain("大樱桃支持者提出了少数派观点");
   });
 
-  test("renders evidence-oriented summary labels for factual topics", () => {
+  test("renders unified third-stage labels for factual topics", () => {
     const meeting: MeetingResult = {
       topic: "某公司最近发布的新模型有什么影响",
       phases: [],
@@ -380,11 +381,14 @@ describe("MeetingBoard", () => {
       />,
     );
 
-    expect(html).toContain("可确认事实");
-    expect(html).toContain("低置信推测");
-    expect(html).toContain("不能确认的关键问题");
-    expect(html).toContain("风险点");
-    expect(html).toContain("下一步核验建议");
+    expect(html).toContain("共识");
+    expect(html).toContain("分歧");
+    expect(html).toContain("下一步");
+    expect(html).not.toContain("可确认事实");
+    expect(html).not.toContain("低置信推测");
+    expect(html).not.toContain("不能确认的关键问题");
+    expect(html).not.toContain("风险点");
+    expect(html).not.toContain("下一步核验建议");
     expect(html).not.toContain("主要立场");
     expect(html).not.toContain("讨论局限");
   });

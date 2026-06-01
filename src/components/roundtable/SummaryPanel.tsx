@@ -1,6 +1,6 @@
 import type { MeetingSummary } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
-import { getSummaryPresentationStyle } from "@/lib/meeting/summary-presentation";
+import { getThirdStageSummarySections } from "@/lib/meeting/summary-presentation";
 
 type SummaryPanelProps = {
   summary: MeetingSummary;
@@ -9,65 +9,22 @@ type SummaryPanelProps = {
 };
 
 export function SummaryPanel({ summary, text, topic }: SummaryPanelProps) {
-  const style = getSummaryPresentationStyle(topic);
-  const sections =
-    style === "stance-oriented"
-      ? [
-          {
-            title: text.meetingBoard.stanceSummary.mainStances,
-            items: summary.confirmableFacts ?? summary.consensus,
-          },
-          {
-            title: text.meetingBoard.stanceSummary.coreReasons,
-            items: summary.initialHypotheses ?? [],
-          },
-          {
-            title: text.meetingBoard.stanceSummary.mainDifferences,
-            items:
-              summary.insufficientlyConfirmed &&
-              summary.insufficientlyConfirmed.length > 0
-                ? summary.insufficientlyConfirmed
-                : summary.differences,
-          },
-          {
-            title: text.meetingBoard.stanceSummary.discussionLimits,
-            items: summary.risks,
-          },
-          {
-            title: text.meetingBoard.stanceSummary.continueDiscussion,
-            items: summary.nextSteps,
-          },
-        ]
-      : [
-          {
-            title: text.meetingBoard.confirmableFacts,
-            items: summary.confirmableFacts ?? summary.consensus,
-          },
-          {
-            title: text.meetingBoard.initialHypotheses,
-            items: summary.initialHypotheses ?? [],
-          },
-          {
-            title: text.meetingBoard.communityViews,
-            items: summary.communityViews ?? [],
-          },
-          {
-            title: text.meetingBoard.insufficientlyConfirmed,
-            items: summary.insufficientlyConfirmed ?? [],
-          },
-          {
-            title: text.meetingBoard.differences,
-            items: summary.confirmableFacts ? [] : summary.differences,
-          },
-          {
-            title: text.meetingBoard.risks,
-            items: summary.risks,
-          },
-          {
-            title: text.meetingBoard.nextSteps,
-            items: summary.nextSteps,
-          },
-        ];
+  void topic;
+  const thirdStageSections = getThirdStageSummarySections(summary);
+  const sections = [
+    {
+      title: text.meetingBoard.consensus,
+      items: thirdStageSections.consensus,
+    },
+    {
+      title: text.meetingBoard.differences,
+      items: thirdStageSections.differences,
+    },
+    {
+      title: text.meetingBoard.nextSteps,
+      items: thirdStageSections.nextSteps,
+    },
+  ];
 
   return (
     <section className="border border-amber-200 bg-amber-50 p-5">

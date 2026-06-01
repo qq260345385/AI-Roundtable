@@ -8,6 +8,7 @@ import {
 } from "../search/evidence-pack";
 import {
   getSummaryTopicType,
+  getThirdStageSummarySections,
   isStanceOrientedTopic,
 } from "./summary-presentation";
 
@@ -61,8 +62,6 @@ export function exportMeetingToMarkdown(
     for (const turn of phase.turns) {
       lines.push(`### ${turn.speakerName}`);
       lines.push("");
-      lines.push(`模型：${turn.provider} / ${turn.model}`);
-      lines.push("");
       lines.push(turn.content);
       lines.push("");
     }
@@ -110,95 +109,27 @@ export function exportMeetingToMarkdown(
 }
 
 function appendSummarySections(lines: string[], meeting: MeetingResult) {
-  if (isStanceOrientedTopic(meeting.topic)) {
-    appendStanceSummarySections(lines, meeting);
-    return;
-  }
-
-  appendEvidenceSummarySections(lines, meeting);
-}
-
-function appendStanceSummarySections(lines: string[], meeting: MeetingResult) {
-  const mainStances = sanitizeSummaryItems(
-    meeting.summary.confirmableFacts ?? meeting.summary.consensus,
-  );
-  const coreReasons = sanitizeSummaryItems(meeting.summary.initialHypotheses ?? []);
-  const mainDifferences = sanitizeSummaryItems(
-    meeting.summary.insufficientlyConfirmed &&
-      meeting.summary.insufficientlyConfirmed.length > 0
-      ? meeting.summary.insufficientlyConfirmed
-      : meeting.summary.differences,
-  );
+  const sections = getThirdStageSummarySections(meeting.summary);
 
   appendList(
     lines,
-    "主要立场",
-    mainStances.length > 0 ? mainStances : ["无。"],
-  );
-  appendList(lines, "核心理由", coreReasons.length > 0 ? coreReasons : ["无。"]);
-  appendList(
-    lines,
-    "主要分歧",
-    mainDifferences.length > 0 ? mainDifferences : ["无。"],
-  );
-  appendList(
-    lines,
-    "讨论局限",
-    sanitizeSummaryItems(meeting.summary.risks).length > 0
-      ? sanitizeSummaryItems(meeting.summary.risks)
+    "共识",
+    sanitizeSummaryItems(sections.consensus).length > 0
+      ? sanitizeSummaryItems(sections.consensus)
       : ["无。"],
   );
   appendList(
     lines,
-    "可以继续讨论",
-    sanitizeSummaryItems(meeting.summary.nextSteps).length > 0
-      ? sanitizeSummaryItems(meeting.summary.nextSteps)
-      : ["无。"],
-  );
-}
-
-function appendEvidenceSummarySections(lines: string[], meeting: MeetingResult) {
-  const confirmableFacts = sanitizeSummaryItems(
-    meeting.summary.confirmableFacts ?? meeting.summary.consensus,
-  );
-  const lowConfidenceHypotheses = sanitizeSummaryItems([
-    ...(meeting.summary.initialHypotheses ?? []),
-    ...(meeting.summary.communityViews ?? []),
-  ]);
-  const hasOfficialSources = hasStrongOfficialEvidence(meeting);
-  appendList(
-    lines,
-    "可确认事实",
-    confirmableFacts.length > 0
-      ? confirmableFacts.map((fact) =>
-          hasOfficialSources ? fact : hedgeUnofficialFact(fact),
-        )
-      : ["无。当前资料不足以确认关键事实。"],
-  );
-  appendList(
-    lines,
-    "低置信推测",
-    lowConfidenceHypotheses.length > 0
-      ? lowConfidenceHypotheses
+    "分歧",
+    sanitizeSummaryItems(sections.differences).length > 0
+      ? sanitizeSummaryItems(sections.differences)
       : ["无。"],
   );
   appendList(
     lines,
-    "不能确认的关键问题",
-    sanitizeSummaryItems(meeting.summary.insufficientlyConfirmed ?? []),
-  );
-  appendList(
-    lines,
-    "风险点",
-    sanitizeSummaryItems(meeting.summary.risks).length > 0
-      ? sanitizeSummaryItems(meeting.summary.risks)
-      : ["无。"],
-  );
-  appendList(
-    lines,
-    "下一步核验建议",
-    sanitizeSummaryItems(meeting.summary.nextSteps).length > 0
-      ? sanitizeSummaryItems(meeting.summary.nextSteps)
+    "下一步",
+    sanitizeSummaryItems(sections.nextSteps).length > 0
+      ? sanitizeSummaryItems(sections.nextSteps)
       : ["无。"],
   );
 }
@@ -695,33 +626,4 @@ function sanitizeSummaryItems(items: string[]): string[] {
         .trim(),
     )
     .filter((item) => item.length > 0);
-}
-
-function hasStrongOfficialEvidence(meeting: MeetingResult): boolean {
-  const items = meeting.evidencePack?.items ?? [];
-
-  return items.some(
-    (item) =>
-      item.quality?.reliability === "high" &&
-      (item.quality?.sourceType === "official_statement" ||
-        item.quality?.sourceType === "official_blog" ||
-        item.quality?.sourceType === "official_docs"),
-  );
-}
-
-function hedgeUnofficialFact(fact: string): string {
-  if (
-    fact.includes("据") ||
-    fact.includes("媒体报道") ||
-    fact.includes("资料声称") ||
-    fact.includes("社区讨论") ||
-    fact.includes("尚未核验") ||
-    fact.includes("不能确认") ||
-    fact.includes("不足以确认") ||
-    fact.includes("当前资料")
-  ) {
-    return fact;
-  }
-
-  return `据资料，${fact}`;
 }

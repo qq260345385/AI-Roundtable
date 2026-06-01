@@ -76,6 +76,14 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("## 第三阶段：共识整理");
   });
 
+  test("does not repeat model metadata inside each exported turn", () => {
+    const markdown = exportMeetingToMarkdown(meeting, participants);
+
+    expect(markdown).toContain("### GPT Mock");
+    expect(markdown).not.toContain("模型：OpenAI / gpt-mock");
+    expect(markdown).not.toContain("模型：Anthropic / claude-mock");
+  });
+
   test("exports evidence sources when evidence pack is enabled", () => {
     const markdown = exportMeetingToMarkdown(
       {
@@ -424,7 +432,7 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("需要额外核验");
   });
 
-  test("exports stance-oriented summary labels for preference topics", () => {
+  test("exports unified third-stage labels for preference topics", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
@@ -432,7 +440,7 @@ describe("exportMeetingToMarkdown", () => {
         summary: {
           consensus: ["芒果派认为香气和甜度上限更突出。"],
           differences: ["风味上限和耐吃稳定性哪个更重要仍有分歧。"],
-          minorityViews: ["不应显示的少数派字段。"],
+          minorityViews: ["大樱桃派提出了少数派判断。"],
           confirmableFacts: [
             "芒果派认为香气、甜度和柔滑口感更有吸引力。",
             "草莓派认为酸甜平衡和不腻更适合多数场景。",
@@ -463,11 +471,15 @@ describe("exportMeetingToMarkdown", () => {
       participants,
     );
 
-    expect(markdown).toContain("### 主要立场");
-    expect(markdown).toContain("### 核心理由");
-    expect(markdown).toContain("### 主要分歧");
-    expect(markdown).toContain("### 讨论局限");
-    expect(markdown).toContain("### 可以继续讨论");
+    expect(markdown).toContain("### 共识");
+    expect(markdown).toContain("### 分歧");
+    expect(markdown).toContain("### 下一步");
+    expect(markdown).toContain("大樱桃派提出了少数派判断。");
+    expect(markdown).not.toContain("### 主要立场");
+    expect(markdown).not.toContain("### 核心理由");
+    expect(markdown).not.toContain("### 主要分歧");
+    expect(markdown).not.toContain("### 讨论局限");
+    expect(markdown).not.toContain("### 可以继续讨论");
     expect(markdown).not.toContain("### 可确认事实");
     expect(markdown).not.toContain("### 低置信推测");
     expect(markdown).not.toContain("### 不能确认的关键问题");
@@ -475,6 +487,7 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).not.toContain("### 下一步核验建议");
     expect(markdown).not.toContain("据资料");
     expect(markdown).not.toContain("搜索失败");
+    expect(markdown).not.toContain("资料不足以确认关键事实");
     expect(markdown).toContain(
       "本议题未使用外部资料，讨论主要基于参会模型的立场、理由和相互回应。",
     );
@@ -483,7 +496,7 @@ describe("exportMeetingToMarkdown", () => {
     );
   });
 
-  test("keeps evidence-oriented markdown labels for factual topics", () => {
+  test("exports unified third-stage labels for factual topics", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
@@ -531,11 +544,14 @@ describe("exportMeetingToMarkdown", () => {
       participants,
     );
 
-    expect(markdown).toContain("### 可确认事实");
-    expect(markdown).toContain("### 低置信推测");
-    expect(markdown).toContain("### 不能确认的关键问题");
-    expect(markdown).toContain("### 风险点");
-    expect(markdown).toContain("### 下一步核验建议");
+    expect(markdown).toContain("### 共识");
+    expect(markdown).toContain("### 分歧");
+    expect(markdown).toContain("### 下一步");
+    expect(markdown).not.toContain("### 可确认事实");
+    expect(markdown).not.toContain("### 低置信推测");
+    expect(markdown).not.toContain("### 不能确认的关键问题");
+    expect(markdown).not.toContain("### 风险点");
+    expect(markdown).not.toContain("### 下一步核验建议");
     expect(markdown).not.toContain("### 主要立场");
     expect(markdown).toContain("## 引用检查");
     expect(markdown).toContain("- 有效资料编号：S1");
@@ -629,10 +645,14 @@ describe("exportMeetingToMarkdown", () => {
   test("exports the compact third-stage structure", () => {
     const markdown = exportMeetingToMarkdown(meeting, participants);
 
-    expect(markdown).toContain("### 可确认事实");
-    expect(markdown).toContain("### 低置信推测");
-    expect(markdown).toContain("### 不能确认的关键问题");
-    expect(markdown).toContain("### 下一步核验建议");
+    expect(markdown).toContain("### 共识");
+    expect(markdown).toContain("### 分歧");
+    expect(markdown).toContain("### 下一步");
+    expect(markdown).not.toContain("### 可确认事实");
+    expect(markdown).not.toContain("### 低置信推测");
+    expect(markdown).not.toContain("### 不能确认的关键问题");
+    expect(markdown).not.toContain("### 风险点");
+    expect(markdown).not.toContain("### 下一步核验建议");
     expect(markdown).not.toContain("### 初步推测");
     expect(markdown).not.toContain("### 不足以确认");
   });
