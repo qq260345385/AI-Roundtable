@@ -1104,16 +1104,23 @@ export async function buildModelDrivenWebEvidencePack({
       },
     );
   }
-  const finalWebDrafts = limitPublicOpinionDrafts(webDrafts, topic);
   const preflightPack = normalizeEvidencePack(
     {
-      enabled: baseItems.length > 0 || finalWebDrafts.length > 0,
-      items: [...baseItems, ...finalWebDrafts],
+      enabled: baseItems.length > 0 || webDrafts.length > 0,
+      items: [...baseItems, ...webDrafts],
     },
     {
       maxItems: modeConfig.finalLimit,
       topic,
     },
+  );
+  const selectedWebItems = preflightPack.items.filter(
+    (item) => !baseItems.some((baseItem) => baseItem.url === item.url),
+  );
+  const finalWebItems = limitPublicOpinionEvidenceItems(selectedWebItems);
+  const finalItems = [...baseItems, ...finalWebItems].slice(
+    0,
+    modeConfig.finalLimit,
   );
   const evidenceStatus =
     preflightPack.evidenceStatus ??
@@ -1135,15 +1142,16 @@ export async function buildModelDrivenWebEvidencePack({
       enabled: true,
       evidenceStatus,
       evidenceWarnings,
-      items: [...baseItems, ...finalWebDrafts],
+      items: finalItems,
       searchProcess: {
         cacheEvents,
+        candidateItems: webDrafts,
         dedupeStats,
         dedupedCandidateCount: webDrafts.length,
         rawCandidateTarget: modeConfig.candidateLimit,
         uniqueCandidateCount: webDrafts.length,
         selectedEvidenceTarget: modeConfig.finalLimit,
-        selectedEvidenceCount: preflightPack.items.length,
+        selectedEvidenceCount: finalItems.length,
         candidateShortfall: Math.max(0, modeConfig.candidateLimit - webDrafts.length),
         retrievalPassCount: countRetrievalPasses(passStats),
         ...(fallbackTriggeredReason ? { fallbackTriggeredReason } : {}),
@@ -1157,8 +1165,8 @@ export async function buildModelDrivenWebEvidencePack({
         extractAttempts,
         extractedCandidateCount,
         extractSucceededCount,
-        finalEvidenceCount: preflightPack.items.length,
-        qualityDistribution: getQualityDistribution(preflightPack.items),
+        finalEvidenceCount: finalItems.length,
+        qualityDistribution: getQualityDistribution(finalItems),
         rawCandidateCount,
         rescueReason,
         rescueTriggered,
@@ -1277,7 +1285,6 @@ function buildGeneralWebPass(
     name: "general_web",
     query,
     freshness: topicAnalysis.freshnessRequirement ?? "recent",
-    excludeDomains: SOCIAL_VIDEO_DOMAINS,
     searchDepth: "basic",
     searchTopic: "general",
     timeRange: getTavilyTimeRange(topicAnalysis.freshnessRequirement ?? "recent"),
@@ -1286,6 +1293,158 @@ function buildGeneralWebPass(
   annotateSearchPass(pass, queryLevel, "topic_analysis", topicAnalysis);
 
   return pass;
+}
+
+function buildGeneralCandidateRetrievalPasses(
+  topicAnalysis: TopicAnalysis,
+  fallbackQuery: string,
+): SearchPassSpec[] {
+  return buildShortCandidateRetrievalQueries(topicAnalysis, fallbackQuery)
+    .slice(0, 5)
+    .map((query, index) => {
+      const pass: SearchPassSpec = {
+        name: "general_web",
+        query,
+        freshness: topicAnalysis.freshnessRequirement ?? "recent",
+        searchDepth: index === 0 ? "basic" : "advanced",
+        searchTopic: "general",
+        timeRange: getTavilyTimeRange(
+          topicAnalysis.freshnessRequirement ?? "recent",
+        ),
+      };
+
+      annotateSearchPass(
+        pass,
+        index === 0 ? "precise" : index <= 2 ? "scenario" : "evidence_type",
+        "topic_analysis:candidate_retrieval",
+        topicAnalysis,
+      );
+
+      return pass;
+    });
+}
+
+function buildShortCandidateRetrievalQueries(
+  topicAnalysis: TopicAnalysis,
+  fallbackQuery: string,
+): string[] {
+  const entities = getSearchEntityTerms(topicAnalysis).slice(0, 4);
+  const scenarios = topicAnalysis.targetScenarios
+    .map((scenario) => normalizeSearchQueryTerms(scenario, topicAnalysis))
+    .filter(Boolean)
+    .slice(0, 4);
+  const evidenceTerms = topicAnalysis.evidenceNeeds
+    .map((need) => formatDimensionSearchTerm(need.dimension))
+    .map((term) => normalizeSearchQueryTerms(term, topicAnalysis))
+    .filter(Boolean)
+    .slice(0, 4);
+  const axes = topicAnalysis.comparisonAxes
+    .map((axis) => normalizeSearchQueryTerms(axis.replace(/_/g, " "), topicAnalysis))
+    .filter(Boolean)
+    .slice(0, 3);
+  const seeds = [
+    [...entities, ...(scenarios.length > 0 ? scenarios.slice(0, 2) : evidenceTerms.slice(0, 2))],
+    ...scenarios.map((scenario) => [...entities, scenario]),
+    ...evidenceTerms.map((term) => [...entities, term]),
+    [...entities, ...axes.slice(0, 2)],
+    [...entities, "official", "product"],
+    [...entities, "evaluation", "report"],
+    [...entities, "user feedback", "community"],
+    [normalizeSearchQueryTerms(fallbackQuery, topicAnalysis)],
+    ...topicAnalysis.searchQueries.map((query) => [
+      normalizeSearchQueryTerms(query, topicAnalysis),
+    ]),
+  ];
+  const seen = new Set<string>();
+  const queries: string[] = [];
+
+  for (const parts of seeds) {
+    const query = trimSearchTermsToLength(
+      dedupeQueryParts(
+        parts
+          .flatMap(splitSearchPhrases)
+          .map(stripSearchTermPunctuation)
+          .filter(Boolean)
+          .filter((part) => !isResidualEntityFragment(part, topicAnalysis)),
+      ),
+      120,
+    );
+    const quality = evaluateSearchQueryQuality(query, topicAnalysis);
+    const key = getQueryDedupeKey(query);
+
+    if (!query || !quality.ok || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    queries.push(query);
+  }
+
+  return queries.length > 0
+    ? queries
+    : [normalizeSearchQueryTerms(fallbackQuery, topicAnalysis)].filter(Boolean);
+}
+
+function trimSearchTermsToLength(terms: string[], maxLength: number): string {
+  const selected: string[] = [];
+
+  for (const term of terms) {
+    const candidate = [...selected, term].join(" ");
+
+    if (candidate.length > maxLength) {
+      continue;
+    }
+
+    selected.push(term);
+  }
+
+  return trimQueryToLength(selected.join(" "));
+}
+
+function getSearchEntityTerms(topicAnalysis: TopicAnalysis): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+
+  for (const entity of topicAnalysis.targetEntities) {
+    const normalized = stripSearchTermPunctuation(entity).trim();
+    const lower = normalized.toLowerCase();
+
+    if (
+      !normalized ||
+      seen.has(lower) ||
+      isLowValueSearchTerm(normalized) ||
+      isResidualEntityFragment(normalized, topicAnalysis) ||
+      isLikelyScenarioFragment(normalized, topicAnalysis)
+    ) {
+      continue;
+    }
+
+    seen.add(lower);
+    terms.push(normalized);
+  }
+
+  return terms;
+}
+
+function isLikelyScenarioFragment(
+  value: string,
+  topicAnalysis: TopicAnalysis,
+): boolean {
+  const normalized = value.toLowerCase();
+
+  if (!/[\u4e00-\u9fff]/.test(value)) {
+    return false;
+  }
+
+  if (value.length > 10) {
+    return true;
+  }
+
+  return topicAnalysis.targetScenarios.some((scenario) => {
+    const scenarioText = scenario.toLowerCase();
+
+    return scenarioText.length >= 2 && normalized.includes(scenarioText);
+  });
 }
 
 function selectBestTopicAnalysisQuery(
@@ -1496,7 +1655,10 @@ function buildSearchPasses(
   );
   const isChinese = isPrimaryChineseTopic(topic);
   const localizedPasses = buildLocalizedMediaPasses(topic, topicAnalysis);
-  const generalWebPass = buildGeneralWebPass(topicAnalysis, baseQuery, "precise");
+  const generalWebPasses = buildGeneralCandidateRetrievalPasses(
+    topicAnalysis,
+    baseQuery,
+  );
 
   const officialPass: SearchPassSpec = {
     name: "official",
@@ -1504,9 +1666,9 @@ function buildSearchPasses(
       ? trimQueryToLength(`${plannedQueryContext} ${baseQuery} 官方 发布 公告`)
       : trimQueryToLength(
           `${baseQuery} official statement official blog official docs announcement report ${plannedQueryContext}`,
-        ),
+    ),
     freshness: "latest",
-    includeDomains: buildOfficialDomainCandidates(topic),
+    includeDomains: buildOfficialDomainCandidates(topic, topicAnalysis),
     excludeDomains: SOCIAL_VIDEO_DOMAINS,
     searchDepth: "basic",
     searchTopic: "general",
@@ -1571,7 +1733,7 @@ function buildSearchPasses(
 
   if (isChinese) {
     return [
-      generalWebPass,
+      ...generalWebPasses,
       ...localizedPasses,
       officialPass,
       reputableMediaPass,
@@ -1581,7 +1743,7 @@ function buildSearchPasses(
   }
 
   return [
-    generalWebPass,
+    ...generalWebPasses,
     officialPass,
     ...localizedPasses,
     reputableMediaPass,
@@ -1788,7 +1950,10 @@ function buildEntityCompetitionSearchPasses(
   const baseQuery =
     selectBestTopicAnalysisQuery(topicAnalysis, rawBaseQuery) ??
     buildQueryFromTopicAnalysisParts(topicAnalysis, rawBaseQuery);
-  const generalWebPass = buildGeneralWebPass(topicAnalysis, baseQuery, "precise");
+  const generalWebPasses = buildGeneralCandidateRetrievalPasses(
+    topicAnalysis,
+    baseQuery,
+  );
   const needsQuery = topicAnalysis.evidenceNeeds
     .map((need) => formatDimensionSearchTerm(need.dimension))
     .filter(Boolean)
@@ -1803,7 +1968,7 @@ function buildEntityCompetitionSearchPasses(
           `${baseQuery} official statement ${needsQuery}`,
         ),
     freshness: "latest",
-    includeDomains: buildOfficialDomainCandidates(topic),
+    includeDomains: buildOfficialDomainCandidates(topic, topicAnalysis),
     excludeDomains: SOCIAL_VIDEO_DOMAINS,
     searchDepth: "basic",
     searchTopic: "general",
@@ -1866,7 +2031,7 @@ function buildEntityCompetitionSearchPasses(
 
   if (isChinese) {
     return [
-      generalWebPass,
+      ...generalWebPasses,
       ...localizedPasses,
       officialPass,
       reputableMediaPass,
@@ -1876,7 +2041,7 @@ function buildEntityCompetitionSearchPasses(
   }
 
   return [
-    generalWebPass,
+    ...generalWebPasses,
     officialPass,
     ...localizedPasses,
     reputableMediaPass,
@@ -2023,16 +2188,25 @@ function isPrimaryChineseTopic(topic: string): boolean {
   return cjkCount >= 2 && cjkCount >= latinCount;
 }
 
-function buildOfficialDomainCandidates(topic: string): string[] | undefined {
+function buildOfficialDomainCandidates(
+  topic: string,
+  topicAnalysis?: TopicAnalysis,
+): string[] | undefined {
   const matches =
     topic.match(/\b[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*){0,3}\b/g) ?? [];
+  const entityMatches = matches.filter(
+    (match) => !/^(AI|API|LLM|GDP|IPO)$/i.test(match.trim()),
+  );
+
+  void topicAnalysis;
+
+  if (entityMatches.length !== 1) {
+    return undefined;
+  }
+
   const candidates = new Set<string>();
 
-  for (const match of matches) {
-    if (/^(AI|API|LLM|GDP|IPO)$/i.test(match.trim())) {
-      continue;
-    }
-
+  for (const match of entityMatches) {
     const words = match
       .toLowerCase()
       .split(/\s+/)
@@ -2516,26 +2690,16 @@ function recordExtractedCountsByPass(
   }
 }
 
-function limitPublicOpinionDrafts(
-  drafts: TavilyEvidenceDraft[],
-  topic: string,
-): TavilyEvidenceDraft[] {
+function limitPublicOpinionEvidenceItems(items: SearchEvidence[]): SearchEvidence[] {
   let publicOpinionCount = 0;
 
-  return drafts.filter((draft) => {
-    const quality = scoreEvidence({
-      title: draft.title,
-      url: draft.url,
-      source: draft.source,
-      publishedAt: draft.publishedAt,
-      snippet: draft.snippet,
-      topic,
-    });
+  return items.filter((item) => {
+    const sourceType = item.quality?.sourceType;
 
     if (
-      quality.sourceType !== "official_community" &&
-      quality.sourceType !== "social_forum" &&
-      quality.sourceType !== "video_platform"
+      sourceType !== "official_community" &&
+      sourceType !== "social_forum" &&
+      sourceType !== "video_platform"
     ) {
       return true;
     }
@@ -3230,7 +3394,12 @@ function isResidualEntityFragment(
     return false;
   }
 
-  return topicAnalysis.targetEntities.some((entity) => {
+  const entityTerms = [
+    ...topicAnalysis.targetEntities,
+    ...(topicAnalysis.cleanedTopic.match(/[A-Za-z][A-Za-z0-9+-]{1,}/g) ?? []),
+  ];
+
+  return entityTerms.some((entity) => {
     const normalizedEntity = entity.toLowerCase();
 
     return (
@@ -3675,18 +3844,24 @@ function buildTopicAnalysisZeroResultFallbackQueries(
 ): string[] {
   const queries: string[] = [];
   const seenKeys = new Set<string>();
-  const entities = topicAnalysis.targetEntities.slice(0, 4);
-  const scenarios = topicAnalysis.targetScenarios.slice(0, 3);
+  const entities = getSearchEntityTerms(topicAnalysis).slice(0, 4);
+  const scenarios = topicAnalysis.targetScenarios
+    .map((scenario) => normalizeSearchQueryTerms(scenario, topicAnalysis))
+    .filter(Boolean)
+    .slice(0, 3);
   const dimensionTerms = topicAnalysis.evidenceNeeds
     .map((need) => formatDimensionSearchTerm(need.dimension))
+    .map((term) => normalizeSearchQueryTerms(term, topicAnalysis))
     .filter(Boolean);
   const cleanedTokens = splitSearchPhrases(topicAnalysis.cleanedTopic)
+    .map((token) => normalizeSearchQueryTerms(token, topicAnalysis))
     .filter((token) => !isLowValueSearchTerm(token))
     .slice(0, 6);
   const addQuery = (parts: string[]) => {
-    const query = trimQueryToLength(parts.filter(Boolean).join(" "));
+    const query = normalizeSearchQueryTerms(parts.filter(Boolean).join(" "), topicAnalysis);
+    const quality = evaluateSearchQueryQuality(query, topicAnalysis);
 
-    if (query && getMeaningfulTokenCount(query) >= 2) {
+    if (query && quality.ok && getMeaningfulTokenCount(query) >= 2) {
       const key = getQueryDedupeKey(query);
 
       if (!seenKeys.has(key)) {

@@ -528,6 +528,7 @@ export function normalizeEvidencePack(
     input: input.searchProcess,
     normalizedItems,
     selectedItems: items,
+    topic: options.topic,
   });
 
   if (items.length === 0) {
@@ -1573,6 +1574,7 @@ function createSearchProcess(input: {
   input: unknown;
   normalizedItems: Omit<SearchEvidence, "id">[];
   selectedItems: SearchEvidence[];
+  topic?: string;
 }): SearchProcess | undefined {
   if (!isObject(input.input)) {
     return undefined;
@@ -1632,7 +1634,12 @@ function createSearchProcess(input: {
     input.input.providerDiagnostics,
   );
   const selectedKeys = new Set(input.selectedItems.map(getEvidenceKey));
-  const results = input.normalizedItems.map((item) => {
+  const processItems = Array.isArray(input.input.candidateItems)
+    ? input.input.candidateItems
+        .map((item) => normalizeEvidenceItem(item, input.topic))
+        .filter((item): item is Omit<SearchEvidence, "id"> => item !== null)
+    : input.normalizedItems;
+  const results = processItems.map((item) => {
     const filteredReason = getFilteredReason(item, selectedKeys);
     const quality = item.quality;
 
