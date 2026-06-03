@@ -220,11 +220,11 @@ function SettingsDropdown({
 
 function getModeText(mode: RoundtableMode | null, text: UiText): string {
   if (mode === "real") {
-    return "Real";
+    return text.header.realMode;
   }
 
   if (mode === "mock") {
-    return "Mock";
+    return text.header.mockMode;
   }
 
   return text.header.loadingMode;

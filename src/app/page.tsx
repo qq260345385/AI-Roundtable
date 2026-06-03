@@ -1504,10 +1504,25 @@ function handleLiveMeetingEvent(
 
   if (event.type === "meeting_completed") {
     setters.setMeeting(event.meeting);
-    setters.setStatus("success");
-    setters.setMessage(text.meetingForm.messages.meetingDone);
+    setters.setStatus(event.meeting.meetingStatus === "failed" ? "error" : "success");
+    setters.setMessage(getCompletedMeetingMessage(event.meeting, text));
     setters.setIsMeetingStreaming(false);
   }
+}
+
+function getCompletedMeetingMessage(
+  meeting: MeetingResult,
+  text: ReturnType<typeof getUiText>,
+): string {
+  if (meeting.meetingStatus === "failed") {
+    return text.meetingBoard.meetingStatus.failedDescription;
+  }
+
+  if (meeting.meetingStatus === "degraded") {
+    return text.meetingBoard.meetingStatus.degradedDescription;
+  }
+
+  return text.meetingForm.messages.meetingDone;
 }
 
 function getLiveEventStageId(event: LiveMeetingEvent): string | undefined {

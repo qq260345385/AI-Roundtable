@@ -16,10 +16,20 @@ import {
 import { classifyEvidenceTopic } from "../search/evidence-pack";
 import { checkEvidenceCitations } from "../search/evidence-citations";
 import { resolveEvidencePackDelivery } from "../search/evidence-pack";
-import { AllProvidersFailedError } from "./engine";
+import {
+  AllProvidersFailedError,
+  createInsufficientParticipantsSummary,
+  getMeetingStatus,
+  getMeetingWarnings,
+} from "./engine";
 import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
 import { sanitizeRoleLeak } from "./role-leak";
 import { generateFallbackSummaryFromTurns } from "../providers/openai-compatible-provider";
+import {
+  classifyFailureFromMessage,
+  validateModelTurnContent,
+  type InvalidModelTurnReason,
+} from "./model-turn-validation";
 
 type EmitLiveMeetingEvent = (event: LiveMeetingEvent) => void | Promise<void>;
 
@@ -59,16 +69,20 @@ export async function runLiveMeeting(
     failures,
     emit,
   );
-  const responseTurns = await runResponsePhase(
-    meetingRequest,
-    provider,
-    independentTurns,
-    failures,
-    emit,
-  );
+  const shouldFailDueToInsufficientTurns =
+    request.participants.length >= 2 && independentTurns.length < 2;
+  const responseTurns = shouldFailDueToInsufficientTurns
+    ? []
+    : await runResponsePhase(
+        meetingRequest,
+        provider,
+        independentTurns,
+        failures,
+        emit,
+      );
   const allTurns = [...independentTurns, ...responseTurns];
 
-  if (allTurns.length === 0) {
+  if (allTurns.length === 0 && request.participants.length < 2) {
     throw new AllProvidersFailedError(
       "All providers failed to generate meeting responses.",
     );
@@ -82,17 +96,19 @@ export async function runLiveMeeting(
   });
 
   const successfulParticipants = getSuccessfulParticipants(request, allTurns);
-  const summary = applyEvidenceQualityGateToSummary(
-    await generateSummaryWithFallback(
-      meetingRequest,
-      provider,
-      allTurns,
-      successfulParticipants,
-      failures,
-      emit,
-    ),
-    meetingRequest.evidencePack,
-  );
+  const summary = shouldFailDueToInsufficientTurns
+    ? createInsufficientParticipantsSummary(independentTurns)
+    : applyEvidenceQualityGateToSummary(
+        await generateSummaryWithFallback(
+          meetingRequest,
+          provider,
+          allTurns,
+          successfulParticipants,
+          failures,
+          emit,
+        ),
+        meetingRequest.evidencePack,
+      );
 
   await emit({
     type: "summary",
@@ -105,6 +121,10 @@ export async function runLiveMeeting(
   );
   const meeting: MeetingResult = {
     topic: meetingRequest.topic,
+    meetingStatus: getMeetingStatus(
+      shouldFailDueToInsufficientTurns,
+      failures,
+    ),
     phases: [
       {
         id: "independent",
@@ -125,6 +145,7 @@ export async function runLiveMeeting(
     citationCheck,
     failures,
     hasPartialFailures: failures.length > 0,
+    warnings: getMeetingWarnings(shouldFailDueToInsufficientTurns, failures),
     isBriefMode: request.isBriefMode === true,
     isTimeSensitive,
     factCheckNotice: isTimeSensitive
@@ -168,7 +189,21 @@ async function runIndependentPhase(
         request.evidencePack,
         getMeetingPromptOptions(request),
       );
-      const turn = createTurn("independent", participant, content);
+      const validContent = validateModelTurnContent(content);
+
+      if (!validContent.ok) {
+        const failure = createFailureFromInvalidContent(
+          participant,
+          "independent",
+          validContent,
+        );
+
+        failures.push(failure);
+        await emit({ type: "failure", failure });
+        continue;
+      }
+
+      const turn = createTurn("independent", participant, validContent.content);
 
       turns.push(turn);
       await emit({ type: "turn", turn });
@@ -195,6 +230,10 @@ async function runResponsePhase(
   emit: EmitLiveMeetingEvent,
 ): Promise<MeetingTurn[]> {
   const turns: MeetingTurn[] = [];
+  const respondingParticipants = getParticipantsForTurns(
+    request,
+    independentTurns,
+  );
 
   await emit({
     type: "phase_started",
@@ -203,7 +242,7 @@ async function runResponsePhase(
     description: "每个模型阅读前一阶段观点后，自由补充、质疑、反驳或延展。",
   });
 
-  for (const participant of request.participants) {
+  for (const participant of respondingParticipants) {
     throwIfAborted(request.signal);
     await emitParticipantStarted("response", participant, emit);
 
@@ -215,7 +254,21 @@ async function runResponsePhase(
         request.evidencePack,
         getMeetingPromptOptions(request),
       );
-      const turn = createTurn("response", participant, content);
+      const validContent = validateModelTurnContent(content);
+
+      if (!validContent.ok) {
+        const failure = createFailureFromInvalidContent(
+          participant,
+          "response",
+          validContent,
+        );
+
+        failures.push(failure);
+        await emit({ type: "failure", failure });
+        continue;
+      }
+
+      const turn = createTurn("response", participant, validContent.content);
 
       turns.push(turn);
       await emit({ type: "turn", turn });
@@ -357,6 +410,19 @@ function getSuccessfulParticipants(
   );
 }
 
+function getParticipantsForTurns(
+  request: MeetingRequest,
+  turns: MeetingTurn[],
+): ModelParticipant[] {
+  const successfulIds = new Set(
+    turns.map((turn) => turn.id.replace(/^(independent|response)-/, "")),
+  );
+
+  return request.participants.filter((participant) =>
+    successfulIds.has(participant.id),
+  );
+}
+
 function createTurn(
   phaseId: string,
   participant: ModelParticipant,
@@ -377,17 +443,50 @@ function createFailure(
   stage: MeetingProviderFailure["stage"],
   error: unknown,
 ): MeetingProviderFailure {
+  const message = sanitizeErrorMessage(error);
+  const classified = classifyFailureFromMessage(message);
+
   return {
     providerId: participant.id,
+    participantName: participant.name,
     providerName: participant.provider,
     model: participant.model,
     stage,
-    message: sanitizeErrorMessage(error),
+    errorType: classified.errorType,
+    message,
+    ...(classified.statusCode ? { statusCode: classified.statusCode } : {}),
+  };
+}
+
+function createFailureFromInvalidContent(
+  participant: ModelParticipant,
+  stage: MeetingProviderFailure["stage"],
+  reason: InvalidModelTurnReason,
+): MeetingProviderFailure {
+  return {
+    providerId: participant.id,
+    participantName: participant.name,
+    providerName: participant.provider,
+    model: participant.model,
+    stage,
+    errorType: reason.errorType,
+    message: sanitizeErrorMessage(reason.message),
+    ...(reason.statusCode ? { statusCode: reason.statusCode } : {}),
   };
 }
 
 function sanitizeErrorMessage(error: unknown): string {
-  const rawMessage = error instanceof Error ? error.message : "Unknown error";
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof error.message === "string"
+          ? error.message
+          : "Unknown error";
 
   return rawMessage
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "[redacted-token]")

@@ -88,6 +88,10 @@ describe("exportMeetingToMarkdown", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["需要同时看过程和结论 [S1]。"],
+        },
         evidencePack: {
           enabled: true,
           strategy: "native_file",
@@ -131,6 +135,10 @@ describe("exportMeetingToMarkdown", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["这里误用了不存在的资料 [S9]。"],
+        },
         evidencePack: {
           enabled: true,
           evidenceStatus: "low",
@@ -166,6 +174,10 @@ describe("exportMeetingToMarkdown", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["需要同时看过程和结论 [S1]。"],
+        },
         evidencePack: {
           enabled: false,
           evidenceStatus: "none",
@@ -186,6 +198,10 @@ describe("exportMeetingToMarkdown", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["这里误用了不存在的资料 [S9]。"],
+        },
         evidencePack: {
           enabled: true,
           items: [
@@ -410,17 +426,17 @@ describe("exportMeetingToMarkdown", () => {
       participants,
     );
 
-    expect(markdown).toContain("## 核心证据");
-    expect(markdown).toContain("## 舆论线索");
+    expect(markdown).toContain("## 直接证据");
+    expect(markdown).toContain("## 背景资料");
     expect(markdown).toContain("## 被降级资料");
     expect(markdown).toContain("已找到联网参考资料，但核心证据不足");
-    expect(sectionText(markdown, "## 核心证据")).toContain("Reuters long report");
-    expect(sectionText(markdown, "## 核心证据")).not.toContain("Reddit discussion");
-    expect(sectionText(markdown, "## 核心证据")).not.toContain("YouTube reaction");
-    expect(sectionText(markdown, "## 核心证据")).not.toContain("LinkedIn post");
-    expect(sectionText(markdown, "## 舆论线索")).toContain("Reddit discussion");
-    expect(sectionText(markdown, "## 舆论线索")).toContain("YouTube reaction");
-    expect(sectionText(markdown, "## 舆论线索")).toContain("LinkedIn post");
+    expect(sectionText(markdown, "## 直接证据")).toContain("Reuters long report");
+    expect(sectionText(markdown, "## 直接证据")).not.toContain("Reddit discussion");
+    expect(sectionText(markdown, "## 直接证据")).not.toContain("YouTube reaction");
+    expect(sectionText(markdown, "## 直接证据")).not.toContain("LinkedIn post");
+    expect(sectionText(markdown, "## 背景资料")).toContain("Reddit discussion");
+    expect(sectionText(markdown, "## 背景资料")).toContain("YouTube reaction");
+    expect(sectionText(markdown, "## 背景资料")).toContain("LinkedIn post");
     expect(sectionText(markdown, "## 被降级资料")).toContain("Short official snippet");
   });
 
@@ -561,6 +577,10 @@ describe("exportMeetingToMarkdown", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["需要同时看过程和结论 [S1]。"],
+        },
         evidencePack: {
           enabled: true,
           items: [
@@ -594,10 +614,56 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("- 无效引用编号：无");
   });
 
+  test("recomputes citation check from final exported meeting body", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        summary: {
+          consensus: ["总结明确引用后置资料 [S5]，同时误用了不存在的资料 [S99]。"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        },
+        evidencePack: {
+          enabled: true,
+          items: [
+            {
+              id: "S1",
+              title: "资料 1",
+              snippet: "摘要 1",
+            },
+            {
+              id: "S5",
+              title: "资料 5",
+              snippet: "摘要 5",
+            },
+          ],
+        },
+        citationCheck: {
+          validCitationIds: ["S1", "S5"],
+          usedCitationIds: [],
+          missingCitationIds: ["S1", "S5"],
+          invalidCitationIds: [],
+          hasInvalidCitations: false,
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("- 已使用资料编号：S5, S99");
+    expect(markdown).toContain("- 未被引用资料编号：S1");
+    expect(markdown).toContain("- 无效引用编号：S99");
+  });
+
   test("exports a warning when citation check finds invalid ids", () => {
     const markdown = exportMeetingToMarkdown(
       {
         ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["这里误用了不存在的资料 [S9]。"],
+        },
         evidencePack: {
           enabled: true,
           items: [
@@ -621,6 +687,47 @@ describe("exportMeetingToMarkdown", () => {
 
     expect(markdown).toContain("- 无效引用编号：S9");
     expect(markdown).toContain("会议内容中存在资料包之外的引用编号");
+  });
+
+  test("exports citation discipline warnings for downgraded evidence citations", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        summary: {
+          ...meeting.summary,
+          consensus: ["Discussion mentions a weak source [S1] and a missing source [S99]."],
+        },
+        evidencePack: {
+          enabled: true,
+          evidenceStatus: "low",
+          items: [
+            {
+              id: "S1",
+              title: "Weak source",
+              snippet: "Weak context only.",
+              quality: {
+                warnings: [],
+                textLength: 120,
+                wasTruncated: false,
+                sourceType: "social_forum",
+                reliability: "low",
+                score: 30,
+                citationLevel: "context_only",
+                citationGuidance: "Use only as context.",
+              },
+            },
+          ],
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("- 存在资料编号：S1");
+    expect(markdown).toContain("- 可引用资料编号：无");
+    expect(markdown).toContain("- 已使用资料编号：S1, S99");
+    expect(markdown).toContain("- 被引用的降级资料编号：S1");
+    expect(markdown).toContain("- 无效引用编号：S99");
+    expect(markdown).toContain("没有可引用资料，但正文使用了资料编号");
   });
 
   test("exports a citation check notice when evidence pack is disabled", () => {
@@ -701,13 +808,129 @@ describe("exportMeetingToMarkdown", () => {
       participants,
     );
 
-    expect(markdown).toContain("## 模型调用失败记录");
+    expect(markdown).toContain("## 模型调用状态");
+    expect(markdown).not.toContain("## 模型调用失败记录");
     expect(markdown).toContain("OpenAI / gpt-test / 独立观点");
     expect(markdown).toContain("OpenAI API request failed: 500");
-    expect(markdown).toContain("建议：检查 provider 配置或稍后重试。");
     expect(markdown).not.toContain("secret-openai-key");
     expect(markdown).not.toContain("Authorization");
     expect(markdown).not.toContain("Bearer");
+  });
+
+  test("exports meeting status and model call status for failed meetings", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        meetingStatus: "failed",
+        warnings: ["有效发言模型少于 2 个，无法形成可靠圆桌讨论。"],
+        phases: [
+          {
+            id: "independent",
+            title: "第一阶段：独立观点",
+            description: "独立发言",
+            turns: [
+              {
+                id: "independent-gpt-mock",
+                phaseId: "independent",
+                speakerName: "GPT Mock",
+                provider: "OpenAI",
+                model: "gpt-mock",
+                content: "Only one valid model spoke.",
+              },
+            ],
+          },
+          {
+            id: "response",
+            title: "第二阶段：自由回应",
+            description: "自由回应",
+            turns: [],
+          },
+        ],
+        summary: {
+          consensus: ["本轮有效发言模型少于 2 个，无法形成可靠共识。"],
+          differences: ["本轮未形成有效多方交锋，因此无法整理真实分歧。"],
+          minorityViews: [],
+          risks: [],
+          nextSteps: ["至少保证 2 个模型成功完成第一阶段后，再进行圆桌讨论。"],
+        },
+        failures: [
+          {
+            providerId: "claude-mock",
+            participantName: "Claude Mock",
+            providerName: "Anthropic",
+            model: "claude-mock",
+            stage: "independent",
+            errorType: "provider_rejected",
+            message:
+              "The request was rejected because it was considered high risk",
+          },
+          {
+            providerId: "kimi",
+            participantName: "Kimi Mock",
+            providerName: "Moonshot",
+            model: "kimi-mock",
+            stage: "independent",
+            errorType: "api_error",
+            message: "API request failed: 400",
+            statusCode: 400,
+          },
+        ],
+        hasPartialFailures: true,
+      },
+      [
+        ...participants,
+        {
+          id: "kimi",
+          name: "Kimi Mock",
+          provider: "Moonshot",
+          model: "kimi-mock",
+          status: "mock",
+          statusLabel: "Mock",
+        },
+      ],
+    );
+
+    expect(markdown).toContain("## 会议状态");
+    expect(markdown).toContain("有效发言模型少于 2 个");
+    expect(markdown).toContain("## 模型调用状态");
+    expect(markdown).toContain("GPT Mock：第一阶段成功，第二阶段跳过");
+    expect(markdown).toContain(
+      "Claude Mock：第一阶段失败，原因：provider_rejected",
+    );
+    expect(markdown).toContain("API request failed: 400");
+  });
+
+  test("exports one compact model call status section without duplicated failure records", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        meetingStatus: "failed",
+        warnings: [
+          "本轮会议未形成有效圆桌讨论：有效发言模型少于 2 个。",
+          "有效发言模型少于 2 个，无法形成可靠圆桌讨论。",
+        ],
+        failures: [
+          {
+            providerId: "claude-mock",
+            participantName: "Claude Mock",
+            providerName: "Anthropic",
+            model: "claude-mock",
+            stage: "independent",
+            errorType: "partial_output",
+            message:
+              "partial output: stream interrupted before completion with a very long provider body that should not dominate the exported meeting status",
+          },
+        ],
+        hasPartialFailures: true,
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("## 模型调用状态");
+    expect(markdown).not.toContain("## 模型调用失败记录");
+    expect(markdown.match(/有效发言模型少于 2 个/g)?.length ?? 0).toBeLessThanOrEqual(2);
+    expect(markdown).toContain("partial_output");
+    expect(markdown).not.toContain("provider body that should not dominate");
   });
 
   test("exports actionable suggestions for common failure messages", () => {
@@ -749,15 +972,13 @@ describe("exportMeetingToMarkdown", () => {
       participants,
     );
 
-    expect(markdown).toContain("OpenAI / gpt-test / 共识整理");
-    expect(markdown).toContain("建议：检查 API key 是否正确。");
-    expect(markdown).toContain("Qwen / missing-model / 自由回应");
-    expect(markdown).toContain("建议：检查 MODEL 是否正确。");
-    expect(markdown).toContain("DeepSeek / deepseek-chat / 独立观点");
-    expect(markdown).toContain(
-      "建议：检查 base URL、网络或 provider 响应速度。",
-    );
-    expect(markdown).toContain("建议：稍后重试，或检查额度和限流设置。");
+    expect(markdown).toContain("OpenAI / gpt-test / 共识整理：失败");
+    expect(markdown).toContain("OpenAI API request failed: 401");
+    expect(markdown).toContain("Qwen / missing-model / 自由回应：失败");
+    expect(markdown).toContain("model not found");
+    expect(markdown).toContain("DeepSeek / deepseek-chat / 独立观点：失败");
+    expect(markdown).toContain("request timeout");
+    expect(markdown).toContain("429 rate limit");
   });
 
   test("does not export failure section when there are no failures", () => {
@@ -1013,9 +1234,9 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("覆盖维度");
     expect(markdown).toContain("缺失维度");
     expect(markdown).toContain("覆盖度评分");
-    expect(markdown).toContain("## 技术/产品线索");
-    expect(sectionText(markdown, "## 核心证据")).not.toContain("[S1]");
-    expect(sectionText(markdown, "## 技术/产品线索")).toContain("[S1]");
+    expect(markdown).toContain("## 辅助证据");
+    expect(sectionText(markdown, "## 直接证据")).not.toContain("[S1]");
+    expect(sectionText(markdown, "## 辅助证据")).toContain("[S1]");
   });
 
   test("exports an evidence debug warning when debug was requested but process is missing", () => {

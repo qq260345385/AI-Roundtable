@@ -13,6 +13,10 @@ type MeetingBoardProps = {
 export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
   return (
     <div className="space-y-5">
+      {meeting.meetingStatus === "failed" ||
+      meeting.meetingStatus === "degraded" ? (
+        <MeetingStatusPanel meeting={meeting} text={text} />
+      ) : null}
       {meeting.isTimeSensitive && meeting.factCheckNotice ? (
         <FactHygienePanel notice={meeting.factCheckNotice} text={text} />
       ) : null}
@@ -41,6 +45,47 @@ type WebSearchProcessPanelProps = {
   meeting: MeetingResult;
   text: UiText;
 };
+
+function MeetingStatusPanel({ meeting, text }: MeetingBoardProps) {
+  const isFailed = meeting.meetingStatus === "failed";
+  const copy = text.meetingBoard.meetingStatus;
+
+  return (
+    <section
+      className={`border p-5 ${
+        isFailed ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"
+      }`}
+    >
+      <h2
+        className={`text-lg font-semibold ${
+          isFailed ? "text-red-900" : "text-amber-950"
+        }`}
+      >
+        {isFailed ? copy.failedTitle : copy.degradedTitle}
+      </h2>
+      <p
+        className={`mt-1 text-sm leading-6 ${
+          isFailed ? "text-red-800" : "text-amber-900"
+        }`}
+      >
+        {isFailed ? copy.failedDescription : copy.degradedDescription}
+      </p>
+      {meeting.warnings && meeting.warnings.length > 0 ? (
+        <ul
+          className={`mt-2 space-y-1 text-sm leading-6 ${
+            isFailed ? "text-red-800" : "text-amber-900"
+          }`}
+        >
+          {meeting.warnings.map((warning) => (
+            <li className="border-l-2 border-current/30 pl-3" key={warning}>
+              {warning}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
 
 export function WebSearchProcessPanel({
   meeting,
@@ -99,18 +144,17 @@ function DeveloperSearchDetails({
     process.qualityOverview.byReliability,
   )
     .filter(([, count]) => count > 0)
-    .map(([quality, count]) => `${quality}: ${count}`)
+    .map(
+      ([quality, count]) =>
+        `${getMappedLabel(labels.reliabilityLabels, quality)}: ${count}`,
+    )
     .join(" / ");
   const filteredReasonSummary =
     process.filteredReasons.length > 0
       ? process.filteredReasons
           .map(
             (item) =>
-              `${
-                labels.reasonLabels[
-                  item.reason as keyof typeof labels.reasonLabels
-                ] ?? item.reason
-              } (${item.reason}): ${item.count}`,
+              `${getMappedLabel(labels.reasonLabels, item.reason)}: ${item.count}`,
           )
           .join(" / ")
       : labels.noFiltered;
@@ -118,7 +162,7 @@ function DeveloperSearchDetails({
   return (
     <details className="mt-4 border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
       <summary className="cursor-pointer font-medium text-sky-950">
-        Developer search details
+        {labels.developerDetailsTitle}
       </summary>
       <div className="mt-3 grid items-start gap-3 md:grid-cols-2">
         <ProcessBlock title={labels.intentTitle}>
@@ -146,22 +190,33 @@ function DeveloperSearchDetails({
                             {searchIntent.question}
                           </p>
                           <p className="mt-1 text-xs text-zinc-600">
-                            freshness: {searchIntent.freshness} / source:{" "}
-                            {searchIntent.sourcePreference}
+                            {labels.freshnessLabel}:{" "}
+                            {getMappedLabel(
+                              labels.freshnessLabels,
+                              searchIntent.freshness,
+                            )}{" "}
+                            / {labels.sourcePreferenceLabel}:{" "}
+                            {getMappedLabel(
+                              labels.sourcePreferenceLabels,
+                              searchIntent.sourcePreference,
+                            )}
                           </p>
                           {searchIntent.mustInclude.length > 0 ? (
                             <p className="mt-1 text-xs text-zinc-600">
-                              must: {searchIntent.mustInclude.join(", ")}
+                              {labels.mustIncludeLabel}:{" "}
+                              {searchIntent.mustInclude.join(", ")}
                             </p>
                           ) : null}
                           {searchIntent.shouldInclude.length > 0 ? (
                             <p className="mt-1 text-xs text-zinc-600">
-                              should: {searchIntent.shouldInclude.join(", ")}
+                              {labels.shouldIncludeLabel}:{" "}
+                              {searchIntent.shouldInclude.join(", ")}
                             </p>
                           ) : null}
                           {searchIntent.exclude.length > 0 ? (
                             <p className="mt-1 text-xs text-zinc-600">
-                              exclude: {searchIntent.exclude.join(", ")}
+                              {labels.excludeLabel}:{" "}
+                              {searchIntent.exclude.join(", ")}
                             </p>
                           ) : null}
                           {searchIntent.rationale ? (
@@ -188,7 +243,7 @@ function DeveloperSearchDetails({
               {process.queryPlans.length > 0 ? (
                 <details>
                   <summary className="cursor-pointer text-xs font-medium text-sky-900">
-                    Query generation
+                    {labels.queryGenerationTitle}
                   </summary>
                   <ul className="mt-2 space-y-2">
                     {process.queryPlans.map((plan) => (
@@ -227,7 +282,7 @@ function DeveloperSearchDetails({
           {process.intentDecisions.length > 0 ? (
             <details className="mt-2">
               <summary className="cursor-pointer text-xs font-medium text-sky-900">
-                Merged / dropped search intents
+                {labels.intentDecisionTitle}
               </summary>
               <ul className="mt-2 space-y-1">
                 {process.intentDecisions
@@ -237,15 +292,24 @@ function DeveloperSearchDetails({
                       className="border-l-2 border-sky-200 pl-3"
                       key={`${decision.question}-${index}`}
                     >
-                      <span className="font-medium">{decision.action}</span>
+                      <span className="font-medium">
+                        {getMappedLabel(
+                          labels.intentDecisionActionLabels,
+                          decision.action,
+                        )}
+                      </span>
                       <span className="text-zinc-500">
                         {" "}
-                        / {decision.reason}
+                        /{" "}
+                        {getMappedLabel(
+                          labels.intentDecisionReasonLabels,
+                          decision.reason,
+                        )}
                       </span>
                       <p>{decision.question}</p>
                       {decision.mergedInto ? (
                         <p className="text-xs text-zinc-600">
-                          merged into: {decision.mergedInto}
+                          {labels.mergedIntoLabel}: {decision.mergedInto}
                         </p>
                       ) : null}
                     </li>
@@ -254,18 +318,21 @@ function DeveloperSearchDetails({
             </details>
           ) : null}
         </ProcessBlock>
-
-        <ProcessBlock title="Raw searchProcess">
-          <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs leading-5">
-            {JSON.stringify(process, null, 2)}
-          </pre>
-        </ProcessBlock>
       </div>
     </details>
   );
 }
 
 type SearchProcessLabels = UiText["meetingBoard"]["searchProcess"];
+
+function getMappedLabel<T extends Record<string, string>>(
+  labels: T,
+  value: string,
+): string {
+  return Object.prototype.hasOwnProperty.call(labels, value)
+    ? labels[value as keyof T]
+    : value;
+}
 
 function getSearchStatusCopy(
   meeting: MeetingResult,
@@ -463,7 +530,10 @@ function CitationCheckPanel({ meeting, text }: CitationCheckPanelProps) {
     return null;
   }
 
-  if (citationCheck.hasInvalidCitations) {
+  if (
+    citationCheck.hasInvalidCitations ||
+    citationCheck.hasCitationDisciplineWarning
+  ) {
     return (
       <section className="border border-amber-300 bg-amber-50 p-5">
         <h2 className="text-lg font-semibold text-amber-950">
@@ -472,6 +542,27 @@ function CitationCheckPanel({ meeting, text }: CitationCheckPanelProps) {
         <p className="mt-1 text-sm leading-6 text-amber-900">
           {text.meetingBoard.citationInvalid}
           {citationCheck.invalidCitationIds.join("、")}
+        </p>
+        {citationCheck.hasCitationDisciplineWarning ? (
+          <p className="mt-1 text-sm leading-6 text-amber-900">
+            {text.meetingBoard.citationDisciplineWarning}
+          </p>
+        ) : null}
+        <p className="mt-1 text-sm leading-6 text-amber-900">
+          {text.meetingBoard.citationCitable}
+          {formatCitationIdsForPanel(citationCheck.citableCitationIds ?? [])}
+        </p>
+        <p className="mt-1 text-sm leading-6 text-amber-900">
+          {text.meetingBoard.citationUsed}
+          {formatCitationIdsForPanel(citationCheck.usedCitationIds)}
+        </p>
+        <p className="mt-1 text-sm leading-6 text-amber-900">
+          {text.meetingBoard.citationDowngraded}
+          {formatCitationIdsForPanel(
+            citationCheck.downgradedCitationIds ??
+              citationCheck.weakCitationIds ??
+              [],
+          )}
         </p>
       </section>
     );
@@ -485,8 +576,16 @@ function CitationCheckPanel({ meeting, text }: CitationCheckPanelProps) {
       <p className="mt-1 text-sm leading-6 text-emerald-900">
         {text.meetingBoard.citationPassed}
       </p>
+      <p className="mt-1 text-sm leading-6 text-emerald-900">
+        {text.meetingBoard.citationCitable}
+        {formatCitationIdsForPanel(citationCheck.citableCitationIds ?? [])}
+      </p>
     </section>
   );
+}
+
+function formatCitationIdsForPanel(ids: string[]): string {
+  return ids.length > 0 ? ids.join("、") : "无";
 }
 
 type FactHygienePanelProps = {

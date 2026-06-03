@@ -27,6 +27,22 @@ describe("runMeeting", () => {
     status: "mock",
     statusLabel: "Mock / 无需 API",
   };
+  const kimiParticipant: ModelParticipant = {
+    id: "kimi",
+    name: "Kimi Mock",
+    provider: "Moonshot",
+    model: "kimi-mock",
+    status: "mock",
+    statusLabel: "Mock",
+  };
+  const glmParticipant: ModelParticipant = {
+    id: "glm",
+    name: "GLM Mock",
+    provider: "Zhipu",
+    model: "glm-mock",
+    status: "mock",
+    statusLabel: "Mock",
+  };
 
   test("runs equal model participants through independent and response phases", async () => {
     const participants: ModelParticipant[] = [gptParticipant, claudeParticipant];
@@ -417,10 +433,10 @@ describe("runMeeting", () => {
       provider,
     );
 
-    expect(result.summary.consensus).toEqual([]);
-    expect(result.summary.insufficientlyConfirmed).toEqual([
-      "某模型已经追平竞品 [S1]。（仅由低可信资料支持，不能确认。）",
+    expect(result.summary.consensus).toEqual([
+      expect.stringContaining("主要来自模型推理，需资料验证"),
     ]);
+    expect(result.summary.consensus.join("\n")).not.toContain("[S1]");
   });
 
   test("stores model identity instead of role responsibility on each turn", async () => {
@@ -516,6 +532,279 @@ describe("runMeeting", () => {
     expect(JSON.stringify(result.failures)).not.toContain("Authorization");
     expect(JSON.stringify(result.failures)).not.toContain("Bearer");
     expect(result.hasPartialFailures).toBe(true);
+  });
+
+  test("fails the meeting when fewer than two independent turns are valid", async () => {
+    const responseCalls: string[] = [];
+    const summaryCalls: string[] = [];
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView(participant) {
+        if (participant.id === "gpt") {
+          return "GPT Mock gives a usable single-model view.";
+        }
+
+        if (participant.id === "claude") {
+          return "The request was rejected because it was considered high risk";
+        }
+
+        return "API request failed: 400";
+      },
+      async generateResponse(participant) {
+        responseCalls.push(participant.id);
+        return `${participant.name} should not respond`;
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        summaryCalls.push("summary");
+        return {
+          consensus: ["normal consensus should not be generated"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    const result = await runMeeting(
+      {
+        topic: "failure handling",
+        participants: [
+          gptParticipant,
+          claudeParticipant,
+          kimiParticipant,
+          glmParticipant,
+        ],
+      },
+      provider,
+    );
+
+    expect(result.meetingStatus).toBe("failed");
+    expect(result.phases[0].turns).toHaveLength(1);
+    expect(result.phases[1].turns).toHaveLength(0);
+    expect(responseCalls).toEqual([]);
+    expect(summaryCalls).toEqual([]);
+    expect(result.summary.consensus.join("\n")).toContain(
+      "有效发言模型少于 2 个",
+    );
+    expect(result.summary.consensus.join("\n")).not.toContain(
+      "normal consensus",
+    );
+    expect(result.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "claude",
+          stage: "independent",
+          errorType: "provider_rejected",
+        }),
+        expect.objectContaining({
+          providerId: "kimi",
+          stage: "independent",
+          errorType: "api_error",
+          message: "API request failed: 400",
+        }),
+        expect.objectContaining({
+          providerId: "glm",
+          stage: "independent",
+          errorType: "api_error",
+        }),
+      ]),
+    );
+  });
+
+  test("only successful independent participants enter the response phase", async () => {
+    const responseCalls: string[] = [];
+    const summaryTurnSpeakers: string[][] = [];
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView(participant) {
+        if (participant.id === "gpt" || participant.id === "claude") {
+          return `${participant.name} valid independent view`;
+        }
+
+        return "API request failed: 400";
+      },
+      async generateResponse(participant) {
+        responseCalls.push(participant.id);
+        return `${participant.name} valid response`;
+      },
+      async generateSummary(_topic, turns): Promise<MeetingSummary> {
+        summaryTurnSpeakers.push(turns.map((turn) => turn.speakerName));
+        return {
+          consensus: ["summary based on valid speakers"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    const result = await runMeeting(
+      {
+        topic: "partial failure handling",
+        participants: [
+          gptParticipant,
+          claudeParticipant,
+          kimiParticipant,
+          glmParticipant,
+        ],
+      },
+      provider,
+    );
+
+    expect(result.meetingStatus).toBe("degraded");
+    expect(responseCalls).toEqual(["gpt", "claude"]);
+    expect(result.phases[1].turns.map((turn) => turn.speakerName)).toEqual([
+      "GPT Mock",
+      "Claude Mock",
+    ]);
+    expect(summaryTurnSpeakers[0]).toEqual([
+      "GPT Mock",
+      "Claude Mock",
+      "GPT Mock",
+      "Claude Mock",
+    ]);
+    expect(result.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ providerId: "kimi", stage: "independent" }),
+        expect.objectContaining({ providerId: "glm", stage: "independent" }),
+      ]),
+    );
+  });
+
+  test("treats API error and high-risk returned text as failed turns", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView(participant) {
+        if (participant.id === "gpt") {
+          return "API request failed: 400";
+        }
+
+        if (participant.id === "claude") {
+          return "The request was rejected because it was considered high risk";
+        }
+
+        return `${participant.name} valid independent view`;
+      },
+      async generateResponse(participant) {
+        return `${participant.name} valid response`;
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        return {
+          consensus: ["summary"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    const result = await runMeeting(
+      {
+        topic: "invalid output classification",
+        participants: [
+          gptParticipant,
+          claudeParticipant,
+          kimiParticipant,
+          glmParticipant,
+        ],
+      },
+      provider,
+    );
+
+    expect(
+      result.phases.flatMap((phase) => phase.turns.map((turn) => turn.content)),
+    ).not.toEqual(
+      expect.arrayContaining([
+        "API request failed: 400",
+        "The request was rejected because it was considered high risk",
+      ]),
+    );
+    expect(result.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "gpt",
+          errorType: "api_error",
+        }),
+        expect.objectContaining({
+          providerId: "claude",
+          errorType: "provider_rejected",
+        }),
+      ]),
+    );
+  });
+
+  test("treats truncated or partial provider output as failed turns without classifying normal text as rejection", async () => {
+    const provider: ModelProvider = {
+      name: "TestProvider",
+      async generateIndependentView(participant) {
+        if (participant.id === "gpt") {
+          return "这个观点讨论了高风险偏好，但它是正常内容，不是 provider 拒绝。";
+        }
+
+        if (participant.id === "claude") {
+          return "模型开始输出一个观点，但是内容在这里被截断...";
+        }
+
+        if (participant.id === "kimi") {
+          return "partial output: stream interrupted before completion";
+        }
+
+        return `${participant.name} valid independent view`;
+      },
+      async generateResponse(participant) {
+        return `${participant.name} valid response`;
+      },
+      async generateSummary(): Promise<MeetingSummary> {
+        return {
+          consensus: ["summary"],
+          differences: [],
+          minorityViews: [],
+          risks: [],
+          nextSteps: [],
+        };
+      },
+    };
+
+    const result = await runMeeting(
+      {
+        topic: "invalid partial output classification",
+        participants: [
+          gptParticipant,
+          claudeParticipant,
+          kimiParticipant,
+          glmParticipant,
+        ],
+      },
+      provider,
+    );
+
+    expect(result.phases[0].turns.map((turn) => turn.speakerName)).toEqual([
+      "GPT Mock",
+      "GLM Mock",
+    ]);
+    expect(result.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "claude",
+          errorType: "truncated_output",
+        }),
+        expect.objectContaining({
+          providerId: "kimi",
+          errorType: "partial_output",
+        }),
+      ]),
+    );
+    expect(result.failures).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "gpt",
+          errorType: "provider_rejected",
+        }),
+      ]),
+    );
   });
 
   test("continues response phase when one provider fails", async () => {
@@ -675,7 +964,7 @@ describe("runMeeting", () => {
     });
   });
 
-  test("throws a sanitized error when all providers fail to speak", async () => {
+  test("returns a failed meeting result when all providers fail to speak", async () => {
     const provider: ModelProvider = {
       name: "TestProvider",
       async generateIndependentView() {
@@ -689,15 +978,22 @@ describe("runMeeting", () => {
       },
     };
 
-    await expect(
-      runMeeting(
+    const result = await runMeeting(
         {
           topic: "测试议题",
           participants: [gptParticipant, claudeParticipant],
         },
         provider,
-      ),
-    ).rejects.toThrow("All providers failed to generate meeting responses.");
+      );
+
+    expect(result.meetingStatus).toBe("failed");
+    expect(result.phases[0].turns).toEqual([]);
+    expect(result.summary.consensus.join("\n")).toContain(
+      "有效发言模型少于 2 个",
+    );
+    expect(JSON.stringify(result.failures)).not.toContain("secret-openai-key");
+    expect(JSON.stringify(result.failures)).not.toContain("Authorization");
+    expect(JSON.stringify(result.failures)).not.toContain("Bearer");
   });
 });
 

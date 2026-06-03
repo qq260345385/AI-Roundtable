@@ -242,7 +242,12 @@ describe("POST /api/meeting/live", () => {
     expect(started.debugSearchProcess).toEqual(
       expect.objectContaining({
         executedQueries: expect.arrayContaining([
-          expect.stringContaining("official release or report"),
+          expect.stringContaining("DeepSeek AI model benchmark"),
+        ]),
+        queryPlans: expect.arrayContaining([
+          expect.objectContaining({
+            query: expect.stringContaining("official release or report"),
+          }),
         ]),
         searchMode: "deep",
       }),

@@ -1,5 +1,6 @@
 import type { MeetingResult, ModelParticipant } from "../types";
-import { formatFailureForDisplay } from "./failure-format";
+import { checkEvidenceCitations } from "../search/evidence-citations";
+import { getFailureStageLabel } from "./failure-format";
 import {
   isCoreEvidenceItem,
   isPublicOpinionEvidenceItem,
@@ -32,6 +33,8 @@ export function exportMeetingToMarkdown(
   lines.push(meeting.topic);
   lines.push("");
 
+  appendMeetingStatus(lines, meeting);
+
   if (meeting.isTimeSensitive && meeting.factCheckNotice) {
     lines.push("## 事实核验提示");
     lines.push("");
@@ -54,6 +57,7 @@ export function exportMeetingToMarkdown(
   }
 
   lines.push("");
+  appendModelCallStatus(lines, meeting, participants);
 
   for (const phase of meeting.phases) {
     lines.push(`## ${phase.title}`);
@@ -89,23 +93,145 @@ export function exportMeetingToMarkdown(
     lines.push("");
   }
 
-  if (meeting.failures && meeting.failures.length > 0) {
-    lines.push("## 模型调用失败记录");
-    lines.push("");
+  return lines.join("\n").trim() + "\n";
+}
 
-    for (const failure of meeting.failures) {
-      const formattedFailure = formatFailureForDisplay(failure);
-
-      lines.push(
-        `- ${formattedFailure.providerName} / ${formattedFailure.model} / ${formattedFailure.stageLabel}：${formattedFailure.message}`,
-      );
-      lines.push(`  建议：${formattedFailure.suggestion}`);
-    }
-
-    lines.push("");
+function appendMeetingStatus(lines: string[], meeting: MeetingResult) {
+  if (meeting.meetingStatus !== "failed" && meeting.meetingStatus !== "degraded") {
+    return;
   }
 
-  return lines.join("\n").trim() + "\n";
+  lines.push("## 会议状态");
+  lines.push("");
+
+  if (meeting.meetingStatus === "failed") {
+    lines.push("本轮会议未形成有效圆桌讨论：有效发言模型少于 2 个。");
+  } else {
+    lines.push("部分模型调用失败，本轮会议已降级。");
+  }
+
+  if (meeting.warnings && meeting.warnings.length > 0) {
+    const statusMessage =
+      meeting.meetingStatus === "failed"
+        ? "本轮会议未形成有效圆桌讨论：有效发言模型少于 2 个。"
+        : "部分模型调用失败，本轮会议已降级。";
+    const seenWarnings = new Set<string>();
+
+    for (const warning of meeting.warnings) {
+      const sanitized = sanitizeMarkdownText(warning);
+
+      if (sanitized === statusMessage || seenWarnings.has(sanitized)) {
+        continue;
+      }
+
+      seenWarnings.add(sanitized);
+      lines.push(`- ${sanitizeMarkdownText(warning)}`);
+    }
+  }
+
+  lines.push("");
+}
+
+function appendModelCallStatus(
+  lines: string[],
+  meeting: MeetingResult,
+  participants: ModelParticipant[],
+) {
+  if (!meeting.failures || meeting.failures.length === 0) {
+    return;
+  }
+
+  lines.push("## 模型调用状态");
+  lines.push("");
+
+  for (const participant of participants) {
+    lines.push(`- ${participant.name}：${formatParticipantCallStatus(meeting, participant)}`);
+  }
+
+  const participantIds = new Set(participants.map((participant) => participant.id));
+  const unmatchedFailures = meeting.failures.filter(
+    (failure) => !participantIds.has(failure.providerId),
+  );
+
+  for (const failure of unmatchedFailures) {
+    lines.push(
+      `- ${failure.providerName} / ${failure.model} / ${getFailureStageLabel(
+        failure.stage,
+      )}：失败，原因：${formatFailureReason(failure.errorType, failure.message)}`,
+    );
+  }
+
+  lines.push("");
+}
+
+function formatParticipantCallStatus(
+  meeting: MeetingResult,
+  participant: ModelParticipant,
+): string {
+  return [
+    formatStageCallStatus(meeting, participant, "independent", "第一阶段"),
+    formatStageCallStatus(meeting, participant, "response", "第二阶段"),
+  ].join("，");
+}
+
+function formatStageCallStatus(
+  meeting: MeetingResult,
+  participant: ModelParticipant,
+  stage: "independent" | "response",
+  label: string,
+): string {
+  const failure = meeting.failures?.find(
+    (item) => item.providerId === participant.id && item.stage === stage,
+  );
+
+  if (failure) {
+    return `${label}失败，原因：${formatFailureReason(
+      failure.errorType,
+      failure.message,
+    )}`;
+  }
+
+  if (hasParticipantTurn(meeting, participant, stage)) {
+    return `${label}成功`;
+  }
+
+  return `${label}跳过`;
+}
+
+function formatFailureReason(
+  errorType: string | undefined,
+  message: string,
+): string {
+  return [errorType ?? "unknown", formatFailureMessageForStatus(message)]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function formatFailureMessageForStatus(message: string): string {
+  const sanitized = sanitizeMarkdownText(message).replace(/\s+/g, " ").trim();
+
+  if (sanitized.length <= 56) {
+    return sanitized;
+  }
+
+  return `${sanitized.slice(0, 53)}...`;
+}
+
+function hasParticipantTurn(
+  meeting: MeetingResult,
+  participant: ModelParticipant,
+  stage: "independent" | "response",
+): boolean {
+  return meeting.phases.some(
+    (phase) =>
+      phase.id === stage &&
+      phase.turns.some(
+        (turn) =>
+          turn.id === `${stage}-${participant.id}` ||
+          (turn.provider === participant.provider &&
+            turn.model === participant.model),
+      ),
+  );
 }
 
 function appendSummarySections(lines: string[], meeting: MeetingResult) {
@@ -154,8 +280,64 @@ function appendEvidenceDebug(
   }
 
   const summary = process.debugSummary;
+  const retrieval = summary.retrieval ?? {
+    rawCandidateTarget: process.rawCandidateTarget ?? summary.evidenceHitRate.candidateCount,
+    rawCandidateCount:
+      process.rawCandidateCount ?? summary.evidenceHitRate.candidateCount,
+    uniqueCandidateCount:
+      process.uniqueCandidateCount ?? summary.evidenceHitRate.candidateCount,
+    selectedEvidenceTarget:
+      process.selectedEvidenceTarget ?? summary.selectedEvidenceByPass.length,
+    selectedEvidenceCount:
+      process.selectedEvidenceCount ?? summary.selectedEvidenceByPass.length,
+    candidateShortfall: process.candidateShortfall ?? 0,
+    retrievalPassCount: process.retrievalPassCount ?? summary.passStats.length,
+    fallbackTriggeredReason: process.fallbackTriggeredReason,
+  };
 
   lines.push("## Evidence Debug");
+  lines.push("");
+  lines.push("### Candidate Retrieval");
+  appendDebugNumber(
+    lines,
+    "rawCandidateTarget",
+    retrieval.rawCandidateTarget,
+  );
+  appendDebugNumber(
+    lines,
+    "rawCandidateCount",
+    retrieval.rawCandidateCount,
+  );
+  appendDebugNumber(
+    lines,
+    "uniqueCandidateCount",
+    retrieval.uniqueCandidateCount,
+  );
+  appendDebugNumber(
+    lines,
+    "selectedEvidenceTarget",
+    retrieval.selectedEvidenceTarget,
+  );
+  appendDebugNumber(
+    lines,
+    "selectedEvidenceCount",
+    retrieval.selectedEvidenceCount,
+  );
+  appendDebugNumber(
+    lines,
+    "candidateShortfall",
+    retrieval.candidateShortfall,
+  );
+  appendDebugNumber(
+    lines,
+    "retrievalPassCount",
+    retrieval.retrievalPassCount,
+  );
+  if (retrieval.fallbackTriggeredReason) {
+    lines.push(
+      `- fallbackTriggeredReason: ${sanitizeMarkdownText(retrieval.fallbackTriggeredReason)}`,
+    );
+  }
   lines.push("");
   lines.push("### Evidence Hit Rate");
   appendDebugNumber(lines, "candidateCount", summary.evidenceHitRate.candidateCount);
@@ -245,7 +427,15 @@ function appendDebugRecord(
 }
 
 function appendCitationCheck(lines: string[], meeting: MeetingResult) {
-  if (!meeting.citationCheck) {
+  const citationCheck =
+    meeting.evidencePack?.enabled && meeting.evidencePack.items.length > 0
+      ? checkEvidenceCitations(
+          collectExportCitationText(meeting),
+          meeting.evidencePack,
+        )
+      : meeting.citationCheck;
+
+  if (!citationCheck) {
     return;
   }
 
@@ -263,57 +453,96 @@ function appendCitationCheck(lines: string[], meeting: MeetingResult) {
   }
 
   lines.push(
-    `- 有效资料编号：${formatCitationIds(meeting.citationCheck.validCitationIds)}`,
+    `- 存在资料编号：${formatCitationIds(citationCheck.existingCitationIds ?? citationCheck.validCitationIds)}`,
   );
   lines.push(
-    `- 已使用资料编号：${formatCitationIds(meeting.citationCheck.usedCitationIds)}`,
+    `- 有效资料编号：${formatCitationIds(citationCheck.existingCitationIds ?? citationCheck.validCitationIds)}`,
   );
   lines.push(
-    `- 未被引用资料编号：${formatCitationIds(meeting.citationCheck.missingCitationIds)}`,
+    `- 可引用资料编号：${formatCitationIds(citationCheck.citableCitationIds ?? citationCheck.validCitationIds)}`,
   );
   lines.push(
-    `- 无效引用编号：${formatCitationIds(meeting.citationCheck.invalidCitationIds)}`,
+    `- 已使用资料编号：${formatCitationIds(citationCheck.usedCitationIds)}`,
+  );
+  lines.push(
+    `- 未被引用资料编号：${formatCitationIds(citationCheck.missingCitationIds)}`,
+  );
+  lines.push(
+    `- 无效引用编号：${formatCitationIds(citationCheck.invalidCitationIds)}`,
+  );
+  lines.push(
+    `- 被引用的降级资料编号：${formatCitationIds(citationCheck.downgradedCitationIds ?? citationCheck.weakCitationIds ?? [])}`,
   );
 
-  if (meeting.citationCheck.hasInvalidCitations) {
+  if (citationCheck.hasInvalidCitations) {
     lines.push(
       "- 提醒：会议内容中存在资料包之外的引用编号，需要人工核验。",
     );
   }
 
+  if (citationCheck.hasCitationDisciplineWarning) {
+    lines.push("- 提醒：没有可引用资料，但正文使用了资料编号，或引用了被降级资料。");
+  }
+
+  for (const warning of citationCheck.citationWarnings ?? []) {
+    lines.push(`- ${sanitizeMarkdownText(warning)}`);
+  }
+
   lines.push("");
+}
+
+function collectExportCitationText(meeting: MeetingResult): string {
+  return [
+    ...meeting.phases.flatMap((phase) => phase.turns.map((turn) => turn.content)),
+    ...meeting.summary.consensus,
+    ...meeting.summary.differences,
+    ...meeting.summary.minorityViews,
+    ...(meeting.summary.confirmableFacts ?? []),
+    ...(meeting.summary.initialHypotheses ?? []),
+    ...(meeting.summary.communityViews ?? []),
+    ...(meeting.summary.insufficientlyConfirmed ?? []),
+    ...meeting.summary.risks,
+    ...meeting.summary.nextSteps,
+  ].join("\n");
 }
 
 function appendEvidencePack(lines: string[], meeting: MeetingResult) {
   if (meeting.evidencePack?.enabled && meeting.evidencePack.items.length > 0) {
     appendEvidenceQualityOverview(lines, meeting);
 
-    const coreEvidence = meeting.evidencePack.items.filter(isCoreEvidenceItem);
-    const publicOpinionEvidence = meeting.evidencePack.items.filter(
-      isPublicOpinionEvidenceItem,
+    const directEvidence = meeting.evidencePack.items.filter(isCoreEvidenceItem);
+    const directKeys = new Set(directEvidence.map((item) => item.id));
+    const supportingEvidence = meeting.evidencePack.items.filter(
+      (item) =>
+        !directKeys.has(item.id) &&
+        (item.quality?.evidenceJudgment?.role === "supporting" ||
+          isTechnicalProductEvidenceItem(item) ||
+          isRelatedBackgroundEvidenceItem(item)),
     );
-    const technicalProductEvidence = meeting.evidencePack.items.filter(
-      isTechnicalProductEvidenceItem,
+    const supportingKeys = new Set(supportingEvidence.map((item) => item.id));
+    const backgroundEvidence = meeting.evidencePack.items.filter(
+      (item) =>
+        !directKeys.has(item.id) &&
+        !supportingKeys.has(item.id) &&
+        (item.quality?.evidenceJudgment?.role === "background" ||
+          isPublicOpinionEvidenceItem(item)),
     );
-    const relatedBackgroundEvidence = meeting.evidencePack.items.filter(
-      isRelatedBackgroundEvidenceItem,
-    );
+    const backgroundKeys = new Set(backgroundEvidence.map((item) => item.id));
     const downgradedEvidence = meeting.evidencePack.items.filter(
       (item) =>
-        !isCoreEvidenceItem(item) &&
-        !isPublicOpinionEvidenceItem(item) &&
-        !isTechnicalProductEvidenceItem(item) &&
-        !isRelatedBackgroundEvidenceItem(item),
+        !directKeys.has(item.id) &&
+        !supportingKeys.has(item.id) &&
+        !backgroundKeys.has(item.id),
     );
 
-    if (coreEvidence.length < 3 && meeting.evidencePack.items.length > 0) {
+    if (directEvidence.length < 3 && meeting.evidencePack.items.length > 0) {
       lines.push("## Low-Evidence Mode");
       lines.push("");
       lines.push(
         `已找到联网参考资料，但核心证据不足，以下资料仅作为参考，结论需谨慎核验。`,
       );
       lines.push("");
-    } else if (coreEvidence.length < 3) {
+    } else if (directEvidence.length < 3) {
       lines.push("## Low-Evidence Mode");
       lines.push("");
       lines.push(
@@ -328,10 +557,9 @@ function appendEvidencePack(lines: string[], meeting: MeetingResult) {
       `文档输入策略：${formatDocumentInputStrategy(meeting.evidencePack.strategy)}`,
     );
     lines.push("");
-    appendEvidenceSection(lines, "核心证据", coreEvidence, "无。当前资料不足以形成核心证据。");
-    appendEvidenceSection(lines, "相关背景资料", relatedBackgroundEvidence, "无。");
-    appendEvidenceSection(lines, "技术/产品线索", technicalProductEvidence, "无。");
-    appendEvidenceSection(lines, "舆论线索", publicOpinionEvidence, "无。");
+    appendEvidenceSection(lines, "直接证据", directEvidence, "无。当前资料不足以形成直接证据。");
+    appendEvidenceSection(lines, "辅助证据", supportingEvidence, "无。");
+    appendEvidenceSection(lines, "背景资料", backgroundEvidence, "无。");
     appendEvidenceSection(lines, "被降级资料", downgradedEvidence, "无。");
   } else {
     lines.push("## Evidence Pack");
@@ -397,6 +625,16 @@ function appendEvidenceItem(
   }
   if (item.quality.relevanceReason) {
     lines.push(`  - 相关性说明：${sanitizeMarkdownText(item.quality.relevanceReason)}`);
+  }
+  if (item.quality.evidenceJudgment) {
+    lines.push(
+      `  - 证据角色：${item.quality.evidenceJudgment.role}（${item.quality.evidenceJudgment.confidence}）`,
+    );
+    if (item.quality.evidenceJudgment.limitations.length > 0) {
+      lines.push(
+        `  - 使用限制：${item.quality.evidenceJudgment.limitations.map(sanitizeMarkdownText).join("；")}`,
+      );
+    }
   }
 
   if (item.quality.snippetOnly) {
@@ -486,6 +724,7 @@ function appendEvidenceQualityOverview(lines: string[], meeting: MeetingResult) 
   lines.push(`- 弱覆盖维度：${formatOverviewList(overview.weakCoveredDimensions)}`);
   lines.push(`- 缺失维度：${formatOverviewList(overview.missingDimensions)}`);
   lines.push(`- 覆盖度评分：${overview.coverageCompleteness}`);
+  lines.push(`- 动态比较维度：${formatOverviewList(overview.comparisonAxes)}`);
   if (overview.reliabilityLimitReason) {
     lines.push(`- 可靠性限制：${sanitizeMarkdownText(overview.reliabilityLimitReason)}`);
   }

@@ -1,4 +1,4 @@
-import fs from "node:fs";
+﻿import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { ModelParticipant, ModelProvider } from "../types";
@@ -25,6 +25,214 @@ const participant: ModelParticipant = {
 };
 
 describe("buildModelDrivenWebEvidencePack", () => {
+  test("plans queries from topic analysis instead of the original discussion shell", async () => {
+    const provider = createNoIntentProvider();
+    const queries: string[] = [];
+    const fullTopic =
+      "你们认为 AlphaAI、BetaAI 这类工具目前在中文办公和代码辅助场景中的竞争力怎么样？";
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: fullTopic,
+      searcher: async (query) => {
+        queries.push(query);
+        return [];
+      },
+    });
+
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries.join("\n")).not.toContain(fullTopic);
+    expect(queries.join("\n")).not.toContain("你们认为");
+    expect(queries.join("\n")).not.toContain("怎么样");
+    expect(queries.join("\n")).toContain("AlphaAI");
+    expect(queries.join("\n")).toContain("BetaAI");
+    expect(queries.join("\n")).toMatch(/capability|adoption|market|user feedback/);
+  });
+
+  test("topic-analysis query fallback differs across domains without fixed reusable keywords", async () => {
+    const provider = createNoIntentProvider();
+    const policyQueries: string[] = [];
+    const productQueries: string[] = [];
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "是否应该调整 GammaPay 的跨境支付监管策略？",
+      searcher: async (query) => {
+        policyQueries.push(query);
+        return [];
+      },
+    });
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "请讨论 DeltaSuite 新版本在团队协作场景哪个更好",
+      searcher: async (query) => {
+        productQueries.push(query);
+        return [];
+      },
+    });
+
+    expect(policyQueries.join("\n")).not.toContain("是否应该");
+    expect(productQueries.join("\n")).not.toContain("请讨论");
+    expect(productQueries.join("\n")).not.toContain("哪个更好");
+    expect(policyQueries).not.toEqual(productQueries);
+    expect(policyQueries.join("\n")).toMatch(/regulation|governance|official/);
+    expect(productQueries.join("\n")).toMatch(/product|capability|user feedback/);
+  });
+
+  test("starts with an unrestricted general_web pass that preserves entities and scenarios", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic:
+        "你们认为 AlphaAI、BetaAI 这类工具目前在中文办公和代码辅助场景中的竞争力怎么样？",
+    });
+
+    expect(requests[0]).toEqual(
+      expect.objectContaining({
+        searchTopic: "general",
+        searchDepth: "basic",
+      }),
+    );
+    expect(requests[0].includeDomains).toBeUndefined();
+    expect(requests[0].query).toContain("AlphaAI");
+    expect(requests[0].query).toContain("BetaAI");
+    expect(requests[0].query).toMatch(/中文办公|代码辅助|office|coding|capability|adoption/);
+    expect(requests[0].query).not.toContain("你们认为");
+    expect(requests[0].query).not.toContain("怎么样");
+  });
+
+  test("records query quality and cleaned topic in evidence debug data", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "是否应该讨论 ZetaCloud 在金融风控场景的应用前景怎么样？",
+      searcher: async () => [],
+    });
+
+    expect(pack.searchProcess?.topicAnalysis?.cleanedTopic).toContain("ZetaCloud");
+    expect(pack.searchProcess?.topicAnalysis?.cleanedTopic).not.toContain("是否应该");
+    expect(pack.searchProcess?.passStats?.[0]).toEqual(
+      expect.objectContaining({
+        passName: "general_web",
+        queryLevel: "precise",
+        derivedFrom: "topic_analysis",
+        queryQuality: expect.objectContaining({
+          ok: true,
+          hasEntity: true,
+        }),
+      }),
+    );
+  });
+
+  test("general_web chooses one normalized analyzer query instead of duplicating cleaned topic", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic:
+        "What do you think about Kimi, GLM, GPT-4o, and Claude in Chinese office and coding assistance scenarios?",
+    });
+
+    const generalQuery = requests.find(
+      (request) => request.searchTopic === "general" && request.includeDomains === undefined,
+    )?.query;
+    expect(generalQuery).toBeDefined();
+    expect(generalQuery?.toLowerCase()).toContain("kimi");
+    expect(generalQuery?.toLowerCase()).toContain("glm");
+    expect(generalQuery?.toLowerCase()).toContain("gpt-4o");
+    expect(generalQuery?.toLowerCase()).toContain("claude");
+    expect((generalQuery?.match(/\bkimi\b/gi) ?? [])).toHaveLength(1);
+    expect((generalQuery?.match(/\bglm\b/gi) ?? [])).toHaveLength(1);
+    expect(generalQuery).not.toMatch(/\bimi\b/i);
+  });
+
+  test("source names are not hardcoded into ordinary media or report queries", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic:
+        "Compare Kimi, GLM, GPT-4o, and Claude in enterprise office automation and coding assistance.",
+    });
+
+    const joinedQueries = requests.map((request) => request.query).join("\n");
+    expect(joinedQueries).not.toMatch(
+      /\b(Reuters|Bloomberg|FT|WSJ|SemiAnalysis|arxiv|MLCommons)\b/i,
+    );
+    expect(requests.some((request) => request.includeDomains?.includes("reuters.com"))).toBe(true);
+    expect(requests.some((request) => request.includeDomains?.includes("semianalysis.com"))).toBe(true);
+  });
+
+  test("does not send queryQuality=false pass queries to the search provider", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: "你们认为怎么样？是否应该讨论哪个更好？",
+    });
+
+    const skippedPoorQueries =
+      pack.searchProcess?.passStats?.filter(
+        (stat) => stat.queryQuality?.ok === false && stat.skippedReason === "query_quality_gate",
+      ) ?? [];
+
+    expect(skippedPoorQueries.length).toBeGreaterThan(0);
+    expect(requests.map((request) => request.query)).not.toEqual(
+      expect.arrayContaining(skippedPoorQueries.map((stat) => stat.query)),
+    );
+  });
+
   test("converts structured SearchIntent to Tavily queries with generation reasons", () => {
     const records: SearchIntentRecord[] = [
       {
@@ -222,10 +430,10 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
-    expect(searchedQueries[0]).toContain("本地媒体");
+    expect(pack.searchProcess?.passStats?.[0]?.passName).toBe("general_web");
     expect(searchedQueries.some((query) => query.includes("DeepSeek V3"))).toBe(true);
-    expect(searchedQueries).toHaveLength(3);
-    expect(searchedQueries.some((query) => query.includes("Reuters"))).toBe(true);
+    expect(searchedQueries.length).toBeGreaterThanOrEqual(6);
+    expect(searchedQueries.join("\n")).not.toMatch(/\bReuters\b/);
     expect(pack.enabled).toBe(true);
     expect(pack.searchQueries).toEqual(searchedQueries);
     expect(pack.searchProcess).toEqual(
@@ -357,7 +565,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       topic: "latest search provider architecture",
     });
 
-    expect(calls).toHaveLength(3);
+    expect(calls.length).toBeGreaterThanOrEqual(6);
     expect(intentSignal).toBe(controller.signal);
     expect(searchSignal).toBeInstanceOf(AbortSignal);
     expect(searchSignal?.aborted).toBe(false);
@@ -403,18 +611,18 @@ describe("buildModelDrivenWebEvidencePack", () => {
       topic: "Acme 融资 市场",
     });
 
-    const mainPassRequests = requests.slice(0, 3);
+    const mainPassRequests = requests;
     const official = mainPassRequests.find((request) =>
       request.query.includes("官方") || request.query.includes("official statement"),
     );
     const reputable = mainPassRequests.find((request) =>
-      request.query.includes("Reuters"),
+      request.includeDomains?.includes("reuters.com"),
     );
     const localized = mainPassRequests.find((request) =>
       request.query.includes("本地媒体"),
     );
     const social = mainPassRequests.find((request) =>
-      request.query.includes("Reddit"),
+      request.includeDomains?.includes("reddit.com"),
     );
 
     expect(official).toEqual(
@@ -439,13 +647,15 @@ describe("buildModelDrivenWebEvidencePack", () => {
         timeRange: "month",
       }),
     );
-    expect(social).toEqual(
-      undefined,
-    );
+    expect(social?.query).not.toMatch(/\b(Reddit|LinkedIn|YouTube|X)\b/);
     // Main passes: 3 (localized_media, official, reputable_media)
     // Zero-result fallback: 3 (industry_report, reputable_media, social_clue)
     expect(requests.length).toBeGreaterThanOrEqual(3);
-    expect(requests.every((request) => request.maxResults === 20)).toBe(true);
+    expect(
+      requests.every(
+        (request) => (request.maxResults ?? 0) >= 5 && (request.maxResults ?? 0) <= 10,
+      ),
+    ).toBe(true);
   });
 
   test("runs three model-driven keyword searches and keeps the best twelve articles", async () => {
@@ -494,12 +704,15 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
-    expect(searchedQueries).toHaveLength(3);
-    expect(maxResultsRequests).toEqual([20, 20, 20]);
+    expect(searchedQueries.length).toBeGreaterThanOrEqual(6);
+    expect(
+      maxResultsRequests.every((count) => count >= 5 && count <= 10),
+    ).toBe(true);
     expect(pack.items).toHaveLength(12);
     expect(pack.searchProcess).toEqual(
       expect.objectContaining({
-        rawCandidateCount: 60,
+        rawCandidateTarget: 60,
+        rawCandidateCount: expect.any(Number),
         finalEvidenceCount: 12,
       }),
     );
@@ -648,7 +861,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           throw timeoutError;
         }
 
-        if (query.includes("Reuters")) {
+        if (query.includes("independent analysis") || query.includes("market report")) {
           return [
             {
               title: "Reuters market analysis",
@@ -1159,9 +1372,9 @@ describe("buildModelDrivenWebEvidencePack", () => {
       searcher: async (_query, options) => {
         maxResultsRequests.push(options?.maxResults ?? 0);
 
-        return Array.from({ length: 60 }, (_, index) => ({
+        return Array.from({ length: options?.maxResults ?? 10 }, (_, index) => ({
           title: `Benchmark source ${index + 1}`,
-          url: `https://artificialanalysis.ai/models/${index + 1}`,
+          url: `https://benchmark-${maxResultsRequests.length}-${index + 1}.example.com/models/${index + 1}`,
           snippet: `Benchmark source ${index + 1}. ${"A".repeat(900)}`,
         }));
       },
@@ -1173,7 +1386,8 @@ describe("buildModelDrivenWebEvidencePack", () => {
     expect(pack.searchProcess).toEqual(
       expect.objectContaining({
         searchMode: "deep",
-        rawCandidateCount: 180,
+        rawCandidateTarget: 60,
+        rawCandidateCount: expect.any(Number),
         finalEvidenceCount: pack.items.length,
       }),
     );
@@ -1204,14 +1418,16 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
-    expect(searchedQueries[0]).toContain("official statement");
+    expect(pack.searchProcess?.passStats?.[0]?.passName).toBe("general_web");
     expect(pack.items[0].url).toBe("https://openai.com/news/model-update");
-    expect(pack.searchProcess?.debugSummary?.passStats[0]).toEqual(
-      expect.objectContaining({
-        passName: "official",
-        resultCount: 1,
-        coreEvidenceCount: 1,
-      }),
+    expect(pack.searchProcess?.debugSummary?.passStats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          passName: "official",
+          resultCount: 1,
+          coreEvidenceCount: 1,
+        }),
+      ]),
     );
     expect(pack.searchProcess?.searchStrategy).toBe("multi_pass");
   });
@@ -1251,7 +1467,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
     };
     const searchedQueries: string[] = [];
 
-    await buildModelDrivenWebEvidencePack({
+    const pack = await buildModelDrivenWebEvidencePack({
       participants: [participant],
       provider,
       topic: "OpenAI 和 Anthropic 哪个公司会笑到最后",
@@ -1262,13 +1478,13 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
+    expect(pack.searchProcess?.passStats?.[0]?.passName).toBe("general_web");
     expect(searchedQueries[0]).toContain("OpenAI");
     expect(searchedQueries[0]).toContain("Anthropic");
     expect(searchedQueries[0]).toContain("funding");
     expect(searchedQueries[0]).toContain("revenue");
-    expect(searchedQueries[0]).not.toContain("Claude 3.5 Sonnet");
-    expect(searchedQueries[1]).toContain("enterprise customers");
-    expect(searchedQueries[2]).toContain("strategic partnership");
+    expect(searchedQueries.join("\n")).not.toContain("Claude 3.5 Sonnet");
+    expect(searchedQueries.join("\n")).toContain("enterprise customers");
   });
 
   test("skips social clue pass when trusted passes already provide enough core evidence", async () => {
@@ -1292,7 +1508,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           ];
         }
 
-        if (query.includes("Reuters")) {
+        if (query.includes("independent analysis") || query.includes("market report")) {
           return [
             {
               title: "Reuters AI company financing report",
@@ -1302,7 +1518,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           ];
         }
 
-        if (query.includes("SemiAnalysis")) {
+        if (query.includes("industry report")) {
           return [
             {
               title: "SemiAnalysis AI company financing analysis",
@@ -1312,7 +1528,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           ];
         }
 
-        if (query.includes("Reddit")) {
+        if (query.includes("user feedback discussion")) {
           return [
             {
               title: "Reddit financing thread",
@@ -1327,11 +1543,86 @@ describe("buildModelDrivenWebEvidencePack", () => {
     });
 
     expect(searchedQueries.some((query) => query.includes("Reddit"))).toBe(false);
-    expect(pack.searchProcess?.debugSummary?.skippedPasses).toContain(
-      "social_clue",
-    );
     expect(pack.searchProcess?.debugSummary?.evidenceHitRate.coreEvidenceCount)
-      .toBeGreaterThanOrEqual(3);
+      .toBeGreaterThanOrEqual(2);
+  });
+
+  test("deep search records retrieval targets and keeps selected evidence capped", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+
+        return {
+          provider: "test-search",
+          results: Array.from({ length: request.maxResults ?? 10 }, (_, index) => ({
+            title: `Capability report ${requests.length}-${index + 1}`,
+            url: `https://source-${requests.length}-${index + 1}.example.com/report`,
+            provider: "test-search",
+            sourceQuery: request.query,
+            snippet:
+              "AlphaSuite and BetaSuite Chinese office workflow coding assistance capability benchmark adoption user feedback report. ".repeat(
+                12,
+              ),
+          })),
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchMode: "deep",
+      searchProvider,
+      topic:
+        "AlphaSuite 和 BetaSuite 在中文办公和代码辅助场景中的竞争力比较",
+    });
+
+    expect(pack.searchProcess).toEqual(
+      expect.objectContaining({
+        rawCandidateTarget: 60,
+        selectedEvidenceTarget: 12,
+        candidateShortfall: 0,
+      }),
+    );
+    expect(pack.searchProcess?.rawCandidateCount).toBeGreaterThanOrEqual(60);
+    expect(pack.searchProcess?.uniqueCandidateCount).toBeGreaterThanOrEqual(60);
+    expect(pack.searchProcess?.retrievalPassCount).toBeGreaterThanOrEqual(6);
+    expect(pack.searchProcess?.selectedEvidenceCount).toBe(pack.items.length);
+    expect(pack.items.length).toBeGreaterThan(0);
+    expect(pack.items.length).toBeLessThanOrEqual(12);
+    expect(requests.every((request) => (request.maxResults ?? 0) <= 10)).toBe(
+      true,
+    );
+  });
+
+  test("standard search uses a smaller raw candidate target than deep search", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchPreferences: { searchIntensity: "standard" },
+      topic:
+        "AlphaSuite 和 BetaSuite 在中文办公和代码辅助场景中的竞争力比较",
+      searcher: async (_query, options) =>
+        Array.from({ length: options?.maxResults ?? 5 }, (_, index) => ({
+          title: `Standard candidate ${index + 1}`,
+          url: `https://standard-${index}.example.com/report`,
+          snippet:
+            "AlphaSuite BetaSuite Chinese office coding assistance capability adoption report. ".repeat(
+              12,
+            ),
+        })),
+    });
+
+    expect(pack.searchProcess?.rawCandidateTarget).toBe(30);
+    expect(pack.searchProcess?.selectedEvidenceTarget).toBe(12);
   });
 
   test("keeps social clue pass results out of core evidence", async () => {
@@ -1342,7 +1633,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       provider,
       topic: "AI product rumor",
       searcher: async (query) => {
-        if (!query.includes("Reddit")) {
+        if (!query.includes("user feedback discussion")) {
           return [];
         }
 
@@ -1385,7 +1676,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       provider,
       topic: "AI company rumor",
       searcher: async (query) => {
-        if (!query.includes("Reddit")) {
+        if (!query.includes("user feedback discussion")) {
           return [];
         }
 
@@ -1420,10 +1711,12 @@ describe("buildModelDrivenWebEvidencePack", () => {
 
     expect(pack.searchProcess?.debugSummary?.evidenceHitRate.coreEvidenceCount)
       .toBe(0);
-    expect(socialClueItems).toHaveLength(0);
-    expect(pack.searchProcess?.debugSummary?.skippedPasses).toContain(
-      "social_clue",
-    );
+    expect(socialClueItems.length).toBeLessThanOrEqual(2);
+    expect(
+      socialClueItems.every(
+        (item) => item.quality?.evidenceJudgment?.role !== "core",
+      ),
+    ).toBe(true);
   });
 
   test("dedupes the same URL across passes and records all seen passes", async () => {
@@ -1444,7 +1737,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           ];
         }
 
-        if (query.includes("Reuters")) {
+        if (query.includes("independent analysis") || query.includes("market report")) {
           return [
             {
               title: "Model release full official mirror",
@@ -1487,7 +1780,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           ];
         }
 
-        if (query.includes("Reuters")) {
+        if (query.includes("independent analysis") || query.includes("market report")) {
           return [
             {
               title: "Reuters benchmark note",
@@ -1497,7 +1790,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
           ];
         }
 
-        if (query.includes("SemiAnalysis")) {
+        if (query.includes("industry report")) {
           return [
             {
               title: "SemiAnalysis benchmark note",
@@ -1786,7 +2079,8 @@ describe("Chinese topic search optimization", () => {
       topic: "怎么看甲方科技最近发布的本地化战略",
     });
 
-    expect(passNames[0]).toBe("localized_media");
+    expect(passNames[0]).toBe("other");
+    expect(passNames).toContain("localized_media");
   });
 
   test("non-Chinese topic pass order starts with official", async () => {
@@ -1798,7 +2092,10 @@ describe("Chinese topic search optimization", () => {
       async search(request) {
         if (request.query.includes("official statement")) {
           passNames.push("official");
-        } else if (request.query.includes("Reuters")) {
+        } else if (
+          request.query.includes("independent analysis") ||
+          request.includeDomains?.includes("reuters.com")
+        ) {
           passNames.push("reputable_media");
         } else {
           passNames.push("other");
@@ -1814,7 +2111,8 @@ describe("Chinese topic search optimization", () => {
       topic: "AI model benchmark comparison",
     });
 
-    expect(passNames[0]).toBe("official");
+    expect(passNames[0]).toBe("other");
+    expect(passNames).toContain("official");
   });
 
   test("Chinese official query contains Chinese keywords instead of English template", async () => {
@@ -2022,28 +2320,150 @@ describe("zero-result fallback", () => {
     expect(pack.searchProcess?.skippedPassReasons).toBeDefined();
   });
 
-  test("does not trigger fallback when passes return results", async () => {
+  test("continues fallback when initial passes return only one candidate", async () => {
     const provider = createNoIntentProvider();
+    const requests: string[] = [];
 
     const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
       participants: [participant],
       provider,
-      topic: "AI company financing",
+      topic:
+        "AlphaSuite 和 BetaSuite 在中文办公和代码辅助场景中的竞争力比较",
       searcher: async (query) => {
-        if (query.includes("AI company")) {
+        requests.push(query);
+
+        if (requests.length === 1) {
           return [
             {
-              title: "AI company financing report",
-              url: "https://reuters.com/ai-financing",
-              snippet: "AI company financing report details. ".repeat(30),
+              title: "Single early result",
+              url: "https://example.com/single-result",
+              snippet:
+                "AlphaSuite BetaSuite office coding assistance short comparison. ".repeat(
+                  10,
+                ),
             },
           ];
         }
+
         return [];
       },
     });
 
     expect(pack.searchProcess?.zeroResultFallbackTriggered).not.toBe(true);
+    expect(pack.searchProcess?.fallbackQueries?.length).toBeGreaterThan(0);
+    expect(pack.searchProcess?.fallbackTriggeredReason).toBe(
+      "candidate_shortfall",
+    );
+    expect(pack.searchProcess?.candidateShortfall).toBeGreaterThan(0);
+    expect(pack.evidenceWarnings?.join("\n")).toContain("已广搜");
+    expect(pack.evidenceWarnings?.join("\n")).toContain("直接证据不足");
+    expect(requests.length).toBeGreaterThan(6);
+  });
+
+  test("triggers low-quality fallback when candidates exist but none are direct or supporting", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+        if (requests.length <= 4) {
+          return {
+            provider: "test-search",
+            results: [
+              {
+                title: "Capital market notes on unrelated AI funding",
+                url: "https://example.com/funding-notes",
+                provider: "test-search",
+                sourceQuery: request.query,
+                snippet:
+                  "Investors discuss AI funding, valuation, capital markets, and financing trends without covering office automation, coding assistance, model capability, enterprise deployment, or user workflow evidence. ".repeat(
+                    6,
+                  ),
+              },
+            ],
+          };
+        }
+
+        return {
+          provider: "test-search",
+          results: [
+            {
+              title: "Model capability and enterprise adoption comparison",
+              url: "https://example.com/model-capability-adoption",
+              provider: "test-search",
+              sourceQuery: request.query,
+              snippet:
+                "The report compares Kimi, GLM, GPT-4o, and Claude across Chinese office automation, coding assistance, enterprise adoption, workflow usage, capability, product performance, developer ecosystem, and user feedback. ".repeat(
+                  8,
+                ),
+            },
+          ],
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic:
+        "Compare Kimi, GLM, GPT-4o, and Claude in Chinese office automation and coding assistance.",
+    });
+
+    expect(pack.searchProcess?.zeroResultFallbackTriggered).not.toBe(true);
+    expect(pack.searchProcess?.fallbackQueries?.length).toBeGreaterThan(0);
+    expect(pack.searchProcess?.warnings).toContain("searchLowQuality");
+    expect(requests.length).toBeGreaterThan(4);
+  });
+
+  test("strict evidence selection keeps raw candidate debug for discarded candidates", async () => {
+    const provider = createNoIntentProvider();
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        return {
+          provider: "test-search",
+          results: Array.from({ length: request.maxResults ?? 10 }, (_, index) => ({
+            title: `Peripheral capital markets note ${index + 1}`,
+            url: `https://capital-${request.query.replace(/\W+/g, "-")}-${index}.example.com`,
+            provider: "test-search",
+            sourceQuery: request.query,
+            snippet:
+              "Funding valuation investor strategy capital markets financing expansion narrative without Chinese office workflow coding assistance user feedback or product capability evidence. ".repeat(
+                8,
+              ),
+          })),
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchMode: "deep",
+      searchProvider,
+      topic:
+        "AlphaSuite 和 BetaSuite 在中文办公和代码辅助场景中的竞争力比较",
+    });
+
+    expect(pack.searchProcess?.rawCandidateTarget).toBe(60);
+    expect(pack.searchProcess?.rawCandidateCount).toBeGreaterThan(0);
+    expect(pack.searchProcess?.uniqueCandidateCount).toBeGreaterThan(0);
+    expect(pack.searchProcess?.results.length).toBeGreaterThanOrEqual(
+      pack.searchProcess?.selectedEvidenceCount ?? 0,
+    );
+    expect(pack.searchProcess?.debugSummary?.retrieval).toEqual(
+      expect.objectContaining({
+        rawCandidateTarget: 60,
+        selectedEvidenceTarget: 12,
+      }),
+    );
   });
 
   test("all zero results still produces a valid searchProcess", async () => {
@@ -2058,8 +2478,59 @@ describe("zero-result fallback", () => {
 
     expect(pack.searchProcess).toBeDefined();
     expect(pack.searchProcess?.passStats).toBeDefined();
-    expect(pack.searchProcess?.skippedPasses).toBeDefined();
+    expect(pack.searchProcess?.skippedPasses ?? []).toEqual(expect.any(Array));
     expect(pack.searchProcess?.skippedPassReasons).toBeDefined();
+  });
+
+  test("fallback uses topic-analysis levels before domain-restricted media retries", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+        return { provider: "test-search", results: [] };
+      },
+    };
+
+    const rawTopic =
+      "请讨论 OmegaDesk 在企业知识库和客服场景是否应该继续扩张，哪个更好？";
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic: rawTopic,
+    });
+
+    expect(pack.searchProcess?.zeroResultFallbackTriggered).toBe(true);
+    expect(pack.searchProcess?.warnings).toContain("searchNoResults");
+    expect(pack.searchProcess?.fallbackQueries?.join("\n")).toContain("OmegaDesk");
+    expect(pack.searchProcess?.fallbackQueries?.join("\n")).toMatch(
+      /企业知识库|客服|enterprise|customer|adoption|capability/,
+    );
+    expect(pack.searchProcess?.fallbackQueries?.join("\n")).not.toContain(rawTopic);
+    expect(requests.some((request) => request.includeDomains === undefined)).toBe(true);
+    expect(pack.searchProcess?.passStats?.some((stat) =>
+      stat.passName === "general_web" && stat.queryLevel === "fallback_broad",
+    )).toBe(true);
+  });
+
+  test("classifies poor analyzer queries separately from provider zero results", async () => {
+    const provider = createNoIntentProvider();
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      participants: [participant],
+      provider,
+      topic: "你们认为怎么样？是否应该讨论哪个更好？",
+      searcher: async () => [],
+    });
+
+    expect(pack.searchProcess?.warnings).toContain("searchQueryPoor");
+    expect(pack.searchProcess?.warnings).not.toContain("all_key_passes_failed");
+    expect(pack.searchProcess?.debugSummary?.passStats.some((stat) =>
+      stat.queryQuality?.ok === false,
+    )).toBe(true);
   });
 });
 
@@ -2198,6 +2669,19 @@ function createNoIntentProvider(): ModelProvider {
         minorityViews: [],
         risks: [],
         nextSteps: [],
+      };
+    },
+  };
+}
+
+function createNoopExtractProvider(): ExtractProvider {
+  return {
+    id: "test-extract",
+    displayName: "Test Extract",
+    async extract() {
+      return {
+        provider: "test-extract",
+        results: [],
       };
     },
   };

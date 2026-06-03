@@ -55,6 +55,7 @@ export type EvidenceQuality = {
   matchedQuestionAspects?: string[];
   coverageDimension?: EvidenceCoverageDimension;
   topicType?: EvidenceTopicType;
+  evidenceJudgment?: EvidenceJudgment;
   authorityScore?: number;
   freshnessScore?: number;
   contentScore?: number;
@@ -115,6 +116,10 @@ export type SearchQueryPlan = {
   participantIds: string[];
   sourcePreference: SearchSourcePreference;
   freshness: SearchFreshness;
+  queryLevel?: SearchQueryLevel;
+  derivedFrom?: string;
+  queryQuality?: SearchQueryQuality;
+  skippedReason?: string;
 };
 
 export type SearchIntentDecision = {
@@ -154,6 +159,7 @@ export type SearchProcessResult = {
   matchedQuestionAspects?: string[];
   coverageDimension?: EvidenceCoverageDimension;
   topicType?: EvidenceTopicType;
+  evidenceJudgment?: EvidenceJudgment;
   citationLevel: EvidenceCitationLevel;
   citationGuidance: string;
   qualityWarnings: string[];
@@ -172,6 +178,16 @@ export type SearchQualityOverview = {
 };
 
 export type EvidenceDebugSummary = {
+  retrieval?: {
+    rawCandidateTarget: number;
+    rawCandidateCount: number;
+    uniqueCandidateCount: number;
+    selectedEvidenceTarget: number;
+    selectedEvidenceCount: number;
+    candidateShortfall: number;
+    retrievalPassCount: number;
+    fallbackTriggeredReason?: string;
+  };
   evidenceHitRate: {
     candidateCount: number;
     coreEvidenceCount: number;
@@ -231,6 +247,10 @@ export type EvidenceSearchPassStats = {
   durationMs?: number;
   timedOut?: boolean;
   errorType?: string;
+  queryLevel?: SearchQueryLevel;
+  derivedFrom?: string;
+  queryQuality?: SearchQueryQuality;
+  skippedReason?: string;
 };
 
 export type SearchProcess = {
@@ -244,8 +264,15 @@ export type SearchProcess = {
   failedStage?: string;
   failedPassName?: string;
   retryCount?: number;
+  rawCandidateTarget?: number;
   rawCandidateCount?: number;
+  uniqueCandidateCount?: number;
   dedupedCandidateCount?: number;
+  selectedEvidenceTarget?: number;
+  selectedEvidenceCount?: number;
+  candidateShortfall?: number;
+  retrievalPassCount?: number;
+  fallbackTriggeredReason?: string;
   extractAttempted?: number;
   extractedCandidateCount?: number;
   extractSucceededCount?: number;
@@ -280,6 +307,7 @@ export type SearchProcess = {
   searchRegionSource?: "user_preference" | "auto_detected" | "default_global" | "region_unsupported_fallback";
   regionFallbackReason?: string;
   requestedSearchRegion?: string;
+  topicAnalysis?: TopicAnalysis;
 };
 
 export type SearchSummaryStatus =
@@ -375,6 +403,53 @@ export type EvidenceTopicType =
   | "technical_research_analysis"
   | "general_discussion";
 
+export type EvidenceNeed = {
+  dimension: EvidenceCoverageDimension;
+  reason: string;
+};
+
+export type SearchQueryLevel =
+  | "precise"
+  | "broad"
+  | "evidence_type"
+  | "scenario"
+  | "cross_language"
+  | "fallback_broad"
+  | "fallback_entity"
+  | "fallback_keyword";
+
+export type SearchQueryQuality = {
+  ok: boolean;
+  reason?: string;
+  hasEntity: boolean;
+  hasScenarioOrEvidenceNeed: boolean;
+  tokenCount: number;
+  duplicateRatio: number;
+};
+
+export type TopicAnalysis = {
+  topicType: EvidenceTopicType;
+  cleanedTopic: string;
+  targetEntities: string[];
+  targetScenarios: string[];
+  comparisonAxes: string[];
+  evidenceNeeds: EvidenceNeed[];
+  timeSensitivity: "high" | "medium" | "low";
+  freshnessRequirement?: SearchFreshness;
+  searchQueries: string[];
+};
+
+export type EvidenceJudgment = {
+  evidenceId?: string;
+  relevance: number;
+  role: "core" | "supporting" | "background" | "discard";
+  confidence: "high" | "medium" | "low";
+  reason: string;
+  supports: string[];
+  limitations: string[];
+  suggestedUse: string;
+};
+
 export type EvidenceReliability = "high" | "medium" | "low" | "very_low";
 export type EvidenceCitationLevel =
   | "fact"
@@ -396,6 +471,7 @@ export type EvidenceQualityOverview = {
   strongCoveredDimensions: EvidenceCoverageDimension[];
   weakCoveredDimensions: EvidenceCoverageDimension[];
   missingDimensions: string[];
+  comparisonAxes: EvidenceCoverageDimension[];
   coverageCompleteness: number;
   overallReliability: "高" | "中" | "低";
   reliabilityLimitReason?: string;
@@ -506,7 +582,16 @@ export function createSearchFailureProcess(input: {
   failedPassName?: string;
   passStats?: EvidenceSearchPassStats[];
   retryCount?: number;
+  rawCandidateTarget?: number;
+  rawCandidateCount?: number;
+  uniqueCandidateCount?: number;
+  selectedEvidenceTarget?: number;
+  selectedEvidenceCount?: number;
+  candidateShortfall?: number;
+  retrievalPassCount?: number;
+  fallbackTriggeredReason?: string;
   skippedPasses?: string[];
+  topicAnalysis?: TopicAnalysis;
   warnings?: string[];
 }): SearchProcess {
   const passStats = normalizeEvidenceSearchPassStats(input.passStats);
@@ -530,6 +615,30 @@ export function createSearchFailureProcess(input: {
     ...(typeof input.retryCount === "number"
       ? { retryCount: Math.max(0, Math.trunc(input.retryCount)) }
       : {}),
+    ...(typeof input.rawCandidateTarget === "number"
+      ? { rawCandidateTarget: Math.max(0, Math.trunc(input.rawCandidateTarget)) }
+      : {}),
+    ...(typeof input.rawCandidateCount === "number"
+      ? { rawCandidateCount: Math.max(0, Math.trunc(input.rawCandidateCount)) }
+      : {}),
+    ...(typeof input.uniqueCandidateCount === "number"
+      ? { uniqueCandidateCount: Math.max(0, Math.trunc(input.uniqueCandidateCount)) }
+      : {}),
+    ...(typeof input.selectedEvidenceTarget === "number"
+      ? { selectedEvidenceTarget: Math.max(0, Math.trunc(input.selectedEvidenceTarget)) }
+      : {}),
+    ...(typeof input.selectedEvidenceCount === "number"
+      ? { selectedEvidenceCount: Math.max(0, Math.trunc(input.selectedEvidenceCount)) }
+      : {}),
+    ...(typeof input.candidateShortfall === "number"
+      ? { candidateShortfall: Math.max(0, Math.trunc(input.candidateShortfall)) }
+      : {}),
+    ...(typeof input.retrievalPassCount === "number"
+      ? { retrievalPassCount: Math.max(0, Math.trunc(input.retrievalPassCount)) }
+      : {}),
+    ...(input.fallbackTriggeredReason
+      ? { fallbackTriggeredReason: normalizeText(input.fallbackTriggeredReason, 80) }
+      : {}),
     ...(input.providerDiagnostics && input.providerDiagnostics.length > 0
       ? { providerDiagnostics: input.providerDiagnostics }
       : {}),
@@ -543,11 +652,20 @@ export function createSearchFailureProcess(input: {
     ...(input.dedupeStats ? { dedupeStats: input.dedupeStats } : {}),
     ...(passStats.length > 0 ? { passStats } : {}),
     ...(skippedPasses.length > 0 ? { skippedPasses } : {}),
+    ...(input.topicAnalysis ? { topicAnalysis: input.topicAnalysis } : {}),
     qualityOverview: createEmptySearchQualityOverview(),
     debugSummary: createEvidenceDebugSummary({
       evidenceMode: "search_failed",
       failureReason: input.failureReason,
       results: [],
+      rawCandidateTarget: input.rawCandidateTarget,
+      rawCandidateCount: input.rawCandidateCount,
+      uniqueCandidateCount: input.uniqueCandidateCount,
+      selectedEvidenceTarget: input.selectedEvidenceTarget,
+      selectedEvidenceCount: input.selectedEvidenceCount,
+      candidateShortfall: input.candidateShortfall,
+      retrievalPassCount: input.retrievalPassCount,
+      fallbackTriggeredReason: input.fallbackTriggeredReason,
       extractAttempted: 0,
       extractSucceededCount: 0,
       passStats,
@@ -570,6 +688,55 @@ export function formatEvidencePackForPrompt(
       "本轮会议未启用外部资料包。",
       ...statusLines,
       "涉及当前、最新、排名、价格、政策、版本、新闻等实时信息时，不要给出未经验证的确定结论，应标注为待核验。",
+    ].join("\n");
+  }
+
+  const citableEvidenceItems = evidencePack.items.filter(
+    isCitableEvidenceForPrompt,
+  );
+  const backgroundEvidenceItems = evidencePack.items.filter(
+    (item) =>
+      !isCitableEvidenceForPrompt(item) &&
+      item.quality?.evidenceJudgment?.role === "background",
+  );
+  const promptEvidenceItems = [
+    ...citableEvidenceItems,
+    ...backgroundEvidenceItems,
+  ];
+
+  if (promptEvidenceItems.length === 0) {
+    return [
+      "本轮没有可引用的有效证据。",
+      "No citable evidence is available in this round.",
+      ...formatEvidenceStatusForPrompt(evidencePack),
+      formatDocumentInputStrategyForPrompt(evidencePack.strategy),
+      formatEvidenceDeliveryForPrompt(evidencePack.delivery),
+      "只有可引用事实时才必须使用资料编号；本轮没有可引用证据。",
+      "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
+      "不要编造资料编号。",
+      "Do not use source-style citation IDs as support.",
+      "You may discuss from reasoning, but mark time-sensitive or current factual claims as uncertain and needing verification.",
+    ].join("\n");
+  }
+
+  if (citableEvidenceItems.length === 0) {
+    return [
+      "本轮没有可引用的有效证据。",
+      "No citable evidence is available in this round.",
+      ...formatEvidenceStatusForPrompt(evidencePack),
+      formatDocumentInputStrategyForPrompt(evidencePack.strategy),
+      formatEvidenceDeliveryForPrompt(evidencePack.delivery),
+      "只有可引用事实时才必须使用资料编号；本轮没有可引用证据。",
+      "low / very_low 可信度资料只能作为社区观点、传闻、舆论反馈，不能作为事实依据。",
+      "不要编造资料编号。",
+      "Background evidence cannot support core conclusions.",
+      "Do not cite background evidence as proof; use it only for context or leads.",
+      "You may discuss from reasoning, but mark time-sensitive or current factual claims as uncertain and needing verification.",
+      "",
+      "## 外部资料包",
+      "## Background evidence only",
+      "",
+      ...backgroundEvidenceItems.map(formatEvidenceItemForPrompt),
     ].join("\n");
   }
 
@@ -599,8 +766,34 @@ export function formatEvidencePackForPrompt(
     "",
     "## 外部资料包",
     "",
-    ...evidencePack.items.map(formatEvidenceItemForPrompt),
+    ...promptEvidenceItems.map(formatEvidenceItemForPrompt),
   ].join("\n");
+}
+
+function isCitableEvidenceForPrompt(item: SearchEvidence): boolean {
+  const role = item.quality?.evidenceJudgment?.role;
+
+  if (role === "core" || role === "supporting") {
+    return true;
+  }
+
+  if (role === "background" || role === "discard") {
+    return false;
+  }
+
+  if (
+    item.quality?.citationLevel === "context_only" ||
+    item.quality?.citationLevel === "not_citable"
+  ) {
+    return false;
+  }
+
+  return (
+    item.quality?.citationLevel === "fact" ||
+    item.quality?.citationLevel === "qualified_fact" ||
+    item.quality?.reliability === "high" ||
+    item.quality?.reliability === "medium"
+  );
 }
 
 export function resolveEvidencePackDelivery(
@@ -753,6 +946,17 @@ export function scoreEvidence(input: {
 
   const reliability = getReliability(clampedScore, snippetOnly, sourceType);
   const citationPolicy = getCitationPolicy(reliability);
+  const evidenceJudgment = judgeEvidenceForTopic({
+    coverageDimension: topicCoverage.coverageDimension,
+    matchedQuestionAspects: topicCoverage.matchedQuestionAspects,
+    reliability,
+    score: clampedScore,
+    sourceType,
+    textLength: snippet.length,
+    topicType: topicCoverage.topicType,
+    topicRelevanceScore,
+    snippetOnly,
+  });
 
   return {
     warnings,
@@ -770,6 +974,7 @@ export function scoreEvidence(input: {
     matchedQuestionAspects: topicCoverage.matchedQuestionAspects,
     coverageDimension: topicCoverage.coverageDimension,
     topicType: topicCoverage.topicType,
+    evidenceJudgment,
     authorityScore,
     freshnessScore,
     contentScore,
@@ -818,7 +1023,10 @@ export function summarizeEvidenceQuality(
     item.quality?.reliability === "medium",
   ).length;
   const hasMedium = items.some((item) => item.quality?.reliability === "medium");
-  const coverage = summarizeCoverage(items);
+  const coverage = summarizeCoverage(
+    items,
+    evidencePack?.searchProcess?.topicAnalysis,
+  );
   const isLowEvidenceMode = options?.evidenceStatus === "low" ||
     (!options?.evidenceStatus && (coreEvidenceCount < 3 || highOrMediumCount < 3 || items.length === 0));
   let baseReliability: EvidenceQualityOverview["overallReliability"] =
@@ -851,6 +1059,7 @@ export function summarizeEvidenceQuality(
     strongCoveredDimensions: coverage.strongCoveredDimensions,
     weakCoveredDimensions: coverage.weakCoveredDimensions,
     missingDimensions: coverage.missingDimensions,
+    comparisonAxes: coverage.comparisonAxes,
     coverageCompleteness: coverage.coverageCompleteness,
     overallReliability: capReliabilityByCoverage(baseReliability, coverage),
     reliabilityLimitReason,
@@ -962,11 +1171,15 @@ function getRequiredCoverageGroups(
   }
 }
 
-function summarizeCoverage(items: SearchEvidence[]): {
+function summarizeCoverage(
+  items: SearchEvidence[],
+  topicAnalysis?: TopicAnalysis,
+): {
   coveredDimensions: EvidenceCoverageDimension[];
   strongCoveredDimensions: EvidenceCoverageDimension[];
   weakCoveredDimensions: EvidenceCoverageDimension[];
   missingDimensions: string[];
+  comparisonAxes: EvidenceCoverageDimension[];
   coverageCompleteness: number;
   isEntityCompetitionCoverage: boolean;
 } {
@@ -979,9 +1192,31 @@ function summarizeCoverage(items: SearchEvidence[]): {
   const coveredDimensions = Array.from(
     new Set([...strongCoveredDimensions, ...weakCoveredDimensions]),
   );
-  const dominantTopicType = getDominantTopicType(items);
+  const analyzerNeeds = (topicAnalysis?.evidenceNeeds ?? [])
+    .map((need) => need.dimension)
+    .filter(
+      (dimension): dimension is EvidenceCoverageDimension =>
+        isEvidenceCoverageDimension(dimension) && dimension !== "unknown",
+    );
+  const analyzerAxes = (topicAnalysis?.comparisonAxes ?? [])
+    .filter(
+      (dimension): dimension is EvidenceCoverageDimension =>
+        isEvidenceCoverageDimension(dimension) && dimension !== "unknown",
+    );
+  const comparisonAxes = Array.from(
+    new Set(analyzerAxes.length > 0 ? analyzerAxes : analyzerNeeds),
+  );
+  const dynamicRequiredGroups =
+    analyzerNeeds.length > 0
+      ? Array.from(new Set(analyzerNeeds)).map((dimension) => ({
+          label: dimension,
+          dimensions: [dimension] as readonly EvidenceCoverageDimension[],
+        }))
+      : undefined;
+  const dominantTopicType = topicAnalysis?.topicType ?? getDominantTopicType(items);
   const isEntityCompetitionCoverage = dominantTopicType === "entity_competition";
-  const requiredGroups = getRequiredCoverageGroups(dominantTopicType);
+  const requiredGroups =
+    dynamicRequiredGroups ?? getRequiredCoverageGroups(dominantTopicType);
   const coveredSet = new Set(strongCoveredDimensions);
   const missingDimensions = requiredGroups
     .filter(
@@ -995,6 +1230,7 @@ function summarizeCoverage(items: SearchEvidence[]): {
     strongCoveredDimensions,
     weakCoveredDimensions,
     missingDimensions,
+    comparisonAxes,
     coverageCompleteness: divideForDebug(
       requiredGroups.length - missingDimensions.length,
       requiredGroups.length,
@@ -1092,6 +1328,13 @@ export function isCoreEvidenceItem(item: SearchEvidence): boolean {
   const quality = item.quality;
 
   if (!quality) {
+    return false;
+  }
+
+  if (
+    quality.evidenceJudgment &&
+    quality.evidenceJudgment.role !== "core"
+  ) {
     return false;
   }
 
@@ -1244,6 +1487,12 @@ function formatEvidenceItemForPrompt(item: SearchEvidence): string {
     item.quality?.matchedQuestionAspects?.length
       ? `匹配议题方面：${item.quality.matchedQuestionAspects.join("、")}`
       : "",
+    item.quality?.evidenceJudgment
+      ? `证据裁判：${item.quality.evidenceJudgment.role} / ${item.quality.evidenceJudgment.confidence} / ${item.quality.evidenceJudgment.suggestedUse}`
+      : "",
+    item.quality?.evidenceJudgment?.limitations.length
+      ? `使用限制：${item.quality.evidenceJudgment.limitations.join("；")}`
+      : "",
     item.quality?.warnings.length
       ? `质量提示：${item.quality.warnings.join("；")}`
       : "",
@@ -1344,6 +1593,38 @@ function createSearchProcess(input: {
     input.input.retryCount !== undefined
       ? normalizeNonNegativeInteger(input.input.retryCount)
       : undefined;
+  const rawCandidateTarget =
+    input.input.rawCandidateTarget !== undefined
+      ? normalizeNonNegativeInteger(input.input.rawCandidateTarget)
+      : undefined;
+  const rawCandidateCount =
+    input.input.rawCandidateCount !== undefined
+      ? normalizeNonNegativeInteger(input.input.rawCandidateCount)
+      : undefined;
+  const uniqueCandidateCount =
+    input.input.uniqueCandidateCount !== undefined
+      ? normalizeNonNegativeInteger(input.input.uniqueCandidateCount)
+      : undefined;
+  const selectedEvidenceTarget =
+    input.input.selectedEvidenceTarget !== undefined
+      ? normalizeNonNegativeInteger(input.input.selectedEvidenceTarget)
+      : undefined;
+  const selectedEvidenceCount =
+    input.input.selectedEvidenceCount !== undefined
+      ? normalizeNonNegativeInteger(input.input.selectedEvidenceCount)
+      : undefined;
+  const candidateShortfall =
+    input.input.candidateShortfall !== undefined
+      ? normalizeNonNegativeInteger(input.input.candidateShortfall)
+      : undefined;
+  const retrievalPassCount =
+    input.input.retrievalPassCount !== undefined
+      ? normalizeNonNegativeInteger(input.input.retrievalPassCount)
+      : undefined;
+  const fallbackTriggeredReason = normalizeOptionalText(
+    input.input.fallbackTriggeredReason,
+    80,
+  );
   const searchStrategy =
     input.input.searchStrategy === "multi_pass" ? "multi_pass" : undefined;
   const provider = normalizeOptionalText(input.input.provider, 80);
@@ -1383,6 +1664,9 @@ function createSearchProcess(input: {
         ? { coverageDimension: quality.coverageDimension }
         : {}),
       ...(quality?.topicType ? { topicType: quality.topicType } : {}),
+      ...(quality?.evidenceJudgment
+        ? { evidenceJudgment: quality.evidenceJudgment }
+        : {}),
       citationLevel: quality?.citationLevel ?? "not_citable",
       citationGuidance:
         quality?.citationGuidance ??
@@ -1398,6 +1682,7 @@ function createSearchProcess(input: {
   const passStats = normalizeEvidenceSearchPassStats(input.input.passStats);
   const extractAttempts = normalizeExtractAttempts(input.input.extractAttempts);
   const skippedPasses = normalizeStringArray(input.input.skippedPasses);
+  const topicAnalysis = normalizeTopicAnalysis(input.input.topicAnalysis);
   const evidenceMode =
     normalizeEvidenceMode(input.input.evidenceMode) ??
     getEvidenceMode(input.evidenceStatus, qualityOverview);
@@ -1424,15 +1709,32 @@ function createSearchProcess(input: {
     ...(failedStage ? { failedStage } : {}),
     ...(failedPassName ? { failedPassName } : {}),
     ...(retryCount !== undefined ? { retryCount } : {}),
+    ...(rawCandidateTarget !== undefined ? { rawCandidateTarget } : {}),
+    ...(rawCandidateCount !== undefined ? { rawCandidateCount } : {}),
+    ...(uniqueCandidateCount !== undefined ? { uniqueCandidateCount } : {}),
+    ...(selectedEvidenceTarget !== undefined ? { selectedEvidenceTarget } : {}),
+    ...(selectedEvidenceCount !== undefined ? { selectedEvidenceCount } : {}),
+    ...(candidateShortfall !== undefined ? { candidateShortfall } : {}),
+    ...(retrievalPassCount !== undefined ? { retrievalPassCount } : {}),
+    ...(fallbackTriggeredReason ? { fallbackTriggeredReason } : {}),
     ...rescueStats,
     ...(extractAttempts.length > 0 ? { extractAttempts } : {}),
     ...(passStats.length > 0 ? { passStats } : {}),
     ...(skippedPasses.length > 0 ? { skippedPasses } : {}),
+    ...(topicAnalysis ? { topicAnalysis } : {}),
     qualityOverview,
     debugSummary: createEvidenceDebugSummary({
       evidenceMode,
       failureReason: normalizeSearchFailureReason(input.input.failureReason),
       results,
+      rawCandidateTarget,
+      rawCandidateCount,
+      uniqueCandidateCount,
+      selectedEvidenceTarget,
+      selectedEvidenceCount,
+      candidateShortfall,
+      retrievalPassCount,
+      fallbackTriggeredReason,
       extractAttempted: rescueStats.extractAttempted,
       extractSucceededCount: rescueStats.extractSucceededCount,
       officialExtractFailed: rescueStats.officialExtractFailed,
@@ -1558,13 +1860,26 @@ function normalizeSearchQueryPlans(value: unknown): SearchQueryPlan[] {
 
   return value
     .filter(isObject)
-    .map((item) => ({
-      query: normalizeText(item.query, 240),
-      reason: normalizeText(item.reason, 240),
-      participantIds: normalizeStringArray(item.participantIds),
-      sourcePreference: normalizeSearchSourcePreference(item.sourcePreference),
-      freshness: normalizeSearchFreshness(item.freshness),
-    }))
+    .map((item) => {
+      const queryLevel = normalizeSearchQueryLevel(item.queryLevel);
+      const queryQuality = normalizeSearchQueryQuality(item.queryQuality);
+
+      return {
+        query: normalizeText(item.query, 240),
+        reason: normalizeText(item.reason, 240),
+        participantIds: normalizeStringArray(item.participantIds),
+        sourcePreference: normalizeSearchSourcePreference(item.sourcePreference),
+        freshness: normalizeSearchFreshness(item.freshness),
+        ...(queryLevel ? { queryLevel } : {}),
+        ...(normalizeText(item.derivedFrom, 80)
+          ? { derivedFrom: normalizeText(item.derivedFrom, 80) }
+          : {}),
+        ...(queryQuality ? { queryQuality } : {}),
+        ...(normalizeText(item.skippedReason, 120)
+          ? { skippedReason: normalizeText(item.skippedReason, 120) }
+          : {}),
+      };
+    })
     .filter((item) => item.query)
     .slice(0, 12);
 }
@@ -1679,6 +1994,47 @@ function normalizeSearchProviderDiagnostics(
     .slice(0, 12);
 }
 
+function normalizeSearchQueryLevel(value: unknown): SearchQueryLevel | undefined {
+  return value === "precise" ||
+    value === "broad" ||
+    value === "evidence_type" ||
+    value === "scenario" ||
+    value === "cross_language" ||
+    value === "fallback_broad" ||
+    value === "fallback_entity" ||
+    value === "fallback_keyword"
+    ? value
+    : undefined;
+}
+
+function normalizeSearchQueryQuality(
+  value: unknown,
+): SearchQueryQuality | undefined {
+  if (!isObject(value) || typeof value.ok !== "boolean") {
+    return undefined;
+  }
+
+  return {
+    ok: value.ok,
+    ...(normalizeText(value.reason, 120)
+      ? { reason: normalizeText(value.reason, 120) }
+      : {}),
+    hasEntity: Boolean(value.hasEntity),
+    hasScenarioOrEvidenceNeed: Boolean(value.hasScenarioOrEvidenceNeed),
+    tokenCount: normalizeNonNegativeInteger(value.tokenCount),
+    duplicateRatio: Math.max(
+      0,
+      Math.min(
+        1,
+        typeof value.duplicateRatio === "number" &&
+          Number.isFinite(value.duplicateRatio)
+          ? value.duplicateRatio
+          : 0,
+      ),
+    ),
+  };
+}
+
 function sanitizeDiagnosticObject(value: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(value)
@@ -1711,6 +2067,9 @@ function normalizeEvidenceSearchPassStats(value: unknown): EvidenceSearchPassSta
         return null;
       }
 
+      const queryLevel = normalizeSearchQueryLevel(item.queryLevel);
+      const queryQuality = normalizeSearchQueryQuality(item.queryQuality);
+
       return {
         passName,
         query,
@@ -1725,6 +2084,14 @@ function normalizeEvidenceSearchPassStats(value: unknown): EvidenceSearchPassSta
         ...(typeof item.timedOut === "boolean" ? { timedOut: item.timedOut } : {}),
         ...(normalizeText(item.errorType, 120)
           ? { errorType: normalizeText(item.errorType, 120) }
+          : {}),
+        ...(queryLevel ? { queryLevel } : {}),
+        ...(normalizeText(item.derivedFrom, 80)
+          ? { derivedFrom: normalizeText(item.derivedFrom, 80) }
+          : {}),
+        ...(queryQuality ? { queryQuality } : {}),
+        ...(normalizeText(item.skippedReason, 120)
+          ? { skippedReason: normalizeText(item.skippedReason, 120) }
           : {}),
       };
     })
@@ -1941,6 +2308,14 @@ function createEvidenceDebugSummary(input: {
   evidenceMode: EvidenceMode;
   failureReason?: SearchFailureReason;
   results: SearchProcessResult[];
+  rawCandidateTarget?: number;
+  rawCandidateCount?: number;
+  uniqueCandidateCount?: number;
+  selectedEvidenceTarget?: number;
+  selectedEvidenceCount?: number;
+  candidateShortfall?: number;
+  retrievalPassCount?: number;
+  fallbackTriggeredReason?: string;
   extractAttempted?: number;
   extractSucceededCount?: number;
   officialExtractFailed?: boolean;
@@ -1965,6 +2340,20 @@ function createEvidenceDebugSummary(input: {
   ).length;
 
   return {
+    retrieval: {
+      rawCandidateTarget: input.rawCandidateTarget ?? candidateCount,
+      rawCandidateCount: input.rawCandidateCount ?? candidateCount,
+      uniqueCandidateCount: input.uniqueCandidateCount ?? candidateCount,
+      selectedEvidenceTarget:
+        input.selectedEvidenceTarget ?? (input.selectedItems?.length ?? 0),
+      selectedEvidenceCount:
+        input.selectedEvidenceCount ?? (input.selectedItems?.length ?? 0),
+      candidateShortfall: input.candidateShortfall ?? 0,
+      retrievalPassCount: input.retrievalPassCount ?? 0,
+      ...(input.fallbackTriggeredReason
+        ? { fallbackTriggeredReason: input.fallbackTriggeredReason }
+        : {}),
+    },
     evidenceHitRate: {
       candidateCount,
       coreEvidenceCount,
@@ -2168,6 +2557,103 @@ function normalizeEvidenceMode(value: unknown): EvidenceMode | undefined {
 
 function normalizeSearchMode(value: unknown): SearchMode | undefined {
   return value === "standard" || value === "deep" ? value : undefined;
+}
+
+function normalizeTopicAnalysis(value: unknown): TopicAnalysis | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const topicType = normalizeEvidenceTopicType(value.topicType);
+
+  if (!topicType) {
+    return undefined;
+  }
+
+  const evidenceNeeds = Array.isArray(value.evidenceNeeds)
+    ? value.evidenceNeeds
+        .filter(isObject)
+        .map((item) => {
+          const dimension = normalizeCoverageDimension(item.dimension);
+
+          return dimension
+            ? {
+                dimension,
+                reason: normalizeText(item.reason, 160),
+              }
+            : undefined;
+        })
+        .filter((item): item is EvidenceNeed => item !== undefined)
+    : [];
+  const freshnessRequirement = normalizeFreshnessRequirement(
+    value.freshnessRequirement,
+  );
+
+  return {
+    topicType,
+    cleanedTopic: normalizeText(value.cleanedTopic, 240),
+    targetEntities: normalizeStringArray(value.targetEntities).slice(0, 12),
+    targetScenarios: normalizeStringArray(value.targetScenarios).slice(0, 12),
+    comparisonAxes: normalizeStringArray(value.comparisonAxes).slice(0, 12),
+    evidenceNeeds,
+    timeSensitivity:
+      value.timeSensitivity === "high" ||
+      value.timeSensitivity === "medium" ||
+      value.timeSensitivity === "low"
+        ? value.timeSensitivity
+        : freshnessRequirement === "latest"
+          ? "high"
+          : freshnessRequirement === "recent"
+            ? "medium"
+            : "low",
+    ...(freshnessRequirement ? { freshnessRequirement } : {}),
+    searchQueries: normalizeStringArray(value.searchQueries).slice(0, 8),
+  };
+}
+
+function normalizeFreshnessRequirement(
+  value: unknown,
+): SearchFreshness | undefined {
+  return value === "latest" || value === "recent" || value === "any"
+    ? value
+    : undefined;
+}
+
+function normalizeEvidenceTopicType(
+  value: unknown,
+): EvidenceTopicType | undefined {
+  return value === "entity_competition" ||
+    value === "capability_comparison" ||
+    value === "market_outlook" ||
+    value === "policy_regulation" ||
+    value === "product_release_analysis" ||
+    value === "investment_business_analysis" ||
+    value === "technical_research_analysis" ||
+    value === "general_discussion"
+    ? value
+    : undefined;
+}
+
+function normalizeCoverageDimension(
+  value: unknown,
+): EvidenceCoverageDimension | undefined {
+  return value === "technical_capability" ||
+    value === "benchmark_evaluation" ||
+    value === "product_release" ||
+    value === "safety_alignment" ||
+    value === "business_revenue" ||
+    value === "enterprise_adoption" ||
+    value === "funding_capital" ||
+    value === "regulation_governance" ||
+    value === "ecosystem_developer" ||
+    value === "legal_lawsuit" ||
+    value === "market_analysis" ||
+    value === "user_feedback" ||
+    value === "expert_opinion" ||
+    value === "official_position" ||
+    value === "unknown"
+    ? value
+    : undefined;
 }
 
 function normalizeRescueStats(value: Record<string, unknown>) {
@@ -2772,6 +3258,29 @@ export function classifyEvidenceTopic(topic: string | undefined): EvidenceTopicT
 
   const normalized = topic.toLowerCase();
   const hasMultipleEntities = getLikelyEntityCount(topic) >= 2;
+  const hasCapabilityScenario = matchesAny(normalized, [
+    "model",
+    "llm",
+    "assistant",
+    "office",
+    "coding",
+    "code",
+    "automation",
+    "capability",
+    "benchmark",
+    "evaluation",
+    "developer",
+    "workflow",
+    "办公",
+    "代码",
+    "模型",
+    "能力",
+    "评测",
+  ]);
+
+  if (hasMultipleEntities && hasCapabilityScenario) {
+    return "capability_comparison";
+  }
 
   if (
     hasMultipleEntities &&
@@ -2886,6 +3395,616 @@ export function classifyEvidenceTopic(topic: string | undefined): EvidenceTopicT
       ? "technical_research_analysis"
       : "general_discussion"
   );
+}
+
+export function analyzeTopicForEvidence(topic: string | undefined): TopicAnalysis {
+  const normalizedTopic = topic?.trim() ?? "";
+  const cleanedTopic = cleanTopicForEvidenceSearchSafe(normalizedTopic);
+  const evidenceTopic = cleanedTopic;
+  const analysisTopic = cleanedTopic || normalizedTopic;
+  const topicType = classifyEvidenceTopic(analysisTopic);
+  const evidenceNeeds = getEvidenceNeedsForTopicType(topicType);
+  const comparisonAxes = evidenceNeeds
+    .map((need) => need.dimension)
+    .filter((dimension) => dimension !== "unknown");
+  const freshnessRequirement = getFreshnessRequirementForTopic(
+    normalizedTopic,
+    topicType,
+  );
+  const targetEntities = extractTopicEntitiesForAnalysis(evidenceTopic).slice(0, 8);
+  const targetScenarios = extractTargetScenarios(evidenceTopic);
+
+  return {
+    topicType,
+    cleanedTopic,
+    targetEntities,
+    targetScenarios,
+    comparisonAxes,
+    evidenceNeeds,
+    timeSensitivity:
+      freshnessRequirement === "latest"
+        ? "high"
+        : freshnessRequirement === "recent"
+          ? "medium"
+          : "low",
+    freshnessRequirement,
+    searchQueries: buildTopicAnalysisQueries({
+      cleanedTopic: evidenceTopic,
+      evidenceNeeds,
+      targetEntities,
+      targetScenarios,
+      topicType,
+    }),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- legacy cleaner kept while replacing mojibake-sensitive logic.
+function stripDiscussionShellFromTopic(topic: string): string {
+  return topic
+    .normalize("NFKC")
+    .replace(/你们认为|你认为|您认为|大家认为|怎么看待|如何看待|怎么看|怎么样|是否应该|应不应该|请讨论|讨论一下|哪个更好|哪一个更好|哪种更好/gu, " ")
+    .replace(/[?？!！。；;：“”"']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- legacy cleaner kept while replacing mojibake-sensitive logic.
+function cleanTopicForEvidenceSearch(topic: string): string {
+  const discussionShells = [
+    /你们认为|你认为|您认为|大家认为|我想问一下|想问一下/gu,
+    /怎么看待|如何看待|怎么评价|如何评价|怎么分析|请分析/gu,
+    /怎么样|怎样|如何|是什么|为什么/gu,
+    /是否应该|应不应该|要不要|有没有必要|值不值得/gu,
+    /请讨论|讨论一下|讨论|哪个更好|哪一个更好|哪种更好|谁更强/gu,
+    /目前|当前|这类|这类工具/gu,
+    /\b(?:what|why|how|should|discuss|compare|which is better)\b/giu,
+  ];
+  let cleaned = topic.normalize("NFKC");
+
+  for (const shell of discussionShells) {
+    cleaned = cleaned.replace(shell, " ");
+  }
+
+  return cleaned
+    .replace(/[？?！!。；;："“”'‘’]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanTopicForEvidenceSearchSafe(topic: string): string {
+  const discussionShells = [
+    "\\u4f60\\u4eec\\u8ba4\\u4e3a|\\u4f60\\u8ba4\\u4e3a|\\u60a8\\u8ba4\\u4e3a|\\u5927\\u5bb6\\u8ba4\\u4e3a|\\u6211\\u60f3\\u95ee\\u4e00\\u4e0b|\\u60f3\\u95ee\\u4e00\\u4e0b",
+    "\\u600e\\u4e48\\u770b\\u5f85|\\u5982\\u4f55\\u770b\\u5f85|\\u600e\\u4e48\\u770b|\\u600e\\u4e48\\u8bc4\\u4ef7|\\u5982\\u4f55\\u8bc4\\u4ef7|\\u600e\\u4e48\\u5206\\u6790|\\u8bf7\\u5206\\u6790",
+    "\\u600e\\u4e48\\u6837|\\u600e\\u6837|\\u5982\\u4f55|\\u662f\\u4ec0\\u4e48|\\u4e3a\\u4ec0\\u4e48",
+    "\\u662f\\u5426\\u5e94\\u8be5|\\u5e94\\u4e0d\\u5e94\\u8be5|\\u8981\\u4e0d\\u8981|\\u6709\\u6ca1\\u6709\\u5fc5\\u8981|\\u503c\\u4e0d\\u503c\\u5f97",
+    "\\u8bf7\\u8ba8\\u8bba|\\u8ba8\\u8bba\\u4e00\\u4e0b|\\u8ba8\\u8bba|\\u54ea\\u4e2a\\u66f4\\u597d|\\u54ea\\u4e00\\u4e2a\\u66f4\\u597d|\\u54ea\\u79cd\\u66f4\\u597d|\\u8c01\\u66f4\\u5f3a",
+    "\\u76ee\\u524d|\\u5f53\\u524d|\\u8fd9\\u7c7b|\\u8fd9\\u7c7b\\u5de5\\u5177",
+    "\\b(?:what|why|how|should|discuss|compare|which is better)\\b",
+  ].map((pattern) => new RegExp(pattern, "giu"));
+  let cleaned = topic.normalize("NFKC");
+
+  for (const shell of discussionShells) {
+    cleaned = cleaned.replace(shell, " ");
+  }
+
+  return cleaned
+    .replace(/[\uFF1F?！!\u3002\uff1b;:\uff1a"\u201c\u201d'\u2018\u2019]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTopicEntitiesForAnalysis(topic: string): string[] {
+  const exactAsciiEntities =
+    topic.match(/\b[A-Z][A-Za-z0-9.-]{1,}(?:\s+[A-Z][A-Za-z0-9.-]{1,}){0,3}\b/g) ??
+    [];
+  const cjkSeparatedEntities =
+    topic.match(/[\p{Script=Han}A-Za-z0-9.-]{2,}\s*(?:、|和|与|及|vs\.?|versus)\s*[\p{Script=Han}A-Za-z0-9.-]{2,}/giu) ??
+    [];
+  const cjkParts = cjkSeparatedEntities.flatMap((item) =>
+    item
+      .split(/(?:、|和|与|及|vs\.?|versus)/iu)
+      .map((part) => part.trim())
+      .filter((part) => part.length >= 2 && part.length <= 24),
+  );
+  const legacyEntities = extractTopicEntities(topic);
+  const seen = new Set<string>();
+  const entities: string[] = [];
+
+  for (const entity of [...exactAsciiEntities, ...cjkParts, ...legacyEntities]) {
+    const cleaned = entity.replace(/[，,。；;：:]/g, "").trim();
+    const key = cleaned.toLowerCase();
+
+    if (!cleaned || seen.has(key) || isLowInformationTopicEntity(cleaned)) {
+      continue;
+    }
+
+    seen.add(key);
+    entities.push(cleaned);
+  }
+
+  return entities;
+}
+
+function isLowInformationTopicEntity(entity: string): boolean {
+  const normalized = entity.toLowerCase();
+
+  return [
+    "目前",
+    "当前",
+    "这类",
+    "工具",
+    "产品",
+    "场景",
+    "竞争力",
+    "讨论",
+    "应用前景",
+    "should",
+    "discuss",
+  ].includes(normalized);
+}
+
+function getEvidenceNeedsForTopicType(
+  topicType: EvidenceTopicType,
+): EvidenceNeed[] {
+  const need = (
+    dimension: EvidenceCoverageDimension,
+    reason: string,
+  ): EvidenceNeed => ({ dimension, reason });
+
+  if (topicType === "entity_competition") {
+    return [
+      need("technical_capability", "比较对象的能力、产品或技术事实。"),
+      need("business_revenue", "商业闭环、收入质量或成本结构。"),
+      need("enterprise_adoption", "客户采用、部署和迁移成本。"),
+      need("funding_capital", "资本、融资或持续投入能力。"),
+      need("regulation_governance", "治理、监管和法律约束。"),
+      need("market_analysis", "市场格局和长期竞争位置。"),
+    ];
+  }
+
+  if (topicType === "capability_comparison") {
+    return [
+      need("benchmark_evaluation", "可比较的评测或实验结果。"),
+      need("technical_capability", "能力边界和工程表现。"),
+      need("product_release", "产品化状态和版本边界。"),
+    ];
+  }
+
+  if (topicType === "investment_business_analysis") {
+    return [
+      need("business_revenue", "收入、成本和商业模式。"),
+      need("funding_capital", "融资、估值和资本约束。"),
+      need("market_analysis", "市场空间和竞争位置。"),
+      need("enterprise_adoption", "客户结构和采用情况。"),
+    ];
+  }
+
+  if (topicType === "policy_regulation") {
+    return [
+      need("regulation_governance", "政策、监管和治理要求。"),
+      need("legal_lawsuit", "法律争议和执行风险。"),
+      need("official_position", "官方立场或正式声明。"),
+    ];
+  }
+
+  if (topicType === "product_release_analysis") {
+    return [
+      need("product_release", "发布内容、版本和功能边界。"),
+      need("technical_capability", "能力变化和技术约束。"),
+      need("user_feedback", "用户反馈和采用场景。"),
+    ];
+  }
+
+  if (topicType === "technical_research_analysis") {
+    return [
+      need("technical_capability", "技术路线和能力边界。"),
+      need("benchmark_evaluation", "实验评估和复现结果。"),
+      need("safety_alignment", "安全、对齐和限制条件。"),
+    ];
+  }
+
+  if (topicType === "market_outlook") {
+    return [
+      need("market_analysis", "市场趋势和竞争格局。"),
+      need("business_revenue", "需求、收入和商业化信号。"),
+      need("regulation_governance", "外部政策和监管变量。"),
+    ];
+  }
+
+  return [
+    need("expert_opinion", "观点讨论中可参考的论点和判断框架。"),
+    need("user_feedback", "用户体验、偏好或使用场景。"),
+  ];
+}
+
+function getFreshnessRequirementForTopic(
+  topic: string,
+  topicType: EvidenceTopicType,
+): SearchFreshness {
+  const normalized = topic.toLowerCase();
+
+  if (
+    matchesAny(normalized, [
+      "latest",
+      "today",
+      "now",
+      "recently",
+      "price",
+      "ranking",
+      "发布",
+      "最新",
+      "今天",
+      "最近",
+      "价格",
+      "排名",
+    ])
+  ) {
+    return "latest";
+  }
+
+  if (
+    topicType === "market_outlook" ||
+    topicType === "policy_regulation" ||
+    topicType === "product_release_analysis"
+  ) {
+    return "recent";
+  }
+
+  return "any";
+}
+
+function extractTargetScenarios(topic: string): string[] {
+  const scenarios = new Set<string>();
+
+  for (const keyword of [
+    "企业",
+    "消费者",
+    "开发者",
+    "教育",
+    "医疗",
+    "金融",
+    "enterprise",
+    "consumer",
+    "developer",
+    "education",
+    "healthcare",
+    "finance",
+  ]) {
+    if (matchesAny(topic.toLowerCase(), [keyword])) {
+      scenarios.add(keyword);
+    }
+  }
+
+  for (const scenario of extractScenarioPhrases(topic)) {
+    scenarios.add(scenario);
+  }
+
+  return Array.from(scenarios).slice(0, 6);
+}
+
+function extractScenarioPhrases(topic: string): string[] {
+  const phrases = new Set<string>();
+  const normalized = topic.normalize("NFKC");
+
+  for (const match of normalized.matchAll(/([\p{Script=Han}A-Za-z0-9\s、，,和与及+/-]{2,24})场景/gu)) {
+    const raw = match[1] ?? "";
+    for (const part of raw.split(/[、，,和与及+/-]/u)) {
+      const phrase = part
+        .replace(/.*(?:在|用于|面向|针对)/u, "")
+        .replace(/(?:目前|当前|这类|工具|产品)$/u, "")
+        .trim();
+
+      if (phrase.length >= 2 && phrase.length <= 12) {
+        phrases.add(phrase);
+      }
+    }
+  }
+
+  for (const keyword of ["企业", "消费者", "开发者", "教育", "医疗", "金融", "办公", "代码辅助", "客服", "知识库", "风控"]) {
+    if (normalized.includes(keyword)) {
+      phrases.add(keyword);
+    }
+  }
+
+  return Array.from(phrases).slice(0, 6);
+}
+
+function buildTopicAnalysisQueries(input: {
+  cleanedTopic: string;
+  evidenceNeeds: EvidenceNeed[];
+  targetEntities: string[];
+  targetScenarios: string[];
+  topicType: EvidenceTopicType;
+}): string[] {
+  const base = input.cleanedTopic || "general discussion";
+  const entities = input.targetEntities.slice(0, 4);
+  const scenarios = input.targetScenarios.slice(0, 3);
+  const dimensions = input.evidenceNeeds
+    .map((need) => formatDimensionSearchTerm(need.dimension))
+    .filter(Boolean);
+  const entityPart = entities.join(" ");
+  const scenarioPart = scenarios.join(" ");
+  const primaryDimension = dimensions.slice(0, 2).join(" ");
+  const secondaryDimension = dimensions.slice(2, 5).join(" ");
+  const preciseDimension =
+    input.topicType === "entity_competition"
+      ? "funding revenue market adoption capability"
+      : primaryDimension;
+  const queries = [
+    [entityPart, scenarioPart, preciseDimension].filter(Boolean).join(" "),
+    [entityPart, primaryDimension, secondaryDimension].filter(Boolean).join(" "),
+    [entityPart, scenarioPart].filter(Boolean).join(" "),
+    [base, primaryDimension].filter(Boolean).join(" "),
+    [entityPart, getTopicTypeSearchTerm(input.topicType)].filter(Boolean).join(" "),
+    base,
+  ];
+
+  return dedupeTopicAnalysisQueries(queries).slice(0, 8);
+}
+
+function getTopicTypeSearchTerm(topicType: EvidenceTopicType): string {
+  if (topicType === "policy_regulation") return "regulation governance official";
+  if (topicType === "product_release_analysis") return "product release user feedback";
+  if (topicType === "capability_comparison") return "capability benchmark evaluation";
+  if (topicType === "investment_business_analysis") return "revenue funding market analysis";
+  if (topicType === "market_outlook") return "market analysis adoption";
+  if (topicType === "technical_research_analysis") return "technical capability benchmark";
+  if (topicType === "entity_competition") return "funding revenue market adoption capability";
+  return "expert opinion user feedback";
+}
+
+function dedupeTopicAnalysisQueries(queries: string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const query of queries) {
+    const compact = query.replace(/\s+/g, " ").trim();
+    const key = compact.toLowerCase();
+
+    if (!compact || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(compact);
+  }
+
+  return result;
+}
+
+export function formatDimensionSearchTerm(
+  dimension: EvidenceCoverageDimension,
+): string {
+  switch (dimension) {
+    case "technical_capability":
+      return "capability product";
+    case "benchmark_evaluation":
+      return "benchmark evaluation";
+    case "business_revenue":
+      return "revenue business model";
+    case "enterprise_adoption":
+      return "enterprise customers adoption";
+    case "funding_capital":
+      return "funding capital valuation";
+    case "regulation_governance":
+      return "regulation governance";
+    case "legal_lawsuit":
+      return "lawsuit legal";
+    case "market_analysis":
+      return "market analysis";
+    case "product_release":
+      return "product release";
+    case "ecosystem_developer":
+      return "developer ecosystem";
+    case "safety_alignment":
+      return "safety alignment";
+    case "user_feedback":
+      return "user feedback";
+    case "expert_opinion":
+      return "expert opinion";
+    case "official_position":
+      return "official statement";
+    default:
+      return "";
+  }
+}
+
+function hasCoreCoverageForTopic(input: {
+  coverageDimension: EvidenceCoverageDimension;
+  matchedQuestionAspects: string[];
+  topicType: EvidenceTopicType;
+}): boolean {
+  const dimension = input.coverageDimension;
+
+  if (dimension === "unknown") {
+    return false;
+  }
+
+  if (input.topicType === "capability_comparison") {
+    return (
+      dimension === "technical_capability" ||
+      dimension === "benchmark_evaluation" ||
+      dimension === "product_release" ||
+      dimension === "enterprise_adoption" ||
+      dimension === "user_feedback" ||
+      input.matchedQuestionAspects.includes("technical_capability")
+    );
+  }
+
+  if (input.topicType === "technical_research_analysis") {
+    return (
+      dimension === "technical_capability" ||
+      dimension === "benchmark_evaluation" ||
+      dimension === "safety_alignment" ||
+      dimension === "ecosystem_developer"
+    );
+  }
+
+  if (input.topicType === "product_release_analysis") {
+    return (
+      dimension === "product_release" ||
+      dimension === "technical_capability" ||
+      dimension === "user_feedback" ||
+      dimension === "enterprise_adoption" ||
+      dimension === "official_position"
+    );
+  }
+
+  if (input.topicType === "policy_regulation") {
+    return (
+      dimension === "regulation_governance" ||
+      dimension === "legal_lawsuit" ||
+      dimension === "official_position"
+    );
+  }
+
+  if (input.topicType === "investment_business_analysis") {
+    return (
+      dimension === "business_revenue" ||
+      dimension === "enterprise_adoption" ||
+      dimension === "funding_capital" ||
+      dimension === "market_analysis"
+    );
+  }
+
+  if (input.topicType === "market_outlook") {
+    return (
+      dimension === "market_analysis" ||
+      dimension === "enterprise_adoption" ||
+      dimension === "business_revenue" ||
+      dimension === "expert_opinion"
+    );
+  }
+
+  if (input.topicType === "entity_competition") {
+    return (
+      dimension === "business_revenue" ||
+      dimension === "enterprise_adoption" ||
+      dimension === "funding_capital" ||
+      dimension === "market_analysis" ||
+      dimension === "regulation_governance" ||
+      dimension === "legal_lawsuit" ||
+      dimension === "technical_capability" ||
+      dimension === "benchmark_evaluation" ||
+      dimension === "ecosystem_developer"
+    );
+  }
+
+  return (
+    dimension === "technical_capability" ||
+    dimension === "benchmark_evaluation" ||
+    dimension === "product_release" ||
+    dimension === "business_revenue" ||
+    dimension === "funding_capital" ||
+    dimension === "market_analysis" ||
+    dimension === "enterprise_adoption" ||
+    dimension === "user_feedback" ||
+    dimension === "expert_opinion" ||
+    dimension === "official_position"
+  );
+}
+
+function canBeSupportingCoverageForTopic(
+  input: {
+    coverageDimension: EvidenceCoverageDimension;
+    topicType: EvidenceTopicType;
+  },
+  hasCoreCoverage: boolean,
+): boolean {
+  if (hasCoreCoverage) {
+    return true;
+  }
+
+  if (
+    input.topicType === "capability_comparison" ||
+    input.topicType === "technical_research_analysis" ||
+    input.topicType === "product_release_analysis"
+  ) {
+    return false;
+  }
+
+  return input.coverageDimension !== "unknown";
+}
+
+function judgeEvidenceForTopic(input: {
+  coverageDimension: EvidenceCoverageDimension;
+  matchedQuestionAspects: string[];
+  reliability: EvidenceReliability;
+  score: number;
+  sourceType: EvidenceSourceType;
+  textLength: number;
+  topicType: EvidenceTopicType;
+  topicRelevanceScore: number;
+  snippetOnly: boolean;
+}): EvidenceJudgment {
+  const limitations: string[] = [];
+  const hasCoreCoverage = hasCoreCoverageForTopic(input);
+
+  if (input.snippetOnly || input.textLength < 800) {
+    limitations.push("正文不足，不能单独支撑结论。");
+  }
+
+  if (input.topicRelevanceScore < 60) {
+    limitations.push("议题相关度不足，最多作为背景线索。");
+  }
+
+  if (
+    input.sourceType === "social_forum" ||
+    input.sourceType === "video_platform" ||
+    input.sourceType === "official_community"
+  ) {
+    limitations.push("社区、论坛或视频来源不能作为核心事实证据。");
+  }
+
+  if (!hasCoreCoverage && input.coverageDimension !== "unknown") {
+    limitations.push("Evidence does not directly cover the topic's core scenario or comparison axis.");
+  }
+
+  const canBeCore =
+    (isStrongOfficialSource(input.sourceType) ||
+      input.sourceType === "reputable_media" ||
+      input.sourceType === "industry_report") &&
+    input.textLength >= 800 &&
+    input.snippetOnly !== true &&
+    input.topicRelevanceScore >= 60 &&
+    input.coverageDimension !== "unknown" &&
+    hasCoreCoverage &&
+    (input.reliability === "high" || input.reliability === "medium");
+  const role: EvidenceJudgment["role"] = canBeCore
+    ? "core"
+    : input.topicRelevanceScore >= 50 &&
+        input.coverageDimension !== "unknown" &&
+        canBeSupportingCoverageForTopic(input, hasCoreCoverage)
+      ? "supporting"
+      : input.topicRelevanceScore > 0
+        ? "background"
+        : "discard";
+  const confidence: EvidenceJudgment["confidence"] =
+    role === "core" && input.score >= 75
+      ? "high"
+      : role === "discard" || input.score < 45
+        ? "low"
+        : "medium";
+
+  return {
+    relevance: input.topicRelevanceScore,
+    role,
+    confidence,
+    reason: canBeCore
+      ? "来源、正文长度和议题相关度足以作为核心证据。"
+      : "该资料只能有限支持议题，需受使用边界约束。",
+    supports:
+      input.coverageDimension === "unknown" ? [] : [input.coverageDimension],
+    limitations,
+    suggestedUse:
+      role === "core"
+        ? "可用于支撑对应维度的结论。"
+        : role === "supporting"
+          ? "可作为辅助资料，不能单独支撑关键结论。"
+          : role === "background"
+            ? "仅适合提供背景或线索。"
+            : "不建议进入 Evidence Pack 正文论据。",
+  };
 }
 
 function getLikelyEntityCount(topic: string): number {

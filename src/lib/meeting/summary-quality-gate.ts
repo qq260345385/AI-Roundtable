@@ -34,20 +34,30 @@ export function applyEvidenceQualityGateToSummary(
 
   const downgradedFacts = [
     ...(dedupedSummary.confirmableFacts ?? []),
-    ...dedupedSummary.consensus,
   ];
+  const { discussionDifferences, evidenceLimitations } =
+    splitEvidenceLimitations(dedupedSummary.differences);
+  const discussionConsensus = dedupedSummary.consensus
+    .filter((item) => !isEmptyConsensusSentence(item))
+    .map(markAsDiscussionConsensus);
 
-  if (downgradedFacts.length === 0) {
+  if (
+    downgradedFacts.length === 0 &&
+    discussionConsensus.length === 0 &&
+    evidenceLimitations.length === 0
+  ) {
     return dedupedSummary;
   }
 
   return dedupeSummaryUncertainty({
     ...dedupedSummary,
-    consensus: [],
+    consensus: discussionConsensus,
+    differences: discussionDifferences,
     confirmableFacts: [],
     insufficientlyConfirmed: [
       ...(dedupedSummary.insufficientlyConfirmed ?? []),
       ...downgradedFacts.map(markAsInsufficientlyConfirmed),
+      ...evidenceLimitations,
     ],
   });
 }
@@ -77,7 +87,7 @@ function applyCoverageNoticeToConfirmableFacts(
   }
 
   const notice =
-    "当前可确认事实主要集中在技术与安全评估，尚不足以确认两家公司长期竞争胜负。";
+    "当前可确认事实尚未覆盖关键比较维度，不能据此确认综合结论。";
   const confirmableFacts = summary.confirmableFacts ?? [];
 
   if (confirmableFacts.some((fact) => normalizeSummaryPoint(fact) === normalizeSummaryPoint(notice))) {
@@ -210,6 +220,44 @@ function markAsInsufficientlyConfirmed(value: string): string {
   }
 
   return `${value}（仅由低可信资料支持，不能确认。）`;
+}
+
+function markAsDiscussionConsensus(value: string): string {
+  const withoutCitations = value.replace(/\s*\[[sS]\d+\]/g, "").trim();
+
+  if (withoutCitations.includes("主要来自模型推理，需资料验证")) {
+    return withoutCitations;
+  }
+
+  return `${withoutCitations}（讨论共识，主要来自模型推理，需资料验证。）`;
+}
+
+function splitEvidenceLimitations(items: string[]): {
+  discussionDifferences: string[];
+  evidenceLimitations: string[];
+} {
+  const discussionDifferences: string[] = [];
+  const evidenceLimitations: string[] = [];
+
+  for (const item of items) {
+    if (isEvidenceLimitationSentence(item)) {
+      evidenceLimitations.push(item);
+    } else {
+      discussionDifferences.push(item);
+    }
+  }
+
+  return { discussionDifferences, evidenceLimitations };
+}
+
+function isEvidenceLimitationSentence(value: string): boolean {
+  return /资料不足|证据不足|无法确认|不能确认|待核验|需要核验|insufficient evidence|not enough evidence|cannot confirm|needs verification/i.test(
+    value,
+  );
+}
+
+function isEmptyConsensusSentence(value: string): boolean {
+  return /^(无|没有|暂无|none|no consensus)[。.\s]*$/i.test(value.trim());
 }
 
 function dedupeSummaryUncertainty(summary: MeetingSummary): MeetingSummary {

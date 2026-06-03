@@ -99,14 +99,27 @@ export type SummaryDebug = {
 
 export type MeetingProviderFailure = {
   providerId: string;
+  participantName?: string;
   providerName: string;
   model: string;
   stage: "independent" | "response" | "summary";
+  errorType?:
+    | "api_error"
+    | "empty_output"
+    | "provider_rejected"
+    | "partial_output"
+    | "truncated_output"
+    | "timeout"
+    | "unknown";
   message: string;
+  statusCode?: number;
+  responseBodySummary?: string;
+  requestId?: string;
 };
 
 export type MeetingResult = {
   topic: string;
+  meetingStatus?: "completed" | "degraded" | "failed";
   phases: MeetingPhase[];
   summary: MeetingSummary;
   evidencePack?: EvidencePack;
@@ -115,6 +128,7 @@ export type MeetingResult = {
   citationCheck?: CitationCheckResult;
   failures?: MeetingProviderFailure[];
   hasPartialFailures?: boolean;
+  warnings?: string[];
   isBriefMode?: boolean;
   isTimeSensitive?: boolean;
   factCheckNotice?: string;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { OpenAICompatibleProvider, parseSummary } from "./openai-compatible-provider";
 import { exportMeetingToMarkdown } from "../meeting/export-markdown";
+import type { EvidencePack } from "../search/evidence-pack";
 
 describe("OpenAICompatibleProvider", () => {
   test("throws a clear error when api key is missing", () => {
@@ -328,7 +329,7 @@ describe("OpenAICompatibleProvider", () => {
         statusLabel: "已连接",
       },
     ];
-    const evidencePack = {
+    const evidencePack: EvidencePack = {
       enabled: true,
       items: [
         {
@@ -336,6 +337,16 @@ describe("OpenAICompatibleProvider", () => {
           title: "模型发布记录",
           source: "Example",
           url: "https://example.com/models",
+          quality: {
+            warnings: [],
+            textLength: 1200,
+            wasTruncated: false,
+            sourceType: "official_statement",
+            reliability: "high",
+            score: 90,
+            citationLevel: "fact",
+            citationGuidance: "Can support factual claims.",
+          },
           snippet: "资料包中的事实摘要",
         },
       ],

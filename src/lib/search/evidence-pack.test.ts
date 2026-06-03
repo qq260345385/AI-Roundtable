@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  analyzeTopicForEvidence,
   formatEvidencePackForPrompt,
   isCoreEvidenceItem,
   normalizeEvidencePack,
@@ -150,6 +151,100 @@ describe("normalizeEvidencePack", () => {
     ).toBe(false);
   });
 
+  test("analyzes topic type into generic evidence needs and search queries", () => {
+    const analysis = analyzeTopicForEvidence("甲方平台和乙方平台长期竞争格局比较");
+
+    expect(analysis.topicType).toBe("entity_competition");
+    expect(analysis.evidenceNeeds.map((need) => need.dimension)).toEqual(
+      expect.arrayContaining([
+        "technical_capability",
+        "business_revenue",
+        "enterprise_adoption",
+        "funding_capital",
+        "regulation_governance",
+        "market_analysis",
+      ]),
+    );
+    expect(analysis.searchQueries.length).toBeGreaterThan(0);
+    expect(analysis.searchQueries.join(" ")).toContain("甲方平台");
+    expect(analysis.searchQueries.join(" ")).not.toContain("OpenAI");
+    expect(analysis.searchQueries.join(" ")).not.toContain("Anthropic");
+  });
+
+  test("cleans Chinese discussion shells while preserving entities and scenarios", () => {
+    const analysis = analyzeTopicForEvidence(
+      "你们认为 AlphaAI、BetaAI 这类工具目前在中文办公和代码辅助场景中的竞争力怎么样？",
+    );
+
+    expect(analysis.cleanedTopic).toContain("AlphaAI");
+    expect(analysis.cleanedTopic).toContain("BetaAI");
+    expect(analysis.cleanedTopic).not.toContain("你们认为");
+    expect(analysis.cleanedTopic).not.toContain("怎么样");
+    expect(analysis.targetEntities).toEqual(
+      expect.arrayContaining(["AlphaAI", "BetaAI"]),
+    );
+    expect(analysis.targetScenarios.join(" ")).toMatch(/中文办公|代码辅助|office|coding/);
+    expect(analysis.searchQueries.join("\n")).toContain("AlphaAI");
+    expect(analysis.searchQueries.join("\n")).toMatch(
+      /中文办公|代码辅助|office|coding|capability|adoption/,
+    );
+    expect(analysis.searchQueries.join("\n")).not.toContain("你们认为");
+  });
+
+  test("judges evidence role separately from source score", () => {
+    const coreQuality = scoreEvidence({
+      title: "Enterprise adoption and revenue analysis",
+      url: "https://reuters.com/technology/example-analysis",
+      snippet:
+        "The article covers enterprise customer adoption, revenue quality, funding capacity, market share, regulation, governance, and long-term competitive position. ".repeat(
+          12,
+        ),
+      topic: "甲方平台和乙方平台长期竞争格局比较",
+    });
+    const weakQuality = scoreEvidence({
+      title: "Forum rumor about enterprise adoption",
+      url: "https://reddit.com/r/example/comments/123",
+      snippet: "Some users discuss enterprise adoption and market share.",
+      topic: "甲方平台和乙方平台长期竞争格局比较",
+    });
+
+    expect(coreQuality.evidenceJudgment?.role).toBe("core");
+    expect(coreQuality.evidenceJudgment?.supports.length).toBeGreaterThan(0);
+    expect(weakQuality.evidenceJudgment?.role).not.toBe("core");
+    expect(weakQuality.evidenceJudgment?.limitations.join(" ")).toContain(
+      "正文不足",
+    );
+  });
+
+  test("does not promote peripheral funding or strategy coverage to core for capability scenarios", () => {
+    const topic =
+      "Compare Kimi, GLM, GPT-4o, and Claude in Chinese office automation and coding assistance.";
+    const quality = scoreEvidence({
+      title: "AI company funding and market strategy update",
+      url: "https://reuters.com/technology/ai-funding-strategy",
+      snippet:
+        "The article discusses financing rounds, valuation, investor appetite, capital market narratives, market strategy, management positioning, and company expansion plans. It does not compare Chinese office automation, coding assistance, model capability, developer workflow, enterprise deployment, user feedback, or benchmark evidence. ".repeat(
+          8,
+        ),
+      topic,
+    });
+
+    expect(quality.coverageDimension).toMatch(/funding_capital|market_analysis/);
+    expect(quality.evidenceJudgment?.role).not.toBe("core");
+    expect(
+      isCoreEvidenceItem({
+        id: "S1",
+        title: "AI company funding and market strategy update",
+        url: "https://reuters.com/technology/ai-funding-strategy",
+        snippet:
+          "The article discusses financing rounds, valuation, investor appetite, capital market narratives, market strategy, management positioning, and company expansion plans. ".repeat(
+            8,
+          ),
+        quality,
+      }),
+    ).toBe(false);
+  });
+
   test("uses domain only for source identity and source credibility, not topic relevance or coverage", () => {
     const topic = "比较两家企业的长期竞争格局";
     const sharedEvidence = {
@@ -228,6 +323,45 @@ describe("normalizeEvidencePack", () => {
     expect(overview.coverageCompleteness).toBeLessThan(1);
     expect(overview.weakCoveredDimensions.length).toBeGreaterThan(0);
     expect(overview.strongCoveredDimensions).toHaveLength(0);
+  });
+
+  test("uses Topic Analyzer evidence needs for visible missing dimensions", () => {
+    const pack = normalizeEvidencePack({
+      enabled: true,
+      searchProcess: {
+        executedQueries: ["Acme docs user feedback"],
+        topicAnalysis: {
+          topicType: "general_discussion",
+          targetEntities: ["Acme"],
+          targetScenarios: ["office"],
+          comparisonAxes: ["expert_opinion", "user_feedback"],
+          evidenceNeeds: [
+            { dimension: "expert_opinion", reason: "Need expert framing." },
+            { dimension: "user_feedback", reason: "Need user feedback." },
+          ],
+          timeSensitivity: "low",
+          freshnessRequirement: "any",
+          searchQueries: ["Acme office user feedback expert opinion"],
+        },
+      },
+      items: [
+        {
+          title: "Acme user feedback",
+          url: "https://example.com/acme-feedback",
+          snippet: "Users discuss workflow feedback and office adoption. ".repeat(20),
+        },
+      ],
+    });
+    const overview = summarizeEvidenceQuality(pack);
+
+    expect(overview.missingDimensions).toEqual([
+      "expert_opinion",
+      "user_feedback",
+    ]);
+    expect(overview.missingDimensions).not.toContain("business_revenue");
+    expect(overview.missingDimensions).not.toContain("regulation_governance");
+    expect(overview.missingDimensions).not.toContain("legal_lawsuit");
+    expect(overview.comparisonAxes).toEqual(["expert_opinion", "user_feedback"]);
   });
 
   test("classifies localized Chinese media domains instead of unknown", () => {
@@ -996,6 +1130,80 @@ describe("normalizeEvidencePack", () => {
     expect(prompt).not.toContain("$10 billion");
     expect(prompt).not.toContain("$100 billion");
     expect(prompt).not.toContain("1234 points");
+  });
+
+  test("does not expose discard-only evidence as citable prompt sources", () => {
+    const prompt = formatEvidencePackForPrompt({
+      enabled: true,
+      evidenceStatus: "low",
+      items: [
+        {
+          id: "S1",
+          title: "Discarded rumor",
+          snippet: "A weak rumor that should not be cited.",
+          quality: {
+            warnings: [],
+            textLength: 40,
+            wasTruncated: false,
+            sourceType: "social_forum",
+            reliability: "very_low",
+            score: 15,
+            citationLevel: "not_citable",
+            citationGuidance: "Do not cite this result as evidence.",
+            evidenceJudgment: {
+              role: "discard",
+              confidence: "low",
+              relevance: 10,
+              reason: "Not relevant enough.",
+              supports: [],
+              limitations: ["Discarded evidence."],
+              suggestedUse: "Do not use.",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(prompt).toContain("No citable evidence is available");
+    expect(prompt).not.toContain("[S1]");
+    expect(prompt).not.toContain("A weak rumor that should not be cited.");
+  });
+
+  test("labels background evidence as non-supporting when included in prompts", () => {
+    const prompt = formatEvidencePackForPrompt({
+      enabled: true,
+      evidenceStatus: "low",
+      items: [
+        {
+          id: "S1",
+          title: "Context article",
+          snippet: "Background context for the topic.",
+          quality: {
+            warnings: [],
+            textLength: 900,
+            wasTruncated: false,
+            sourceType: "reputable_media",
+            reliability: "medium",
+            score: 62,
+            citationLevel: "context_only",
+            citationGuidance: "Use only as context.",
+            evidenceJudgment: {
+              role: "background",
+              confidence: "medium",
+              relevance: 55,
+              reason: "Contextual but not direct.",
+              supports: ["market_analysis"],
+              limitations: ["Background only."],
+              suggestedUse: "Use only as background.",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(prompt).toContain("[S1]");
+    expect(prompt).toContain("Background evidence cannot support core conclusions");
+    expect(prompt).toContain("Do not cite background evidence as proof");
   });
 
   test("formats native file intent with a text fallback note", () => {

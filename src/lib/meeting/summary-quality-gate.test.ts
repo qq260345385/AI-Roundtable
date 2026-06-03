@@ -41,6 +41,30 @@ function createEvidencePack(): EvidencePack {
   };
 }
 
+function createLowOnlyEvidencePack(): EvidencePack {
+  return {
+    enabled: true,
+    evidenceStatus: "low",
+    items: [
+      {
+        id: "S1",
+        title: "Low quality discussion",
+        snippet: "Community discussion only.",
+        quality: {
+          warnings: [],
+          textLength: 120,
+          wasTruncated: false,
+          sourceType: "social_forum",
+          reliability: "low",
+          score: 30,
+          citationLevel: "context_only",
+          citationGuidance: "Use only as context.",
+        },
+      },
+    ],
+  };
+}
+
 describe("applyEvidenceQualityGateToSummary", () => {
   test("moves low-evidence citations out of confirmable facts", () => {
     const summary: MeetingSummary = {
@@ -142,5 +166,36 @@ describe("applyEvidenceQualityGateToSummary", () => {
       "多数模型认为该融资传闻需要继续核验。",
     ]);
     expect(gated.insufficientlyConfirmed).toEqual([]);
+  });
+
+  test("keeps discussion consensus in low-evidence mode with an explicit verification marker", () => {
+    const summary: MeetingSummary = {
+      consensus: [
+        "Multiple participants agree the product is competitive in office workflows.",
+      ],
+      differences: [
+        "当前资料不足以确认市场份额。",
+        "Some participants emphasize office workflows while others emphasize coding assistance.",
+      ],
+      minorityViews: [],
+      confirmableFacts: [],
+      initialHypotheses: [],
+      insufficientlyConfirmed: [],
+      risks: [],
+      nextSteps: [],
+    };
+
+    const gated = applyEvidenceQualityGateToSummary(summary, createLowOnlyEvidencePack());
+
+    expect(gated.consensus).toEqual([
+      expect.stringContaining("主要来自模型推理，需资料验证"),
+    ]);
+    expect(gated.consensus[0]).toContain("Multiple participants agree");
+    expect(gated.differences).toEqual([
+      "Some participants emphasize office workflows while others emphasize coding assistance.",
+    ]);
+    expect(gated.insufficientlyConfirmed ?? []).toEqual(
+      expect.arrayContaining(["当前资料不足以确认市场份额。"]),
+    );
   });
 });

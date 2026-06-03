@@ -6,6 +6,43 @@ import { MeetingBoard } from "./MeetingBoard";
 import { MeetingRoom } from "./MeetingRoom";
 
 describe("MeetingBoard", () => {
+  test("shows a clear failed meeting status when valid models are insufficient", () => {
+    const meeting: MeetingResult = {
+      topic: "Failure handling",
+      meetingStatus: "failed",
+      warnings: ["有效发言模型少于 2 个，无法形成可靠圆桌讨论。"],
+      phases: [],
+      summary: {
+        consensus: ["本轮有效发言模型少于 2 个，无法形成可靠共识。"],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+      failures: [
+        {
+          providerId: "mimo",
+          participantName: "MiMo",
+          providerName: "Xiaomi",
+          model: "mimo-v2.5",
+          stage: "independent",
+          errorType: "provider_rejected",
+          message:
+            "The request was rejected because it was considered high risk",
+        },
+      ],
+      hasPartialFailures: true,
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingBoard meeting={meeting} text={getUiText("zh")} />,
+    );
+
+    expect(html).toContain("会议未形成有效圆桌讨论");
+    expect(html).toContain("有效发言模型少于 2 个");
+    expect(html).toContain("部分模型调用失败");
+  });
+
   test("renders a compact web search status by default", () => {
     const meeting: MeetingResult = {
       topic: "AI model benchmark",
@@ -124,7 +161,7 @@ describe("MeetingBoard", () => {
     expect(html).not.toContain("Weaker");
   });
 
-  test("renders full web search diagnostics when the API returns debugSearchProcess", () => {
+  test("renders localized web search diagnostics when the API returns debugSearchProcess", () => {
     const meeting: MeetingResult = {
       topic: "AI model benchmark",
       phases: [],
@@ -236,16 +273,23 @@ describe("MeetingBoard", () => {
     };
 
     const html = renderToStaticMarkup(
-      <MeetingBoard meeting={meeting} text={getUiText("en")} />,
+      <MeetingBoard meeting={meeting} text={getUiText("zh")} />,
     );
 
-    expect(html).toContain("Developer search details");
+    expect(html).toContain("搜索调试详情");
     expect(html).toContain("GPT Mock");
     expect(html).toContain("Which benchmark sources discuss the latest AI model ranking?");
     expect(html).toContain("AI model benchmark community");
-    expect(html).toContain("vague_intent");
-    expect(html).toContain("very_low_quality");
-    expect(html).toContain("Raw searchProcess");
+    expect(html).toContain("最新");
+    expect(html).toContain("评测资料");
+    expect(html).toContain("必须包含");
+    expect(html).toContain("意图过于宽泛");
+    expect(html).toContain("极低可信");
+    expect(html).not.toContain("freshness:");
+    expect(html).not.toContain("source:");
+    expect(html).not.toContain("vague_intent");
+    expect(html).not.toContain("very_low_quality");
+    expect(html).not.toContain("Raw searchProcess");
   });
 
   test("renders the web search process area in the meeting room result page", () => {

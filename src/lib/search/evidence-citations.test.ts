@@ -64,11 +64,15 @@ describe("checkEvidenceCitations", () => {
   test("recognizes valid citations", () => {
     const result = checkEvidenceCitations("According to [S1].", evidencePack);
 
+    expect(result.existingCitationIds).toEqual(["S1", "S2"]);
+    expect(result.citableCitationIds).toEqual(["S1"]);
     expect(result.validCitationIds).toEqual(["S1", "S2"]);
     expect(result.usedCitationIds).toEqual(["S1"]);
     expect(result.invalidCitationIds).toEqual([]);
+    expect(result.downgradedCitationIds).toEqual([]);
     expect(result.hasInvalidCitations).toBe(false);
     expect(result.hasWeakCitations).toBe(false);
+    expect(result.hasCitationDisciplineWarning).toBe(false);
   });
 
   test("recognizes invalid citations", () => {
@@ -89,16 +93,39 @@ describe("checkEvidenceCitations", () => {
 
     expect(result.invalidCitationIds).toEqual([]);
     expect(result.hasInvalidCitations).toBe(false);
+    expect(result.downgradedCitationIds).toEqual(["S2"]);
     expect(result.weakCitationIds).toEqual(["S2"]);
     expect(result.hasWeakCitations).toBe(true);
+    expect(result.hasCitationDisciplineWarning).toBe(true);
     expect(result.citationWarnings).toEqual([
-      "S2 is context-only evidence and should not support factual claims.",
+      "S2 is downgraded or context-only evidence and should not be cited as support.",
+    ]);
+  });
+
+  test("warns when no citable evidence exists but the body cites an existing source", () => {
+    const lowOnlyPack: EvidencePack = {
+      enabled: true,
+      items: [evidencePack.items[1]],
+    };
+
+    const result = checkEvidenceCitations("Unsupported factual claim [S2].", lowOnlyPack);
+
+    expect(result.existingCitationIds).toEqual(["S2"]);
+    expect(result.citableCitationIds).toEqual([]);
+    expect(result.invalidCitationIds).toEqual([]);
+    expect(result.downgradedCitationIds).toEqual(["S2"]);
+    expect(result.hasCitationDisciplineWarning).toBe(true);
+    expect(result.citationWarnings).toEqual([
+      "No citable evidence is available, but the text used citation IDs.",
+      "S2 is downgraded or context-only evidence and should not be cited as support.",
     ]);
   });
 
   test("does not crash without an enabled evidence pack", () => {
     const result = checkEvidenceCitations("Still extracts [S9].");
 
+    expect(result.existingCitationIds).toEqual([]);
+    expect(result.citableCitationIds).toEqual([]);
     expect(result.validCitationIds).toEqual([]);
     expect(result.usedCitationIds).toEqual(["S9"]);
     expect(result.missingCitationIds).toEqual([]);

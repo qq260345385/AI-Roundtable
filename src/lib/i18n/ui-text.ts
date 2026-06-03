@@ -28,7 +28,7 @@ export const UI_TEXT = {
       searchRegionDescription: "控制 Tavily 搜索的地区过滤。不影响证据可靠性评分。",
       searchRegionOptions: {
         auto: "自动（根据议题判断，无法判断时使用全球搜索）",
-        global: "全球（不限制 Tavily country 参数）",
+        global: "全球（不限制 Tavily 的国家地区参数）",
         china: "中国",
         us: "美国",
         europe: "欧洲（如 Tavily 不支持，按全球搜索处理）",
@@ -49,11 +49,13 @@ export const UI_TEXT = {
       participantCount: "参会模型",
       phaseCount: "会议阶段",
       loadingMode: "加载中",
+      realMode: "真实模式",
+      mockMode: "模拟模式",
       realDescription:
-        "Real 模式需要在 .env.local 中配置 OpenAI-compatible provider。",
+        "真实模式需要在 .env.local 中配置兼容 OpenAI 接口的模型服务。",
       mockDescription:
-        "Mock 模式使用模拟模型，不需要 API key，不代表真实 API 已配置。",
-      loadingDescription: "正在读取 provider 配置。",
+        "模拟模式使用模拟模型，不需要 API key，不代表真实 API 已配置。",
+      loadingDescription: "正在读取模型服务配置。",
     },
     participants: {
       title: "参会模型",
@@ -61,11 +63,11 @@ export const UI_TEXT = {
       selected: "已选",
       loading: "正在加载参会模型。",
       realEmpty:
-        "当前 real 模式下没有可用于会议的模型，请检查 provider 配置。",
+        "当前真实模式下没有可用于会议的模型，请检查模型服务配置。",
       empty: "当前没有可用于会议的模型。",
-      modelLabel: "model",
+      modelLabel: "模型",
       status: {
-        mock: "Mock / 无需 API",
+        mock: "模拟 / 无需 API",
         available: "已连接",
         detected: "已检测",
         unconfigured: "未配置",
@@ -82,13 +84,13 @@ export const UI_TEXT = {
       },
     },
     providerNotice: {
-      loading: "正在读取 provider 配置和模型状态。",
+      loading: "正在读取模型服务配置和模型状态。",
       error: "模型列表加载失败，请稍后重试或检查 /api/models。",
-      mock: "当前是 Mock 模式，使用模拟模型，不需要 API key，也不代表真实 API 已配置。",
+      mock: "当前是模拟模式，使用模拟模型，不需要 API key，也不代表真实 API 已配置。",
       realEmpty:
-        "当前 real 模式下没有可用模型，请检查 .env.local 中的 provider 配置。",
-      real: "当前是 Real 模式，需要在 .env.local 中配置 OpenAI-compatible provider。已连接或配置完整但未验证的 provider 可能参与会议。",
-      unknown: "正在读取 provider 配置。",
+        "当前真实模式下没有可用模型，请检查 .env.local 中的模型服务配置。",
+      real: "当前是真实模式，需要在 .env.local 中配置兼容 OpenAI 接口的模型服务。已连接或配置完整但未验证的模型服务可能参与会议。",
+      unknown: "正在读取模型服务配置。",
     },
     unavailable: {
       title: "未启用的模型",
@@ -98,8 +100,8 @@ export const UI_TEXT = {
         detected: "从检测到的模型中选择一个，填写到对应的 MODEL。",
         modelNotFound: "检查 MODEL 是否拼写正确，或改用检测到的模型。",
         configuredUnverified:
-          "检查 base URL、网络或 provider 的 /models 兼容性。",
-        default: "检查 .env.local 中的 API key、base URL 和 MODEL。",
+          "检查基础地址、网络连接，或模型服务的 /models 接口兼容性。",
+        default: "检查 .env.local 中的 API key、基础地址和 MODEL。",
       },
     },
     diagram: {
@@ -130,7 +132,7 @@ export const UI_TEXT = {
         modelsLoadFailed: "模型列表加载失败：",
         questionRequired: "请输入一个问题后再开始圆桌会议。",
         realNoModels:
-          "当前 real 模式下没有可用模型，请检查 .env.local 中的 provider 配置。",
+          "当前真实模式下没有可用模型，请检查 .env.local 中的模型服务配置。",
         selectParticipant: "请至少选择一个参会模型。",
         evidenceRequired:
           "启用资料包时，请先选择至少一个可解析出文本内容的本地文件。",
@@ -151,10 +153,10 @@ export const UI_TEXT = {
       strategyTitle: "文档输入方式",
       strategyTextPack: "长文本资料包",
       strategyTextPackDescription:
-        "把本地解析后的文档文本放入统一资料包，兼容所有 OpenAI-compatible provider。",
+        "把本地解析后的文档文本放入统一资料包，兼容所有采用 OpenAI 接口格式的模型服务。",
       strategyNativeFile: "优先原生附件",
       strategyNativeFileDescription:
-        "表达“希望以附件方式使用文档”；当前通用 provider 未声明附件能力时会自动回退为长文本资料包。",
+        "表达“希望以附件方式使用文档”；当前通用模型服务未声明附件能力时会自动回退为长文本资料包。",
       strategyAuto: "自动选择",
       strategyAutoDescription:
         "保留原生附件扩展入口；现阶段会使用长文本资料包兜底。",
@@ -247,6 +249,11 @@ export const UI_TEXT = {
       citationTitle: "引用检查",
       citationInvalid: "检测到模型引用了资料包中不存在的编号：",
       citationPassed: "引用检查通过：未发现不存在的资料编号。",
+      citationCitable: "可引用资料编号：",
+      citationUsed: "已使用资料编号：",
+      citationDowngraded: "被引用的降级资料编号：",
+      citationDisciplineWarning:
+        "检测到正文引用了被降级资料，或在没有可引用资料时使用了资料编号。",
       factTitle: "事实核验提示",
       evidenceStatusTitle: "事实核验状态",
       evidenceStatus: {
@@ -256,13 +263,28 @@ export const UI_TEXT = {
         none: "本次会议没有可用联网资料，主要基于模型已有知识和推理。",
       },
       failureTitle: "部分模型调用失败",
+      meetingStatus: {
+        failedTitle: "会议未形成有效圆桌讨论",
+        failedDescription: "有效模型不足，本轮未形成可靠圆桌讨论。",
+        degradedTitle: "会议已降级",
+        degradedDescription: "部分模型调用失败，本轮会议已降级。",
+      },
       searchProcess: {
         title: "联网搜索过程",
         evidenceModeTitle: "证据模式",
+        developerDetailsTitle: "搜索调试详情",
         intentTitle: "模型提出的搜索方向",
-        queryTitle: "实际 Tavily 查询",
+        queryTitle: "实际联网查询",
+        queryGenerationTitle: "查询生成说明",
         qualityTitle: "资料质量概览",
         filteredTitle: "被过滤资料",
+        intentDecisionTitle: "合并或丢弃的搜索意图",
+        mergedIntoLabel: "合并到",
+        freshnessLabel: "时效要求",
+        sourcePreferenceLabel: "资料偏好",
+        mustIncludeLabel: "必须包含",
+        shouldIncludeLabel: "建议包含",
+        excludeLabel: "排除",
         totalResults: "结果",
         included: "入包",
         filtered: "过滤",
@@ -294,8 +316,38 @@ export const UI_TEXT = {
           no_reliable_sources: "没有可靠来源",
           realtime_unverified: "实时事实未核验",
         },
+        freshnessLabels: {
+          latest: "最新",
+          recent: "近期",
+          any: "不限",
+        },
+        sourcePreferenceLabels: {
+          official: "官方资料",
+          benchmark: "评测资料",
+          media: "媒体/独立报道",
+          community: "社区讨论",
+          mixed: "综合来源",
+        },
+        intentDecisionActionLabels: {
+          used: "已使用",
+          merged: "已合并",
+          discarded: "已丢弃",
+        },
+        intentDecisionReasonLabels: {
+          usable_query: "可用查询",
+          vague_intent: "意图过于宽泛",
+          duplicate_query: "与已有查询重复",
+          empty_query: "未生成有效查询",
+          fallback_topic_query: "使用议题分析兜底查询",
+        },
+        reliabilityLabels: {
+          high: "高可信",
+          medium: "中等可信",
+          low: "低可信",
+          very_low: "极低可信",
+        },
         reasonLabels: {
-          very_low_quality: "质量 very_low",
+          very_low_quality: "极低可信",
           exceeds_evidence_pack_limit: "超过资料包上限",
         },
       },
@@ -370,6 +422,8 @@ export const UI_TEXT = {
       participantCount: "Participants",
       phaseCount: "Phases",
       loadingMode: "Loading",
+      realMode: "Real",
+      mockMode: "Mock",
       realDescription:
         "Real mode requires an OpenAI-compatible provider in .env.local.",
       mockDescription:
@@ -573,6 +627,11 @@ export const UI_TEXT = {
       citationInvalid:
         "Detected citation IDs that do not exist in the evidence pack: ",
       citationPassed: "Citation check passed: no missing evidence IDs found.",
+      citationCitable: "Citable evidence IDs: ",
+      citationUsed: "Used evidence IDs: ",
+      citationDowngraded: "Cited downgraded evidence IDs: ",
+      citationDisciplineWarning:
+        "The body cited downgraded evidence, or used citation IDs when no citable evidence was available.",
       factTitle: "Fact-check Note",
       evidenceStatusTitle: "Fact Verification Status",
       evidenceStatus: {
@@ -581,14 +640,31 @@ export const UI_TEXT = {
         low: "No high-quality web evidence was found. Switched to low-evidence meeting mode; real-time factual claims need manual verification.",
         none: "No usable web evidence was available. The meeting relies mainly on model knowledge and reasoning.",
       },
+      meetingStatus: {
+        failedTitle: "No reliable roundtable formed",
+        failedDescription:
+          "Not enough models produced valid turns, so this round did not form a reliable roundtable discussion.",
+        degradedTitle: "Meeting degraded",
+        degradedDescription:
+          "Some model calls failed, so this meeting was completed in degraded mode.",
+      },
       failureTitle: "Some model calls failed",
       searchProcess: {
         title: "Web Search Process",
         evidenceModeTitle: "Evidence mode",
+        developerDetailsTitle: "Search debug details",
         intentTitle: "Model search directions",
         queryTitle: "Actual Tavily queries",
+        queryGenerationTitle: "Query generation",
         qualityTitle: "Evidence quality overview",
         filteredTitle: "Filtered evidence",
+        intentDecisionTitle: "Merged or dropped search intents",
+        mergedIntoLabel: "Merged into",
+        freshnessLabel: "Freshness",
+        sourcePreferenceLabel: "Source preference",
+        mustIncludeLabel: "Must include",
+        shouldIncludeLabel: "Should include",
+        excludeLabel: "Exclude",
         totalResults: "Results",
         included: "Packed",
         filtered: "Filtered",
@@ -623,8 +699,38 @@ export const UI_TEXT = {
           no_reliable_sources: "No reliable sources",
           realtime_unverified: "Real-time facts are unverified",
         },
+        freshnessLabels: {
+          latest: "Latest",
+          recent: "Recent",
+          any: "Any",
+        },
+        sourcePreferenceLabels: {
+          official: "Official sources",
+          benchmark: "Benchmark sources",
+          media: "Media/independent reports",
+          community: "Community discussion",
+          mixed: "Mixed sources",
+        },
+        intentDecisionActionLabels: {
+          used: "Used",
+          merged: "Merged",
+          discarded: "Discarded",
+        },
+        intentDecisionReasonLabels: {
+          usable_query: "Usable query",
+          vague_intent: "Intent is too vague",
+          duplicate_query: "Duplicate query",
+          empty_query: "No valid query generated",
+          fallback_topic_query: "Used topic-analysis fallback query",
+        },
+        reliabilityLabels: {
+          high: "High reliability",
+          medium: "Medium reliability",
+          low: "Low reliability",
+          very_low: "Very low reliability",
+        },
         reasonLabels: {
-          very_low_quality: "very_low quality",
+          very_low_quality: "Very low reliability",
           exceeds_evidence_pack_limit: "Evidence pack limit exceeded",
         },
       },
