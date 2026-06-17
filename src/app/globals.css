@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f4f5;
-  --foreground: #171717;
+  --background: #f7f7f2;
+  --foreground: #18181b;
+  --surface: rgba(255, 255, 252, 0.92);
+  --surface-muted: rgba(247, 248, 242, 0.82);
+  --line-soft: rgba(39, 39, 42, 0.1);
+  --brand: #047857;
+  --brand-strong: #065f46;
+  --brand-soft: #dff7ea;
+  --ink-muted: #52525b;
+  --warm: #f5c66b;
 }
 
 @theme inline {
@@ -16,6 +24,70 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+::selection {
+  background: rgba(4, 120, 87, 0.18);
+}
+
+@layer components {
+  .app-backdrop {
+    background:
+      radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.18), transparent 28rem),
+      radial-gradient(circle at 88% 0%, rgba(245, 158, 11, 0.14), transparent 26rem),
+      linear-gradient(180deg, #fbfbf6 0%, #f3f4ee 54%, #eef3ef 100%);
+    position: relative;
+  }
+
+  .app-backdrop::before {
+    background-image:
+      linear-gradient(rgba(24, 24, 27, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(24, 24, 27, 0.035) 1px, transparent 1px);
+    background-size: 28px 28px;
+    content: "";
+    inset: 0;
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 72%);
+    pointer-events: none;
+    position: fixed;
+  }
+
+  .surface-panel {
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 8px;
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.9) inset,
+      0 18px 48px rgba(39, 39, 42, 0.08);
+    backdrop-filter: blur(14px);
+  }
+
+  .surface-card {
+    background: var(--surface-muted);
+    border: 1px solid rgba(39, 39, 42, 0.09);
+    border-radius: 8px;
+  }
+
+  .control-button {
+    border-radius: 8px;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .control-button:hover {
+    transform: translateY(-1px);
+  }
+
+  .focus-ring {
+    outline: none;
+  }
+
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.24);
+  }
 }
 
 @keyframes meetingFadeIn {

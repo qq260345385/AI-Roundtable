@@ -1,36 +1,54 @@
 # AI Roundtable
 
-AI Roundtable 是一个让多个 AI 模型坐在同一张“圆桌”上讨论问题的网页应用。
+> 多模型圆桌会议系统。输入一个议题，让多个 AI 模型按阶段独立发言、互相回应，并整理出清晰的共识、分歧与下一步。
 
-你只需要输入一个议题，选择想邀请的模型，系统会让它们先独立表达观点，再互相补充、质疑和修正，最后整理成一份清晰的会议纪要。
+当前版本：`v0.6.4`
 
-当前版本：`v0.6.2 internal alpha`
+AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让它们以平等参会者的方式讨论同一个问题。系统提供会议流程、资料包、联网搜索、引用检查和 Markdown 导出，让用户更容易看见不同模型的判断路径。
 
-## 它适合做什么
+## 适合做什么
 
-- 对一个复杂问题快速获得多角度判断
-- 比较不同模型的思考方式，而不是只看单个回答
-- 围绕资料、网页搜索结果或本地文档组织讨论
-- 生成可复制、可归档的会议纪要
-- 在做产品、研究、投资、学习、写作前先进行一次“多人脑暴”
+- 快速获得一个复杂问题的多角度判断。
+- 比较不同模型在同一议题下的推理方式和表达重点。
+- 围绕网页资料、本地文档或联网搜索结果组织讨论。
+- 生成可复制、可归档、可继续加工的会议纪要。
+- 在产品、研究、学习、写作或决策前做一次结构化头脑风暴。
 
-AI Roundtable 不希望把模型伪装成固定部门或固定专家。模型会以平等参会者的方式讨论，系统只用轻量关注点减少重复，而不是要求模型扮演某个角色。
+## 核心体验
 
-## 主要功能
+### 三阶段圆桌会议
 
-- 多模型圆桌会议：同一议题下，多位模型依次发言。
-- 三阶段讨论流程：独立观点、自由回应、共识整理。
-- 实时会议过程：模型完成一段发言后，页面立即展示。
-- 联网搜索资料包：可启用 Tavily 搜索，把网页资料整理成统一 Evidence Pack。
-- 搜索驱动模型可选：开启联网搜索后，可以选择一个已接入模型主导搜索方向。
-- 总结模型可选：第三阶段纪要可以指定一个模型负责汇总。
-- 圆桌席位可调整：可拖动交换模型席位，后续发言顺序和编号会同步变化。
-- 本地资料导入：支持把文档解析成资料包，让所有模型基于同一批材料讨论。
-- 引用检查：会议结束后检查模型是否引用了不存在的资料编号。
-- 中英文界面切换：适合中文用户，也保留英文界面。
-- Markdown 导出：一键复制会议纪要，方便保存、分享或二次整理。
+1. **独立观点**：每个模型先不受其他发言影响，独立表达看法。
+2. **自由回应**：模型阅读前一阶段发言后，补充、质疑或修正观点。
+3. **共识整理**：系统汇总讨论共识、真实分歧、风险点与下一步。
 
-## 体验方式
+### 联网 Evidence 链路
+
+启用联网搜索后，系统会先广搜候选资料，再精选 Evidence Pack：
+
+- Candidate Retrieval：广泛召回候选资料，深度搜索目标约 60 条候选。
+- Evidence Selection：从候选中筛选 8-12 条更适合会议引用的资料。
+- Evidence Judge：按直接证据、辅助证据、背景资料和被降级资料分区。
+- Low-Evidence Mode：如果资料不足以支撑强结论，会明确提示证据限制。
+- Citation Check：会议结束后检查正文引用是否有效，区分可引用资料和降级资料。
+
+### 资料与本地文件
+
+你可以手动导入本地资料，也可以让系统联网搜索资料。资料会统一编号为 `S1`、`S2`、`S3` 等，供模型在讨论中引用。
+
+文件只发送到本地解析接口提取文本，不保存原文件。
+
+### 界面与交互
+
+- 中文优先的轻量圆桌会议界面。
+- 支持中英文界面切换。
+- 可选择参会模型、总结模型和联网搜索驱动模型。
+- 支持简要会议模式。
+- 支持圆桌席位拖拽调整。
+- 支持历史会议本地保存与重新打开。
+- 支持会议纪要 Markdown 一键复制。
+
+## 快速开始
 
 ### 1. 安装依赖
 
@@ -38,31 +56,37 @@ AI Roundtable 不希望把模型伪装成固定部门或固定专家。模型会
 npm install
 ```
 
-### 2. 本地启动
+### 2. 启动开发服务
 
 ```bash
 npm run dev
 ```
 
-### 3. 接入真实模型
+默认访问：
 
-如果你想让真实模型参加圆桌会议，先复制环境变量示例：
+```text
+http://localhost:3000
+```
+
+### 3. 配置真实模型
+
+复制环境变量示例：
 
 ```bash
 copy .env.example .env.local
 ```
 
-然后在 `.env.local` 里开启 real 模式，并用竖排 JSON 配置所有模型：
+在 `.env.local` 中开启真实模式，并配置 OpenAI-compatible 服务：
 
 ```env
 AI_ROUNDTABLE_MODE=real
 AI_ROUNDTABLE_PROVIDERS_JSON='[
   {
     "id": "deepseek",
-    "name": "DeepSeek Flash",
+    "name": "DeepSeek V4 Pro",
     "baseUrl": "https://api.deepseek.com",
     "apiKey": "你的 API key",
-    "model": "deepseek-v4-flash"
+    "model": "deepseek-v4-pro"
   },
   {
     "id": "kimi",
@@ -74,73 +98,31 @@ AI_ROUNDTABLE_PROVIDERS_JSON='[
 ]'
 ```
 
-AI Roundtable 使用 OpenAI-compatible 接口，因此可以接入 OpenAI、DeepSeek、Qwen、SiliconFlow、Kimi 或其他兼容 Chat Completions API 的服务。真实 API key 只应该写在 `.env.local`，不要提交到 GitHub。
+AI Roundtable 使用 OpenAI-compatible Chat Completions 接口，因此可以接入 OpenAI、DeepSeek、Qwen、SiliconFlow、Kimi 或其他兼容服务。
 
-旧的逐模型 provider 环境变量和 `providers.local.json` 仍然兼容，但普通本地使用推荐只维护 `.env.local` 一个文件。
+真实 API key 只应写在 `.env.local`，不要提交到 GitHub。
 
-## 联网搜索
+## 启用联网搜索
 
-AI Roundtable 可以在会议前进行联网搜索，把搜索结果整理成 Evidence Pack，再交给所有模型共同引用。
-
-启用联网搜索需要配置 Tavily：
+联网搜索使用 Tavily。配置：
 
 ```env
 TAVILY_API_KEY=你的 Tavily key
 ```
 
-当前搜索策略默认更偏向中文和国内用户：
+搜索偏好可以在界面中调整：
 
-- 默认搜索地区偏向中国
-- 默认请求文本形式的原始内容
-- 每轮搜索最多拉取 20 条候选
-- 由模型规划 3 次关键词搜索
-- 最终选出质量较高的 12 篇资料进入会议资料池
+- 搜索地区：自动、全球、中国、美国、欧洲、日本、韩国。
+- 搜索强度：标准搜索或深度搜索。
+- 搜索驱动模型：可选择一个已接入模型生成搜索方向。
 
-如果搜索成功但证据不足，系统会进入低证据模式，提醒用户不要把低质量资料里的数字、融资额、估值、时间表等内容当作已确认事实。
+如果 Tavily 官网搜索正常，但应用内搜索质量异常，优先检查：
 
-## 资料包与引用
-
-你可以手动导入本地资料，也可以让系统联网搜索资料。系统会把资料统一编号为 `S1`、`S2`、`S3` 等。
-
-模型在讨论中可以引用这些编号。会议结束后，系统会检查引用是否真实存在，避免出现“模型编造资料编号”的情况。
-
-## 使用提醒
-
-AI Roundtable 可以帮助你整理思路，但它不是事实裁判。
-
-尤其是以下内容，请务必人工核验：
-
-- 最新新闻
-- 价格、估值、融资额、营收
-- 法律、政策、监管结论
-- 医疗、金融、投资建议
-- 公司内部信息或未经证实的传闻
-
-如果会议中出现“低证据模式”提示，说明本轮资料不足以支撑强结论，纪要应当被看作讨论草稿，而不是最终事实报告。
-
-## 项目状态
-
-AI Roundtable 目前仍是早期版本，核心体验已经可以运行，但还在快速迭代中。
-
-当前重点：
-
-- 提升联网搜索资料质量
-- 改善中文议题和本地新闻资料的识别
-- 让会议纪要更自然、更少重复
-- 让普通用户不需要理解复杂调试信息也能放心使用
-
-暂不建议把它用于高风险决策的唯一依据。
-
-## Roadmap
-
-当前重点：
-
-- Tavily Search Options Builder
-- 中文新闻与本地资料搜索优化
-- Evidence relevance / coverage scoring
-- GitHub Actions CI
-- Docker / 部署文档
-- 更多会议示例
+- Evidence Debug 中实际发送的 query 是否过长、重复或含残片。
+- 搜索 pass 是否被跳过。
+- `rawCandidateCount` / `uniqueCandidateCount` 是否达到预期。
+- Evidence Pack 中是否没有可引用的 direct/supporting 资料。
+- Low-Evidence Mode 是否被触发。
 
 ## 常用命令
 
@@ -157,6 +139,12 @@ npm test
 运行自动化测试。
 
 ```bash
+npx tsc --noEmit
+```
+
+执行 TypeScript 类型检查。
+
+```bash
 npm run lint
 ```
 
@@ -168,24 +156,51 @@ npm run build
 
 生成生产构建。
 
+如果构建在 `next/font/google` 拉取 `Geist` 或 `Geist Mono` 时失败，通常是本地网络无法访问 Google Fonts。该问题与业务代码无关，可以在网络恢复后重试，或后续改为本地字体方案。
+
+## 使用提醒
+
+AI Roundtable 可以帮助整理思路，但它不是事实裁判。
+
+以下内容务必人工核验：
+
+- 最新新闻。
+- 价格、估值、融资额、营收。
+- 法律、政策、监管结论。
+- 医疗、金融、投资建议。
+- 公司内部信息或未经证实的传闻。
+
+如果会议出现低证据提示，说明当前资料不足以支撑强结论。此时纪要应被看作讨论草稿，而不是最终事实报告。
+
 ## 隐私与安全
 
-- 不要提交 `.env.local`
-- 不要把 API key 写进 README、Issue、PR、截图或示例文件
-- 真实会议记录在公开分享前应先脱敏
-- 联网搜索和模型调用都发生在服务端，API key 不会返回给前端
-- 如果发现 key 泄露，请立即撤销并重新生成
+- 不要提交 `.env.local`。
+- 不要把 API key 写进 README、Issue、PR、截图或示例文件。
+- 真实会议记录公开分享前应先脱敏。
+- 联网搜索和模型调用都发生在服务端，API key 不会返回给前端。
+- 如果发现 key 泄露，请立即撤销并重新生成。
 
 更多安全说明见 [SECURITY.md](SECURITY.md)。
 
-## 开发者参考
+## 项目状态
 
-如果你想了解内部实现，可以继续阅读：
+AI Roundtable 仍处于早期快速迭代阶段，核心会议流程已经可运行。
+
+当前重点：
+
+- 提升联网搜索候选召回与 Evidence Pack 精选质量。
+- 改善中文议题、本地资料和中文办公场景的识别。
+- 让低证据模式、引用纪律和资料质量提示更诚实。
+- 优化普通用户可见界面，隐藏不必要的调试复杂度。
+- 继续完善真实模型失败、超时、截断和空输出处理。
+
+## 开发者参考
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CHANGELOG.md](CHANGELOG.md)
-- [docs/real-model-smoke-test.md](docs/real-model-smoke-test.md)
+- [docs/design.md](docs/design.md)
 - [docs/frontend-manual-checklist.md](docs/frontend-manual-checklist.md)
+- [docs/real-model-smoke-test.md](docs/real-model-smoke-test.md)
 - [docs/evaluation-notes.md](docs/evaluation-notes.md)
 
 ## License

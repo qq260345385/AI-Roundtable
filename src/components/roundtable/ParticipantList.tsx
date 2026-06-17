@@ -38,7 +38,7 @@ export function ParticipantList({
   }
 
   return (
-    <section className="border border-zinc-200 bg-white p-5">
+    <section className="surface-panel p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-zinc-950">
@@ -49,7 +49,7 @@ export function ParticipantList({
           </p>
         </div>
         {participants.length > 0 ? (
-          <span className="shrink-0 text-xs text-zinc-500">
+          <span className="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800">
             {text.participants.selected} {selectedParticipantIds.length}/
             {participants.length}
           </span>
@@ -57,7 +57,7 @@ export function ParticipantList({
       </div>
       <div className="mt-4 max-h-[19.5rem] space-y-3 overflow-y-auto overscroll-contain pr-1 scroll-smooth snap-y snap-proximity [scrollbar-color:#a7f3d0_transparent] [scrollbar-width:thin]">
         {participants.length === 0 ? (
-          <p className="border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
+          <p className="surface-card border-dashed p-4 text-sm leading-6 text-zinc-600">
             {getEmptyText(isLoading, mode, text)}
           </p>
         ) : null}
@@ -95,10 +95,10 @@ function ParticipantCard({
 
   return (
     <article
-      className={`min-h-[6rem] snap-start border p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm ${
+      className={`min-h-[6rem] snap-start rounded-lg border p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm ${
         isSelected
-          ? "border-emerald-200 bg-emerald-50/50"
-          : "border-zinc-200 bg-zinc-50 hover:bg-white"
+          ? "border-emerald-300 bg-emerald-50/70 shadow-[0_10px_24px_rgba(4,120,87,0.08)]"
+          : "border-zinc-200 bg-white/70 hover:bg-white"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -122,7 +122,7 @@ function ParticipantCard({
           </span>
         </label>
         <span
-          className={`shrink-0 border px-2 py-1 text-xs ${getStatusClassName(participant.status)}`}
+          className={`shrink-0 rounded-full border px-2 py-1 text-xs ${getStatusClassName(participant.status)}`}
         >
           {getStatusLabel(participant, text)}
         </span>

@@ -579,7 +579,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-100">
+    <div className="app-backdrop min-h-screen">
       <MeetingHeader
         topic={headerTopic}
         participantCount={selectedParticipants.length}
@@ -600,7 +600,7 @@ export default function Home() {
         text={uiText}
       />
 
-      <main className="mx-auto grid max-w-6xl gap-5 px-5 py-6 lg:grid-cols-[360px_1fr]">
+      <main className="relative mx-auto grid max-w-6xl gap-5 px-5 py-6 lg:grid-cols-[360px_1fr]">
         <div className="space-y-5">
           <ParticipantList
             disabled={status === "loading"}
@@ -638,12 +638,12 @@ export default function Home() {
         </div>
 
         <div className="space-y-5">
-          <section className="border border-zinc-200 bg-white p-5">
+          <section className="surface-panel p-5">
             <h2 className="text-lg font-semibold text-zinc-950">
               {uiText.meetingForm.title}
             </h2>
             <form className="mt-4 space-y-4" onSubmit={startMeeting}>
-              <div className="rounded-[28px] border border-zinc-200 bg-white p-4 shadow-sm transition-[border-color,box-shadow] duration-200 ease-out focus-within:border-blue-300 focus-within:shadow-[0_12px_36px_rgba(37,99,235,0.10)]">
+              <div className="rounded-lg border border-zinc-200 bg-white/90 p-4 shadow-sm transition-[border-color,box-shadow] duration-200 ease-out focus-within:border-emerald-300 focus-within:shadow-[0_14px_36px_rgba(4,120,87,0.12)]">
                 <textarea
                   className="min-h-32 w-full resize-y border-0 bg-transparent p-0 text-sm leading-6 text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:text-zinc-500"
                   disabled={status === "loading"}
@@ -665,7 +665,7 @@ export default function Home() {
                     title={uiText.evidence.webSearchDescription}
                   />
                   <button
-                    className="ml-auto border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-transform duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100 disabled:hover:bg-zinc-300"
+                    className="control-button ml-auto border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:cursor-pointer hover:bg-emerald-800 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100 disabled:hover:bg-zinc-300"
                     disabled={isStartDisabled}
                     type="submit"
                   >
@@ -706,7 +706,7 @@ export default function Home() {
                 strategy={documentInputStrategy}
                 text={uiText}
               />
-              <label className="flex items-start gap-2 border border-zinc-200 bg-zinc-50 p-4 text-sm font-medium text-zinc-800 transition-[border-color,background-color] duration-150 ease-out hover:border-emerald-200 hover:bg-emerald-50/40">
+              <label className="surface-card flex items-start gap-2 p-4 text-sm font-medium text-zinc-800 transition-[border-color,background-color] duration-150 ease-out hover:border-emerald-200 hover:bg-emerald-50/40">
                 <input
                   checked={isBriefMode}
                   className="mt-1 h-4 w-4 accent-emerald-700"
@@ -855,10 +855,10 @@ function ModelSelectField({
   value,
 }: ModelSelectFieldProps) {
   return (
-    <label className="block border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-800">
+    <label className="surface-card block p-4 text-sm font-medium text-zinc-800">
       <span>{label}</span>
       <select
-        className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-emerald-600 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+        className="focus-ring mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-emerald-600 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
         disabled={disabled || participants.length === 0}
         onChange={(event) => onChange(event.target.value)}
         value={value}
@@ -910,10 +910,10 @@ function ModelChoiceDialog({
   return (
     <div
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 px-4 backdrop-blur-sm"
       role="dialog"
     >
-      <section className="w-full max-w-md border border-zinc-200 bg-white p-5 shadow-xl">
+      <section className="surface-panel w-full max-w-md p-5">
         <h2 className="text-lg font-semibold text-zinc-950">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-zinc-600">
           {text.evidence.searchDriverDialogDescription}
@@ -921,7 +921,7 @@ function ModelChoiceDialog({
         <div className="mt-4 space-y-2">
           {participants.map((participant) => (
             <label
-              className="flex cursor-pointer items-center gap-3 border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-800 hover:border-emerald-300"
+              className="surface-card flex cursor-pointer items-center gap-3 p-3 text-sm text-zinc-800 hover:border-emerald-300"
               key={participant.id}
             >
               <input
@@ -942,14 +942,14 @@ function ModelChoiceDialog({
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button
-            className="border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            className="control-button border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
             onClick={onClose}
             type="button"
           >
             {text.common.cancel}
           </button>
           <button
-            className="border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300"
+            className="control-button border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300"
             disabled={participants.length === 0}
             onClick={onConfirm}
             type="button"
@@ -1004,7 +1004,7 @@ function EvidencePackEditor({
   const deliveryPreview = getEvidenceDeliveryPreview(strategy, participants, text);
 
   return (
-    <section className="border border-zinc-200 bg-zinc-50 p-4">
+    <section className="surface-card p-4">
       <label className="flex items-start gap-2 text-sm font-medium text-zinc-800">
         <input
           checked={enabled}
@@ -1023,7 +1023,7 @@ function EvidencePackEditor({
 
       {enabled ? (
         <div className="mt-4 space-y-3">
-          <div className="border border-zinc-200 bg-white p-3">
+          <div className="rounded-lg border border-zinc-200 bg-white/80 p-3">
             <p className="text-sm font-medium text-zinc-900">
               {text.evidence.strategyTitle}
             </p>
@@ -1061,7 +1061,7 @@ function EvidencePackEditor({
               <span className="mt-1 block">{deliveryPreview.reason}</span>
             </div>
           </div>
-          <div className="border border-dashed border-zinc-300 bg-white p-4">
+          <div className="rounded-lg border border-dashed border-zinc-300 bg-white/80 p-4">
             <input
               accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.xlsx,.pptx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation"
               className="hidden"
@@ -1077,7 +1077,7 @@ function EvidencePackEditor({
               type="file"
             />
             <button
-              className="border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100"
+              className="control-button border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100"
               disabled={
                 disabled || isImporting || drafts.length >= MAX_EVIDENCE_DRAFTS
               }
@@ -1214,7 +1214,7 @@ function ProviderModeNotice({
 }: ProviderModeNoticeProps) {
   if (modelLoadStatus === "loading") {
     return (
-      <section className="border border-zinc-200 bg-white p-4 text-sm leading-6 text-zinc-600">
+      <section className="surface-card p-4 text-sm leading-6 text-zinc-600">
         {text.providerNotice.loading}
       </section>
     );
@@ -1222,7 +1222,7 @@ function ProviderModeNotice({
 
   if (modelLoadStatus === "error") {
     return (
-      <section className="border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-700">
+      <section className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-700 shadow-sm">
         {text.providerNotice.error}
       </section>
     );
@@ -1230,7 +1230,7 @@ function ProviderModeNotice({
 
   if (mode === "mock") {
     return (
-      <section className="border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-900">
+      <section className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-900 shadow-sm">
         {text.providerNotice.mock}
       </section>
     );
@@ -1238,7 +1238,7 @@ function ProviderModeNotice({
 
   if (mode === "real" && participantCount === 0) {
     return (
-      <section className="border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-700">
+      <section className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-700 shadow-sm">
         {text.providerNotice.realEmpty}
       </section>
     );
@@ -1246,14 +1246,14 @@ function ProviderModeNotice({
 
   if (mode === "real") {
     return (
-      <section className="border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-800">
+      <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-800 shadow-sm">
         {text.providerNotice.real}
       </section>
     );
   }
 
   return (
-    <section className="border border-zinc-200 bg-white p-4 text-sm leading-6 text-zinc-600">
+    <section className="surface-card p-4 text-sm leading-6 text-zinc-600">
       {text.providerNotice.unknown}
     </section>
   );
@@ -1615,7 +1615,7 @@ function MeetingHistoryPanel({
   );
 
   return (
-    <section className="border border-zinc-200 bg-white p-5">
+    <section className="surface-panel p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-semibold text-zinc-950">
@@ -1625,20 +1625,20 @@ function MeetingHistoryPanel({
             {text.history.description}
           </p>
         </div>
-        <span className="shrink-0 border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-500">
+        <span className="shrink-0 rounded-full border border-zinc-200 bg-white/70 px-2 py-1 text-xs text-zinc-500">
           {history.length}
         </span>
       </div>
 
       {history.length === 0 ? (
-        <p className="mt-4 border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
+        <p className="surface-card mt-4 border-dashed p-4 text-sm leading-6 text-zinc-600">
           {text.history.empty}
         </p>
       ) : (
         <div className="mt-4 space-y-3">
           {history.map((record) => (
             <article
-              className="border border-zinc-200 bg-zinc-50 p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-sm"
+              className="rounded-lg border border-zinc-200 bg-white/70 p-4 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-sm"
               key={record.id}
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1656,14 +1656,14 @@ function MeetingHistoryPanel({
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <button
-                    className="border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98]"
+                    className="control-button border border-emerald-700 bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:cursor-pointer hover:bg-emerald-800 active:scale-[0.98]"
                     onClick={() => onOpen(record)}
                     type="button"
                   >
                     {text.history.open}
                   </button>
                   <button
-                    className="border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-[border-color,color,transform] duration-150 ease-out hover:scale-[1.03] hover:cursor-pointer hover:border-red-200 hover:text-red-700 active:scale-[0.98]"
+                    className="control-button border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-600 hover:cursor-pointer hover:border-red-200 hover:text-red-700 active:scale-[0.98]"
                     onClick={() => onDelete(record.id)}
                     type="button"
                   >

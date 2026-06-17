@@ -101,7 +101,7 @@ export function WebSearchProcessPanel({
   const copy = getSearchStatusCopy(meeting, labels);
 
   return (
-    <section className="border border-sky-100 bg-sky-50/45 p-4">
+    <section className="rounded-lg border border-sky-100 bg-sky-50/55 p-4 shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <h2 className="text-base font-semibold text-sky-950">
@@ -115,7 +115,7 @@ export function WebSearchProcessPanel({
             </p>
           ) : null}
         </div>
-        <div className="grid grid-cols-3 border border-sky-100 bg-white/70 text-center text-xs text-sky-900 md:min-w-72">
+        <div className="grid grid-cols-3 rounded-lg border border-sky-100 bg-white/75 text-center text-xs text-sky-900 md:min-w-72">
           <Metric label={labels.reliableMetric} value={copy.reliableCount} />
           <Metric label={labels.generalMetric} value={copy.generalCount} />
           <Metric label={labels.weakerMetric} value={copy.weakerCount} />
@@ -160,7 +160,7 @@ function DeveloperSearchDetails({
       : labels.noFiltered;
 
   return (
-    <details className="mt-4 border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
+    <details className="mt-4 rounded-lg border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
       <summary className="cursor-pointer font-medium text-sky-950">
         {labels.developerDetailsTitle}
       </summary>
@@ -183,7 +183,7 @@ function DeveloperSearchDetails({
                     <div className="mt-2 space-y-2">
                       {intent.intents.map((searchIntent, index) => (
                         <div
-                          className="border-l-2 border-sky-200 bg-sky-50/50 px-3 py-2"
+                          className="rounded-md border-l-2 border-sky-200 bg-sky-50/50 px-3 py-2"
                           key={`${intent.participantId}-${index}`}
                         >
                           <p className="font-medium text-zinc-800">
@@ -425,7 +425,7 @@ function ProcessBlock({
   title: string;
 }) {
   return (
-    <div className="border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
+    <div className="rounded-lg border border-sky-100 bg-white/75 p-3 text-sm leading-6 text-zinc-700">
       <h3 className="font-medium text-sky-950">{title}</h3>
       <div className="mt-2">{children}</div>
     </div>
@@ -535,7 +535,7 @@ function CitationCheckPanel({ meeting, text }: CitationCheckPanelProps) {
     citationCheck.hasCitationDisciplineWarning
   ) {
     return (
-      <section className="border border-amber-300 bg-amber-50 p-5">
+    <section className="rounded-lg border border-amber-300 bg-amber-50 p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-amber-950">
           {text.meetingBoard.citationTitle}
         </h2>
@@ -569,7 +569,7 @@ function CitationCheckPanel({ meeting, text }: CitationCheckPanelProps) {
   }
 
   return (
-    <section className="border border-emerald-200 bg-emerald-50 p-5">
+    <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
       <h2 className="text-lg font-semibold text-emerald-950">
         {text.meetingBoard.citationTitle}
       </h2>
@@ -595,7 +595,7 @@ type FactHygienePanelProps = {
 
 function FactHygienePanel({ notice, text }: FactHygienePanelProps) {
   return (
-    <section className="border border-amber-200 bg-amber-50 p-5">
+    <section className="rounded-lg border border-amber-200 bg-amber-50 p-5 shadow-sm">
       <h2 className="text-lg font-semibold text-amber-950">
         {text.meetingBoard.factTitle}
       </h2>
@@ -615,7 +615,7 @@ function ProviderFailurePanel({ failures, text }: ProviderFailurePanelProps) {
   }
 
   return (
-    <section className="border border-red-200 bg-red-50 p-5">
+    <section className="rounded-lg border border-red-200 bg-red-50 p-5 shadow-sm">
       <h2 className="text-lg font-semibold text-red-900">
         {text.meetingBoard.failureTitle}
       </h2>
@@ -628,7 +628,7 @@ function ProviderFailurePanel({ failures, text }: ProviderFailurePanelProps) {
 
           return (
             <article
-              className="border-l-2 border-red-300 bg-white/70 px-3 py-2"
+              className="rounded-md border-l-2 border-red-300 bg-white/70 px-3 py-2"
               key={`${failure.stage}-${failure.providerId}`}
             >
               <p>

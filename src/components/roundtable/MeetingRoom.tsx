@@ -67,11 +67,12 @@ export function MeetingRoom({
         : text.meetingRoom.participantStatus.speaking;
 
   return (
-    <main className="min-h-screen animate-[meetingFadeIn_420ms_ease-out] bg-[radial-gradient(circle_at_top_left,#ecfdf5_0,#f4f4f5_34%,#f8fafc_70%)] text-zinc-950">
-      <section className="mx-auto flex max-w-7xl flex-col gap-6 px-5 py-6 lg:min-h-screen">
-        <header className="flex flex-col gap-4 border-b border-emerald-900/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <main className="app-backdrop min-h-screen animate-[meetingFadeIn_420ms_ease-out] text-zinc-950">
+      <section className="relative mx-auto flex max-w-7xl flex-col gap-6 px-5 py-6 lg:min-h-screen">
+        <header className="surface-panel flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm font-medium text-emerald-700">
+            <p className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50/80 px-3 py-1 text-sm font-medium text-emerald-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
               AI Roundtable · {APP_VERSION}
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal text-zinc-950 md:text-5xl">
@@ -84,7 +85,7 @@ export function MeetingRoom({
               {text.meetingRoom.subtitle}
             </p>
             {isLive ? (
-              <p className="mt-3 inline-flex items-center gap-2 border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800">
+              <p className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-600" />
                 {text.meetingRoom.liveInProgress}
               </p>
@@ -98,14 +99,14 @@ export function MeetingRoom({
                     {text.meetingRoom.stopMeetingHint}
                   </div>
                   <button
-                    className="border border-red-700 bg-red-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-red-800 hover:shadow-md active:translate-y-0"
+                    className="control-button border border-red-700 bg-red-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:cursor-pointer hover:bg-red-800 hover:shadow-md active:translate-y-0"
                     onClick={onStopMeeting}
                     type="button"
                   >
                     {text.meetingRoom.confirmStopMeeting}
                   </button>
                   <button
-                    className="border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
+                    className="control-button border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
                     onClick={onCancelStopMeeting}
                     type="button"
                   >
@@ -114,7 +115,7 @@ export function MeetingRoom({
                 </>
               ) : (
                 <button
-                  className="border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:border-red-300 hover:bg-red-100 hover:shadow-md active:translate-y-0"
+                  className="control-button border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-sm hover:cursor-pointer hover:border-red-300 hover:bg-red-100 hover:shadow-md active:translate-y-0"
                   onClick={onStopMeeting}
                   type="button"
                 >
@@ -123,7 +124,7 @@ export function MeetingRoom({
               )
             ) : (
               <button
-                className="border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
+                className="control-button border border-zinc-300 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:cursor-pointer hover:bg-white hover:shadow-md active:translate-y-0"
                 onClick={onBackToSetup}
                 type="button"
               >
@@ -131,7 +132,7 @@ export function MeetingRoom({
               </button>
             )}
             <button
-              className="border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-[background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:bg-emerald-800 hover:shadow-md active:translate-y-0 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
+              className="control-button border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:cursor-pointer hover:bg-emerald-800 hover:shadow-md active:translate-y-0 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
               disabled={!isCompleted}
               onClick={onCopyMarkdown}
               type="button"
@@ -145,7 +146,7 @@ export function MeetingRoom({
 
         {statusMessage ? (
           <p
-            className={`border px-4 py-3 text-sm ${
+            className={`rounded-lg border px-4 py-3 text-sm shadow-sm ${
               statusType === "error"
                 ? "border-red-200 bg-red-50 text-red-700"
                 : "border-emerald-200 bg-emerald-50 text-emerald-800"
@@ -156,21 +157,21 @@ export function MeetingRoom({
         ) : null}
 
         {copyMessage ? (
-          <p className="border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 shadow-sm">
             {copyMessage}
           </p>
         ) : null}
 
         <div className="grid flex-1 gap-5 lg:grid-cols-[310px_1fr]">
           <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
-            <section className="border border-white/70 bg-white/80 p-5 shadow-sm backdrop-blur">
+            <section className="surface-panel p-5">
               <h2 className="text-lg font-semibold">
                 {text.meetingRoom.councilMembers}
               </h2>
               <div className="mt-4 space-y-3">
                 {participants.map((participant, index) => (
                   <article
-                    className="group border border-emerald-100 bg-emerald-50/40 p-3 transition-[border-color,background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-white hover:shadow-sm"
+                    className="group rounded-lg border border-emerald-100 bg-emerald-50/45 p-3 transition-[border-color,background-color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-white hover:shadow-sm"
                     key={participant.id}
                   >
                     <div className="flex items-start gap-3">
@@ -186,7 +187,7 @@ export function MeetingRoom({
                         </h3>
                         {participantStatuses[participant.id] ===
                         "speaking" ? (
-                          <span className="mt-2 inline-flex border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800">
+                          <span className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800">
                             {speakingStatusLabel}
                           </span>
                         ) : null}
@@ -198,7 +199,7 @@ export function MeetingRoom({
             </section>
           </aside>
 
-          <section className="relative min-h-[620px] border border-white/70 bg-white/85 p-5 shadow-sm backdrop-blur">
+          <section className="surface-panel relative min-h-[620px] p-5">
             <div className="mb-5 flex flex-col gap-2 border-b border-zinc-200 pb-4 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-700">
@@ -211,7 +212,7 @@ export function MeetingRoom({
                   {activeStage.description}
                 </p>
               </div>
-              <span className="w-fit border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800">
+              <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800">
                 {activeStage.index}/{stageViews.length}
               </span>
             </div>
@@ -227,14 +228,14 @@ export function MeetingRoom({
         </div>
       </section>
 
-      <nav className="fixed bottom-4 right-4 z-30 max-w-[calc(100vw-2rem)] border border-zinc-200 bg-white/95 p-2 shadow-xl backdrop-blur">
+      <nav className="surface-panel fixed bottom-4 right-4 z-30 max-w-[calc(100vw-2rem)] p-2">
         <p className="px-2 pb-2 text-xs font-medium text-zinc-500">
           {text.meetingRoom.stageSwitcher}
         </p>
         <div className="flex gap-2">
           {stageViews.map((stage) => (
             <button
-              className={`min-w-20 border px-3 py-2 text-left text-xs font-medium transition-[background-color,border-color,color,transform,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:cursor-pointer hover:shadow-sm ${
+              className={`control-button min-w-20 border px-3 py-2 text-left text-xs font-medium hover:cursor-pointer hover:shadow-sm ${
                 stage.id === activeStage.id
                   ? "border-emerald-700 bg-emerald-700 text-white"
                   : "border-zinc-200 bg-white text-zinc-700 hover:border-emerald-200 hover:bg-emerald-50"

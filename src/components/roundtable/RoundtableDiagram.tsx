@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ModelParticipant } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
 import { formatModelDisplayName } from "@/lib/models/model-display-name";
@@ -27,6 +28,8 @@ export function RoundtableDiagram({
   text,
 }: RoundtableDiagramProps) {
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const dragPreviewRoot =
+    typeof document === "undefined" ? null : document.body;
   const canReorder = Boolean(onSeatSwap) && participants.length > 1;
   const draggedParticipant = dragState
     ? participants.find((participant) => participant.id === dragState.participantId)
@@ -107,7 +110,7 @@ export function RoundtableDiagram({
   }, [dragState, onSeatSwap, participants]);
 
   return (
-    <section className="border border-zinc-200 bg-white p-5">
+    <section className="surface-panel p-5">
       <h2 className="text-lg font-semibold text-zinc-950">
         {text.diagram.title}
       </h2>
@@ -118,7 +121,7 @@ export function RoundtableDiagram({
 
           return (
             <div
-              className={`min-h-28 select-none touch-none border bg-stone-50 p-4 transition-[border-color,box-shadow,transform,background-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-sm ${
+              className={`min-h-28 select-none touch-none rounded-lg border bg-stone-50/80 p-4 transition-[border-color,box-shadow,transform,background-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-sm ${
                 canReorder ? "cursor-grab active:cursor-grabbing" : ""
               } ${
                 isDragging
@@ -165,23 +168,26 @@ export function RoundtableDiagram({
           );
         })}
       </div>
-      {dragState && draggedParticipant && draggedIndex >= 0 ? (
-        <div
-          className="pointer-events-none fixed z-50 border border-amber-300 bg-white p-4 opacity-95 shadow-2xl ring-2 ring-amber-200"
-          style={{
-            height: dragState.height,
-            left: dragState.clientX - dragState.offsetX,
-            top: dragState.clientY - dragState.offsetY,
-            width: dragState.width,
-          }}
-        >
-          <SeatCardContent
-            index={draggedIndex}
-            participant={draggedParticipant}
-            text={text}
-          />
-        </div>
-      ) : null}
+      {dragState && draggedParticipant && draggedIndex >= 0 && dragPreviewRoot
+        ? createPortal(
+            <div
+              className="pointer-events-none fixed z-50 rounded-lg border border-amber-300 bg-white p-4 opacity-95 shadow-2xl ring-2 ring-amber-200"
+              style={{
+                height: dragState.height,
+                left: dragState.clientX - dragState.offsetX,
+                top: dragState.clientY - dragState.offsetY,
+                width: dragState.width,
+              }}
+            >
+              <SeatCardContent
+                index={draggedIndex}
+                participant={draggedParticipant}
+                text={text}
+              />
+            </div>,
+            dragPreviewRoot,
+          )
+        : null}
     </section>
   );
 }
