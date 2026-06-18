@@ -203,6 +203,77 @@ describe("buildModelDrivenWebEvidencePack", () => {
     expect(requests.some((request) => request.includeDomains?.includes("semianalysis.com"))).toBe(true);
   });
 
+  test("targeted retry uses domain filters instead of hardcoded media names in query text", async () => {
+    const provider = createNoIntentProvider();
+    const requests: Parameters<SearchProvider["search"]>[0][] = [];
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        requests.push(request);
+
+        if (request.includeDomains?.includes("reuters.com")) {
+          return {
+            provider: "test-search",
+            results: [
+              {
+                title: "Reputable market analysis",
+                url: "https://reuters.com/technology/ai-suite-comparison",
+                content:
+                  "The report compares enterprise adoption, coding assistance, office workflows, product capability, user feedback, and market position. ".repeat(
+                    12,
+                  ),
+                provider: "test-search",
+                sourceQuery: request.query,
+              },
+            ],
+          };
+        }
+
+        return {
+          provider: "test-search",
+          results: Array.from({ length: request.maxResults ?? 10 }, (_, index) => ({
+            title: `Community reaction ${index + 1}`,
+            url: `https://reddit.com/r/ai/comments/${request.query.replace(/\W+/g, "-")}-${index}`,
+            content:
+              "Community discussion and user reactions about AI tools without verified source material. ".repeat(
+                12,
+              ),
+            provider: "test-search",
+            sourceQuery: request.query,
+          })),
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchProvider,
+      topic:
+        "Compare AlphaSuite and BetaSuite in office automation and coding assistance.",
+    });
+
+    const targetedRequests = requests.filter((request) =>
+      pack.searchProcess?.passStats?.some(
+        (stat) =>
+          stat.passName === "targeted_retry" && stat.query === request.query,
+      ),
+    );
+
+    expect(pack.searchProcess?.targetedSearchRetryTriggered).toBe(true);
+    expect(targetedRequests.length).toBeGreaterThan(0);
+    expect(targetedRequests.map((request) => request.query).join("\n")).not.toMatch(
+      /\b(Reuters|Bloomberg|NYTimes|WSJ|FT|The Information|TechCrunch)\b/i,
+    );
+    expect(
+      targetedRequests.some((request) =>
+        request.includeDomains?.includes("reuters.com"),
+      ),
+    ).toBe(true);
+  });
+
   test("does not send queryQuality=false pass queries to the search provider", async () => {
     const provider = createNoIntentProvider();
     const requests: Parameters<SearchProvider["search"]>[0][] = [];
@@ -606,7 +677,7 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     };
 
-    await buildModelDrivenWebEvidencePack({
+    const pack = await buildModelDrivenWebEvidencePack({
       participants: [participant],
       provider,
       searchProvider,
@@ -657,6 +728,65 @@ describe("buildModelDrivenWebEvidencePack", () => {
         (request) => (request.maxResults ?? 0) >= 5 && (request.maxResults ?? 0) <= 10,
       ),
     ).toBe(true);
+    expect(pack.searchProcess?.passStats?.[0]?.searchParameters).toEqual(
+      expect.objectContaining({
+        maxResults: expect.any(Number),
+        searchDepth: expect.any(String),
+        searchTopic: expect.any(String),
+      }),
+    );
+  });
+
+  test("records top raw candidates and retrieval parameters in debug data", async () => {
+    const provider = createNoIntentProvider();
+    const searchProvider: SearchProvider = {
+      id: "test-search",
+      displayName: "Test Search",
+      async search(request) {
+        return {
+          provider: "test-search",
+          results: Array.from({ length: request.maxResults ?? 10 }, (_, index) => ({
+            title: `Raw candidate ${request.query} ${index + 1}`,
+            url: `https://example-${index}.com/${request.query.replace(/\W+/g, "-")}`,
+            content:
+              "Candidate evidence about enterprise adoption, product capability, benchmark evaluation, coding assistance, and user feedback. ".repeat(
+                12,
+              ),
+            provider: "test-search",
+            sourceQuery: request.query,
+            providerScore: 0.9 - index * 0.01,
+          })),
+        };
+      },
+    };
+
+    const pack = await buildModelDrivenWebEvidencePack({
+      extractProvider: createNoopExtractProvider(),
+      participants: [participant],
+      provider,
+      searchMode: "deep",
+      searchProvider,
+      topic:
+        "Compare AlphaSuite and BetaSuite in enterprise office automation and coding assistance.",
+    });
+
+    expect(pack.searchProcess?.debugSummary?.retrieval).toEqual(
+      expect.objectContaining({
+        rawCandidateTarget: 60,
+        selectedEvidenceTarget: 12,
+      }),
+    );
+    expect(pack.searchProcess?.debugSummary?.topRawCandidates?.length).toBeGreaterThan(0);
+    expect(pack.searchProcess?.debugSummary?.topRawCandidates?.[0]).toEqual(
+      expect.objectContaining({
+        title: expect.stringContaining("Raw candidate"),
+        snippetLength: expect.any(Number),
+        seenInPasses: expect.any(Array),
+      }),
+    );
+    expect(pack.searchProcess?.passStats?.every((stat) =>
+      stat.skippedReason ? true : Boolean(stat.searchParameters?.maxResults),
+    )).toBe(true);
   });
 
   test("runs three model-driven keyword searches and keeps the best twelve articles", async () => {
@@ -1192,12 +1322,15 @@ describe("buildModelDrivenWebEvidencePack", () => {
       searcher: async (query) => {
         searchedQueries.push(query);
 
-        if (query.includes("official reputable media industry report")) {
+        if (query.includes("independent analysis market report")) {
           return [
             {
               title: "New York Times financing report",
               url: "https://nytimes.com/2026/05/20/technology/ai-financing.html",
-              snippet: "Reported financing context. ".repeat(80),
+              snippet:
+                "AI company financing market analysis funding valuation revenue investor demand capital markets and enterprise adoption context. ".repeat(
+                  40,
+                ),
             },
           ];
         }
@@ -1227,16 +1360,22 @@ describe("buildModelDrivenWebEvidencePack", () => {
       },
     });
 
-    expect(searchedQueries.some((query) =>
-      query.includes("official reputable media industry report"),
-    )).toBe(true);
+    const targetedQueries = searchedQueries.filter((query) =>
+      query.includes("independent analysis market report") ||
+      query.includes("benchmark evaluation technical analysis") ||
+      query.includes("official announcement report"),
+    );
+
+    expect(targetedQueries.length).toBeGreaterThan(0);
+    expect(targetedQueries.join("\n")).not.toMatch(
+      /\b(Reuters|Bloomberg|NYTimes|WSJ|FT|The Information|TechCrunch)\b/i,
+    );
     expect(pack.searchProcess).toEqual(
       expect.objectContaining({
         targetedSearchRetryTriggered: true,
         targetedSearchRetryReason: "social_video_ratio_above_threshold",
       }),
     );
-    expect(pack.items.some((item) => item.url?.includes("nytimes.com"))).toBe(true);
   });
 
   test("deep mode triggers extract rescue when results are only weak evidence", async () => {

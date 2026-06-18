@@ -224,6 +224,7 @@ export type EvidenceDebugSummary = {
   passStats: EvidenceSearchPassStats[];
   selectedEvidenceByPass: { passName: string; count: number }[];
   skippedPasses: string[];
+  topRawCandidates?: SearchProcessCandidatePreview[];
 };
 
 export type ExtractAttemptRecord = {
@@ -250,7 +251,32 @@ export type EvidenceSearchPassStats = {
   queryLevel?: SearchQueryLevel;
   derivedFrom?: string;
   queryQuality?: SearchQueryQuality;
+  searchParameters?: EvidenceSearchPassParameters;
   skippedReason?: string;
+};
+
+export type EvidenceSearchPassParameters = {
+  maxResults?: number;
+  searchDepth?: "basic" | "advanced" | "fast" | "ultra-fast";
+  searchTopic?: "general" | "news" | "finance";
+  timeRange?: "day" | "week" | "month" | "year" | "d" | "w" | "m" | "y";
+  country?: string;
+  includeDomains?: string[];
+  excludeDomains?: string[];
+  includeRawContent?: boolean | "markdown" | "text";
+};
+
+export type SearchProcessCandidatePreview = {
+  title: string;
+  query?: string;
+  url?: string;
+  source?: string;
+  providerScore?: number;
+  snippetLength: number;
+  reliability: EvidenceReliability;
+  score: number;
+  seenInPasses?: string[];
+  evidenceRole?: EvidenceJudgment["role"];
 };
 
 export type SearchProcess = {
@@ -287,6 +313,7 @@ export type SearchProcess = {
   passStats?: EvidenceSearchPassStats[];
   skippedPasses?: string[];
   skippedPassReasons?: Record<string, string>;
+  topRawCandidates?: SearchProcessCandidatePreview[];
   qualityDistribution?: Record<EvidenceReliability, number>;
   searchIntents: SearchIntentRecord[];
   executedQueries: string[];
@@ -1689,6 +1716,9 @@ function createSearchProcess(input: {
   const passStats = normalizeEvidenceSearchPassStats(input.input.passStats);
   const extractAttempts = normalizeExtractAttempts(input.input.extractAttempts);
   const skippedPasses = normalizeStringArray(input.input.skippedPasses);
+  const topRawCandidates = normalizeSearchCandidatePreviews(
+    input.input.topRawCandidates,
+  );
   const topicAnalysis = normalizeTopicAnalysis(input.input.topicAnalysis);
   const evidenceMode =
     normalizeEvidenceMode(input.input.evidenceMode) ??
@@ -1728,6 +1758,7 @@ function createSearchProcess(input: {
     ...(extractAttempts.length > 0 ? { extractAttempts } : {}),
     ...(passStats.length > 0 ? { passStats } : {}),
     ...(skippedPasses.length > 0 ? { skippedPasses } : {}),
+    ...(topRawCandidates.length > 0 ? { topRawCandidates } : {}),
     ...(topicAnalysis ? { topicAnalysis } : {}),
     qualityOverview,
     debugSummary: createEvidenceDebugSummary({
@@ -1750,6 +1781,7 @@ function createSearchProcess(input: {
       passStats,
       selectedItems: input.selectedItems,
       skippedPasses,
+      topRawCandidates,
     }),
     filteredReasons: summarizeFilteredReasons(results),
     results,
@@ -2076,6 +2108,9 @@ function normalizeEvidenceSearchPassStats(value: unknown): EvidenceSearchPassSta
 
       const queryLevel = normalizeSearchQueryLevel(item.queryLevel);
       const queryQuality = normalizeSearchQueryQuality(item.queryQuality);
+      const searchParameters = normalizeSearchPassParameters(
+        item.searchParameters,
+      );
 
       return {
         passName,
@@ -2097,6 +2132,7 @@ function normalizeEvidenceSearchPassStats(value: unknown): EvidenceSearchPassSta
           ? { derivedFrom: normalizeText(item.derivedFrom, 80) }
           : {}),
         ...(queryQuality ? { queryQuality } : {}),
+        ...(searchParameters ? { searchParameters } : {}),
         ...(normalizeText(item.skippedReason, 120)
           ? { skippedReason: normalizeText(item.skippedReason, 120) }
           : {}),
@@ -2139,6 +2175,149 @@ function normalizeExtractAttempts(value: unknown): ExtractAttemptRecord[] {
     })
     .filter((item): item is ExtractAttemptRecord => item !== null)
     .slice(0, 80);
+}
+
+function normalizeSearchPassParameters(
+  value: unknown,
+): EvidenceSearchPassParameters | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const parameters: EvidenceSearchPassParameters = {};
+  const maxResults =
+    value.maxResults !== undefined
+      ? normalizeNonNegativeInteger(value.maxResults)
+      : undefined;
+  const searchDepth = normalizeSearchDepth(value.searchDepth);
+  const searchTopic = normalizeSearchTopic(value.searchTopic);
+  const timeRange = normalizeSearchTimeRange(value.timeRange);
+  const country = normalizeText(value.country, 80);
+  const includeDomains = normalizeStringArray(value.includeDomains).slice(0, 24);
+  const excludeDomains = normalizeStringArray(value.excludeDomains).slice(0, 24);
+  const includeRawContent = normalizeIncludeRawContent(value.includeRawContent);
+
+  if (maxResults !== undefined) parameters.maxResults = maxResults;
+  if (searchDepth) parameters.searchDepth = searchDepth;
+  if (searchTopic) parameters.searchTopic = searchTopic;
+  if (timeRange) parameters.timeRange = timeRange;
+  if (country) parameters.country = country;
+  if (includeDomains.length > 0) parameters.includeDomains = includeDomains;
+  if (excludeDomains.length > 0) parameters.excludeDomains = excludeDomains;
+  if (includeRawContent !== undefined) {
+    parameters.includeRawContent = includeRawContent;
+  }
+
+  return Object.keys(parameters).length > 0 ? parameters : undefined;
+}
+
+function normalizeSearchCandidatePreviews(
+  value: unknown,
+): SearchProcessCandidatePreview[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => {
+      const title = normalizeText(item.title, 160);
+
+      if (!title) {
+        return null;
+      }
+
+      const url = normalizeOptionalUrl(item.url);
+      const query = normalizeText(item.query, 160);
+      const source = normalizeText(item.source, 120);
+      const seenInPasses = normalizeStringArray(item.seenInPasses).slice(0, 8);
+      const reliability = normalizeEvidenceReliability(item.reliability);
+      const evidenceRole = normalizeEvidenceJudgmentRole(item.evidenceRole);
+
+      return {
+        title,
+        ...(query ? { query } : {}),
+        ...(url ? { url } : {}),
+        ...(source ? { source } : {}),
+        ...(typeof item.providerScore === "number" && Number.isFinite(item.providerScore)
+          ? { providerScore: item.providerScore }
+          : {}),
+        snippetLength: normalizeNonNegativeInteger(item.snippetLength),
+        reliability: reliability ?? "very_low",
+        score: normalizeNonNegativeInteger(item.score),
+        ...(seenInPasses.length > 0 ? { seenInPasses } : {}),
+        ...(evidenceRole ? { evidenceRole } : {}),
+      };
+    })
+    .filter((item): item is SearchProcessCandidatePreview => item !== null)
+    .slice(0, 12);
+}
+
+function normalizeSearchDepth(
+  value: unknown,
+): EvidenceSearchPassParameters["searchDepth"] | undefined {
+  return value === "basic" ||
+    value === "advanced" ||
+    value === "fast" ||
+    value === "ultra-fast"
+    ? value
+    : undefined;
+}
+
+function normalizeSearchTopic(
+  value: unknown,
+): EvidenceSearchPassParameters["searchTopic"] | undefined {
+  return value === "general" || value === "news" || value === "finance"
+    ? value
+    : undefined;
+}
+
+function normalizeSearchTimeRange(
+  value: unknown,
+): EvidenceSearchPassParameters["timeRange"] | undefined {
+  return value === "day" ||
+    value === "week" ||
+    value === "month" ||
+    value === "year" ||
+    value === "d" ||
+    value === "w" ||
+    value === "m" ||
+    value === "y"
+    ? value
+    : undefined;
+}
+
+function normalizeIncludeRawContent(
+  value: unknown,
+): EvidenceSearchPassParameters["includeRawContent"] | undefined {
+  return value === true ||
+    value === false ||
+    value === "markdown" ||
+    value === "text"
+    ? value
+    : undefined;
+}
+
+function normalizeEvidenceReliability(
+  value: unknown,
+): EvidenceReliability | undefined {
+  return value === "high" ||
+    value === "medium" ||
+    value === "low" ||
+    value === "very_low"
+    ? value
+    : undefined;
+}
+
+function normalizeEvidenceJudgmentRole(
+  value: unknown,
+): EvidenceJudgment["role"] | undefined {
+  return value === "core" ||
+    value === "supporting" ||
+    value === "background" ||
+    value === "discard"
+    ? value
+    : undefined;
 }
 
 function normalizeSearchDedupeStats(value: unknown): SearchDedupeStats | undefined {
@@ -2331,6 +2510,7 @@ function createEvidenceDebugSummary(input: {
   skippedPasses?: string[];
   targetedSearchRetryTriggered?: boolean;
   targetedSearchRetryReason?: string;
+  topRawCandidates?: SearchProcessCandidatePreview[];
 }): EvidenceDebugSummary {
   const candidateCount = input.results.length;
   const coreEvidenceCount = input.results.filter(isCoreEvidenceResult).length;
@@ -2423,6 +2603,9 @@ function createEvidenceDebugSummary(input: {
       input.selectedItems ?? [],
     ),
     skippedPasses: input.skippedPasses ?? [],
+    ...(input.topRawCandidates && input.topRawCandidates.length > 0
+      ? { topRawCandidates: input.topRawCandidates }
+      : {}),
   };
 }
 
@@ -3468,6 +3651,12 @@ function cleanTopicForEvidenceSearch(topic: string): string {
   ];
   let cleaned = topic.normalize("NFKC");
 
+  cleaned = cleaned
+    .replace(/\bhow\s+(?:strong|competitive|good|capable)\s+(?:is|are)\b/giu, " ")
+    .replace(/\bwhat\s+do\s+you\s+think\s+(?:about|of)\b/giu, " ")
+    .replace(/\bplease\s+(?:discuss|compare|analyze)\b/giu, " ")
+    .replace(/\b(?:is|are)\s+(.+?)\s+(?:any\s+good|competitive|strong)\b/giu, "$1");
+
   for (const shell of discussionShells) {
     cleaned = cleaned.replace(shell, " ");
   }
@@ -3489,6 +3678,12 @@ function cleanTopicForEvidenceSearchSafe(topic: string): string {
     "\\b(?:what|why|how|should|discuss|compare|which is better)\\b",
   ].map((pattern) => new RegExp(pattern, "giu"));
   let cleaned = topic.normalize("NFKC");
+
+  cleaned = cleaned
+    .replace(/\bhow\s+(?:strong|competitive|good|capable)\s+(?:is|are)\b/giu, " ")
+    .replace(/\bwhat\s+do\s+you\s+think\s+(?:about|of)\b/giu, " ")
+    .replace(/\bplease\s+(?:discuss|compare|analyze)\b/giu, " ")
+    .replace(/\b(?:is|are)\s+(.+?)\s+(?:any\s+good|competitive|strong)\b/giu, "$1");
 
   for (const shell of discussionShells) {
     cleaned = cleaned.replace(shell, " ");

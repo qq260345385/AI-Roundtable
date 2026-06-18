@@ -26,6 +26,18 @@ const scenarios = [
     question:
       "Is a rumored unreleased private AI model already outperforming all public benchmarks?",
   },
+  {
+    id: "policy-regulation",
+    title: "政策/监管类议题",
+    question:
+      "How should companies evaluate the latest AI governance and model safety regulation updates?",
+  },
+  {
+    id: "product-comparison",
+    title: "产品能力/场景对比类议题",
+    question:
+      "Compare Kimi, GLM, GPT-4o, and Claude in Chinese office automation and coding assistance scenarios.",
+  },
 ];
 
 const apiKey = getTavilyApiKey();
@@ -78,11 +90,17 @@ function spawnDevServer() {
     env: {
       ...process.env,
       AI_ROUNDTABLE_MODE: "mock",
+      EVIDENCE_OVERALL_TIMEOUT_MS:
+        process.env.EVIDENCE_OVERALL_TIMEOUT_MS ?? "180000",
+      EVIDENCE_PASS_TIMEOUT_MS:
+        process.env.EVIDENCE_PASS_TIMEOUT_MS ?? "45000",
       NODE_ENV: "development",
       NODE_OPTIONS: withEnvProxy(process.env.NODE_OPTIONS),
       SEARCH_DEBUG_ENABLED: "true",
       SEARCH_PROVIDER: searchProvider,
       TAVILY_API_KEY: apiKey,
+      TAVILY_SEARCH_TIMEOUT_MS:
+        process.env.TAVILY_SEARCH_TIMEOUT_MS ?? "45000",
     },
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
@@ -136,6 +154,15 @@ try {
         extractAttempted: searchProcess.extractAttempted ?? 0,
         extractedCandidateCount: searchProcess.extractedCandidateCount ?? 0,
         evidencePackItemCount: evidencePack.items.length,
+        selectedEvidenceTarget: searchProcess.selectedEvidenceTarget ?? 0,
+        selectedEvidenceCount: searchProcess.selectedEvidenceCount ?? 0,
+        candidateShortfall: searchProcess.candidateShortfall ?? 0,
+        fallbackTriggeredReason: searchProcess.fallbackTriggeredReason ?? "",
+        passStats: summarizePassStats(searchProcess.passStats ?? []),
+        topRawCandidates:
+          searchProcess.debugSummary?.topRawCandidates ??
+          searchProcess.topRawCandidates ??
+          [],
         zeroPackAfterSuccessfulSearch:
           searchProcess.evidenceMode !== "search_failed" &&
           evidencePack.items.length === 0,
@@ -187,7 +214,34 @@ function getStartCommand(port) {
 function withEnvProxy(nodeOptions = "") {
   return nodeOptions.includes("--use-env-proxy")
     ? nodeOptions
-    : `${nodeOptions} --use-env-proxy`.trim();
+    : hasValidHttpProxyEnv()
+      ? `${nodeOptions} --use-env-proxy`.trim()
+      : nodeOptions;
+}
+
+function hasValidHttpProxyEnv() {
+  const proxyValues = [
+    process.env.HTTP_PROXY,
+    process.env.HTTPS_PROXY,
+    process.env.ALL_PROXY,
+    process.env.http_proxy,
+    process.env.https_proxy,
+    process.env.all_proxy,
+  ].filter(Boolean);
+
+  if (proxyValues.length === 0) {
+    return false;
+  }
+
+  return proxyValues.every((value) => {
+    try {
+      const parsed = new URL(value);
+
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  });
 }
 
 function getTavilyApiKey() {
@@ -346,7 +400,8 @@ function getSearchModes() {
 
 async function postMeetingScenario(baseUrl, question, searchMode) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90000);
+  const timeoutMs = Number(process.env.LIVE_SEARCH_MEETING_TIMEOUT_MS ?? 300000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${baseUrl}/api/meeting`, {
@@ -464,6 +519,17 @@ function summarizeCacheEvents(events) {
     hitCount: events.filter((event) => event.cacheStatus === "hit").length,
     missCount: events.filter((event) => event.cacheStatus === "miss").length,
   };
+}
+
+function summarizePassStats(passStats) {
+  return passStats.map((stat) => ({
+    passName: stat.passName,
+    query: stat.query,
+    resultCount: stat.resultCount,
+    skippedReason: stat.skippedReason ?? "",
+    errorType: stat.errorType ?? "",
+    searchParameters: stat.searchParameters ?? {},
+  }));
 }
 
 function summarizeEvidenceReliability(items) {

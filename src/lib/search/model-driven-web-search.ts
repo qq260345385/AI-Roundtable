@@ -1,6 +1,7 @@
 import type {
   EvidencePack,
   EvidenceSearchPassStats,
+  EvidenceSearchPassParameters,
   ExtractAttemptRecord,
   SearchEvidence,
   SearchCacheEvent,
@@ -44,6 +45,10 @@ import type {
   ModelParticipant,
   ModelProvider,
 } from "../types";
+import {
+  buildTopRawCandidatePreviews,
+  getRetrievalPassParameters,
+} from "./candidate-retrieval";
 
 const MAX_MODEL_DRIVEN_QUERIES = 8;
 const WEB_SEARCH_RESULTS_PER_QUERY = 20;
@@ -303,7 +308,7 @@ export async function buildModelDrivenWebEvidencePack({
             Date.now() - passStartedAt,
             errorType,
             true,
-            getPassStatsMeta(searchPass),
+            getPassStatsMeta(searchPass, { maxResults: maxResultsPerQuery }),
           ),
         );
         if (isKeySearchPass(searchPass.name)) {
@@ -364,6 +369,7 @@ export async function buildModelDrivenWebEvidencePack({
             topic,
             getPassStatsMeta(searchPass, {
               durationMs: Date.now() - passStartedAt,
+              maxResults: maxResultsPerQuery,
             }),
           ),
         );
@@ -388,7 +394,7 @@ export async function buildModelDrivenWebEvidencePack({
             durationMs,
             errorType,
             timedOut,
-            getPassStatsMeta(searchPass),
+            getPassStatsMeta(searchPass, { maxResults: maxResultsPerQuery }),
           ),
         );
         providerDiagnostics.push(
@@ -486,7 +492,9 @@ export async function buildModelDrivenWebEvidencePack({
               0,
               "evidence_overall_timeout",
               true,
-              getPassStatsMeta(fallbackPass),
+              getPassStatsMeta(fallbackPass, {
+                maxResults: maxResultsPerQuery,
+              }),
             ),
           );
           break;
@@ -540,6 +548,7 @@ export async function buildModelDrivenWebEvidencePack({
               topic,
               getPassStatsMeta(fallbackPass, {
                 durationMs: Date.now() - passStartedAt,
+                maxResults: maxResultsPerQuery,
               }),
             ),
           );
@@ -556,7 +565,9 @@ export async function buildModelDrivenWebEvidencePack({
               Date.now() - passStartedAt,
               getSearchPassErrorType(error, Date.now() - passStartedAt, effectivePassTimeoutMs),
               isSearchPassTimeout(getSearchPassErrorType(error, Date.now() - passStartedAt, effectivePassTimeoutMs)),
-              getPassStatsMeta(fallbackPass),
+              getPassStatsMeta(fallbackPass, {
+                maxResults: maxResultsPerQuery,
+              }),
             ),
           );
         } finally {
@@ -633,7 +644,7 @@ export async function buildModelDrivenWebEvidencePack({
               0,
               "evidence_overall_timeout",
               true,
-              getPassStatsMeta(searchPass),
+              getPassStatsMeta(searchPass, { maxResults: maxResultsPerQuery }),
             ),
           );
           break;
@@ -687,6 +698,7 @@ export async function buildModelDrivenWebEvidencePack({
               topic,
               getPassStatsMeta(searchPass, {
                 durationMs: Date.now() - passStartedAt,
+                maxResults: maxResultsPerQuery,
               }),
             ),
           );
@@ -710,7 +722,7 @@ export async function buildModelDrivenWebEvidencePack({
               durationMs,
               errorType,
               isSearchPassTimeout(errorType),
-              getPassStatsMeta(searchPass),
+              getPassStatsMeta(searchPass, { maxResults: maxResultsPerQuery }),
             ),
           );
           providerDiagnostics.push(
@@ -722,6 +734,8 @@ export async function buildModelDrivenWebEvidencePack({
       }
 
       if (fallbackDrafts.length > 0) {
+        rawWebDrafts.push(...fallbackDrafts);
+        rawCandidateCount = rawWebDrafts.length;
         const fallbackDeduped = dedupeSearchResults([
           ...webDrafts,
           ...fallbackDrafts,
@@ -746,12 +760,12 @@ export async function buildModelDrivenWebEvidencePack({
     if (shouldRunTargetedSearchRetry(preflightPack)) {
       targetedSearchRetryTriggered = true;
       targetedSearchRetryReason = "social_video_ratio_above_threshold";
-      const targetedQueries = buildTargetedRetryQueries(topic);
+      const targetedPasses = buildTargetedRetrySearchPasses(topicAnalysis);
       const targetedDrafts: TavilyEvidenceDraft[] = [];
 
-      for (const query of targetedQueries) {
-        activeSearchPassName = "targeted_retry";
-        searchQueries.push(query);
+      for (const searchPass of targetedPasses) {
+        activeSearchPassName = searchPass.name;
+        searchQueries.push(searchPass.query);
         const passStartedAt = Date.now();
         const remainingTimeoutMs = getRemainingTimeoutMs(
           overallStartedAt,
@@ -765,11 +779,14 @@ export async function buildModelDrivenWebEvidencePack({
         if (effectivePassTimeoutMs <= 0) {
           passStats.push(
             createFailedPassStats(
-              "targeted_retry",
-              query,
+              searchPass.name,
+              searchPass.query,
               Date.now() - passStartedAt,
               "evidence_overall_timeout",
               true,
+              getPassStatsMeta(searchPass, {
+                maxResults: Math.max(2, Math.ceil(modeConfig.extractLimit / 3)),
+              }),
             ),
           );
           activeSearchPassName = undefined;
@@ -779,24 +796,26 @@ export async function buildModelDrivenWebEvidencePack({
         const passAbort = createTimedAbortSignal(signal, effectivePassTimeoutMs);
 
         try {
+          const targetedMaxResults = Math.max(
+            2,
+            Math.ceil(modeConfig.extractLimit / targetedPasses.length),
+          );
           const response = await searchWithConfiguredProvider({
-            chunksPerSource: 3,
-            excludeDomains: SOCIAL_VIDEO_DOMAINS,
+            chunksPerSource: searchPass.chunksPerSource,
+            country: searchPass.country,
+            excludeDomains: searchPass.excludeDomains,
             freshness: "latest",
-            includeDomains: [
-              ...TRUSTED_MEDIA_DOMAINS,
-              ...INDUSTRY_REPORT_DOMAINS,
-            ],
-            includeRawContent: "text",
-            maxResults: Math.max(2, Math.ceil(modeConfig.extractLimit / 3)),
+            includeDomains: searchPass.includeDomains,
+            includeRawContent: searchPass.includeRawContent,
+            maxResults: targetedMaxResults,
             provider: searchProvider,
-            query,
-            searchDepth: "advanced",
+            query: searchPass.query,
+            searchDepth: searchPass.searchDepth,
             searchRegion,
-            searchTopic: "news",
+            searchTopic: searchPass.searchTopic,
             searcher,
             signal: passAbort.signal,
-            timeRange: "month",
+            timeRange: searchPass.timeRange,
             topic,
           });
           cacheEvents.push(...(response.cacheEvents ?? []));
@@ -807,15 +826,22 @@ export async function buildModelDrivenWebEvidencePack({
             snippet: result.content ?? result.snippet ?? "",
             publishedAt: result.publishedDate,
             providerScore: result.providerScore,
-            query,
-            seenInPasses: ["targeted_retry"],
+            query: searchPass.query,
+            seenInPasses: [searchPass.name],
           }));
 
           targetedDrafts.push(...queryDrafts);
           passStats.push(
-            createPassStats("targeted_retry", query, queryDrafts, topic, {
-              durationMs: Date.now() - passStartedAt,
-            }),
+            createPassStats(
+              searchPass.name,
+              searchPass.query,
+              queryDrafts,
+              topic,
+              getPassStatsMeta(searchPass, {
+                durationMs: Date.now() - passStartedAt,
+                maxResults: targetedMaxResults,
+              }),
+            ),
           );
         } catch (error) {
           if (signal?.aborted) {
@@ -831,11 +857,17 @@ export async function buildModelDrivenWebEvidencePack({
 
           passStats.push(
             createFailedPassStats(
-              "targeted_retry",
-              query,
+              searchPass.name,
+              searchPass.query,
               durationMs,
               errorType,
               isSearchPassTimeout(errorType),
+              getPassStatsMeta(searchPass, {
+                maxResults: Math.max(
+                  2,
+                  Math.ceil(modeConfig.extractLimit / targetedPasses.length),
+                ),
+              }),
             ),
           );
           providerDiagnostics.push(
@@ -844,9 +876,9 @@ export async function buildModelDrivenWebEvidencePack({
           logSearchPassFailure({
             durationMs,
             errorType,
-            passName: "targeted_retry",
+            passName: searchPass.name,
             provider: searchProvider.id,
-            query,
+            query: searchPass.query,
             timeoutMs: effectivePassTimeoutMs,
           });
         } finally {
@@ -859,6 +891,8 @@ export async function buildModelDrivenWebEvidencePack({
         ...targetedDrafts,
       ]);
 
+      rawWebDrafts.push(...targetedDrafts);
+      rawCandidateCount = rawWebDrafts.length;
       webDrafts = targetedDeduped.items.slice(0, modeConfig.candidateLimit);
       uniqueCandidateCount = targetedDeduped.items.length;
       dedupeStats = mergeDedupeStats(dedupeStats, targetedDeduped.stats);
@@ -1178,6 +1212,7 @@ export async function buildModelDrivenWebEvidencePack({
         skippedPassReasons,
         targetedSearchRetryTriggered,
         targetedSearchRetryReason,
+        topRawCandidates: buildTopRawCandidatePreviews(webDrafts, topic),
         searchMode,
         searchIntents: searchPlan.searchIntents,
         queryPlans: searchPlan.queryPlans,
@@ -2256,6 +2291,7 @@ function createPassStats(
     queryLevel?: SearchQueryLevel;
     derivedFrom?: string;
     queryQuality?: SearchQueryQuality;
+    searchParameters?: EvidenceSearchPassParameters;
     skippedReason?: string;
   } = {},
 ): EvidenceSearchPassStats {
@@ -2291,19 +2327,38 @@ function createPassStats(
     ...(meta.queryLevel ? { queryLevel: meta.queryLevel } : {}),
     ...(meta.derivedFrom ? { derivedFrom: meta.derivedFrom } : {}),
     ...(meta.queryQuality ? { queryQuality: meta.queryQuality } : {}),
+    ...(meta.searchParameters ? { searchParameters: meta.searchParameters } : {}),
     ...(meta.skippedReason ? { skippedReason: meta.skippedReason } : {}),
   };
 }
 
 function getPassStatsMeta(
-  pass: Pick<SearchPassSpec, "queryLevel" | "derivedFrom" | "queryQuality">,
-  meta: { durationMs?: number; skippedReason?: string } = {},
+  pass: Pick<
+    SearchPassSpec,
+    | "queryLevel"
+    | "derivedFrom"
+    | "queryQuality"
+    | "country"
+    | "excludeDomains"
+    | "includeDomains"
+    | "includeRawContent"
+    | "searchDepth"
+    | "searchTopic"
+    | "timeRange"
+  >,
+  meta: {
+    durationMs?: number;
+    maxResults?: number;
+    skippedReason?: string;
+  } = {},
 ) {
   return {
-    ...meta,
+    ...(meta.durationMs !== undefined ? { durationMs: meta.durationMs } : {}),
+    ...(meta.skippedReason ? { skippedReason: meta.skippedReason } : {}),
     ...(pass.queryLevel ? { queryLevel: pass.queryLevel } : {}),
     ...(pass.derivedFrom ? { derivedFrom: pass.derivedFrom } : {}),
     ...(pass.queryQuality ? { queryQuality: pass.queryQuality } : {}),
+    searchParameters: getRetrievalPassParameters(pass, meta.maxResults),
   };
 }
 
@@ -2317,6 +2372,7 @@ function createFailedPassStats(
     queryLevel?: SearchQueryLevel;
     derivedFrom?: string;
     queryQuality?: SearchQueryQuality;
+    searchParameters?: EvidenceSearchPassParameters;
     skippedReason?: string;
   } = {},
 ): EvidenceSearchPassStats {
@@ -2334,6 +2390,7 @@ function createFailedPassStats(
     ...(meta.queryLevel ? { queryLevel: meta.queryLevel } : {}),
     ...(meta.derivedFrom ? { derivedFrom: meta.derivedFrom } : {}),
     ...(meta.queryQuality ? { queryQuality: meta.queryQuality } : {}),
+    ...(meta.searchParameters ? { searchParameters: meta.searchParameters } : {}),
     ...(meta.skippedReason ? { skippedReason: meta.skippedReason } : {}),
   };
 }
@@ -2847,12 +2904,73 @@ function getLowQualityFallbackReason(input: {
   return hasPeripheralButNoCitable ? "direct_supporting_shortfall" : undefined;
 }
 
-function buildTargetedRetryQueries(topic: string): string[] {
-  return [
-    `${topic} official reputable media industry report -linkedin -instagram -reddit -youtube -tiktok -twitter -x.com`,
-    `${topic} Reuters Bloomberg NYTimes WSJ FT The Information TechCrunch`,
-    `${topic} official announcement report source primary`,
-  ].map((query) => trimQueryToLength(query));
+function buildTargetedRetrySearchPasses(
+  topicAnalysis: TopicAnalysis,
+): SearchPassSpec[] {
+  const baseQuery =
+    selectBestTopicAnalysisQuery(topicAnalysis, topicAnalysis.cleanedTopic) ??
+    buildQueryFromTopicAnalysisParts(topicAnalysis, topicAnalysis.cleanedTopic);
+  const reportQuery = normalizeSearchQueryTerms(
+    `${baseQuery} independent analysis market report`,
+    topicAnalysis,
+  );
+  const benchmarkQuery = normalizeSearchQueryTerms(
+    `${baseQuery} benchmark evaluation technical analysis`,
+    topicAnalysis,
+  );
+  const officialQuery = normalizeSearchQueryTerms(
+    /[\p{Script=Han}]/u.test(topicAnalysis.cleanedTopic)
+      ? `${baseQuery} 官方 发布 公告`
+      : `${baseQuery} official announcement report`,
+    topicAnalysis,
+  );
+  const passes: SearchPassSpec[] = [
+    {
+      name: "targeted_retry",
+      query: reportQuery,
+      freshness: "latest",
+      includeDomains: TRUSTED_MEDIA_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      includeRawContent: "text",
+      chunksPerSource: 3,
+      searchDepth: "advanced",
+      searchTopic: "news",
+      timeRange: "month",
+    },
+    {
+      name: "targeted_retry",
+      query: benchmarkQuery,
+      freshness: "recent",
+      includeDomains: INDUSTRY_REPORT_DOMAINS,
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      includeRawContent: "text",
+      chunksPerSource: 3,
+      searchDepth: "advanced",
+      searchTopic: "general",
+      timeRange: "year",
+    },
+    {
+      name: "targeted_retry",
+      query: officialQuery,
+      freshness: "latest",
+      includeDomains: buildOfficialDomainCandidates(
+        topicAnalysis.cleanedTopic,
+        topicAnalysis,
+      ),
+      excludeDomains: SOCIAL_VIDEO_DOMAINS,
+      includeRawContent: "text",
+      chunksPerSource: 3,
+      searchDepth: "advanced",
+      searchTopic: "general",
+      timeRange: "month",
+    },
+  ];
+
+  for (const pass of passes) {
+    annotateSearchPass(pass, "fallback_broad", "topic_analysis", topicAnalysis);
+  }
+
+  return passes.filter((pass) => pass.query);
 }
 
 function isOfficialSnippetOnlyEvidence(item: SearchEvidence): boolean {

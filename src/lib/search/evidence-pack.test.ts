@@ -191,6 +191,20 @@ describe("normalizeEvidencePack", () => {
     expect(analysis.searchQueries.join("\n")).not.toContain("你们认为");
   });
 
+  test("cleans English discussion shells without leaving how-strong fragments", () => {
+    const analysis = analyzeTopicForEvidence(
+      "How strong is DeepSeek V3 in current global AI model benchmarks?",
+    );
+    const joinedQueries = analysis.searchQueries.join("\n").toLowerCase();
+
+    expect(analysis.cleanedTopic).toContain("DeepSeek V3");
+    expect(analysis.cleanedTopic.toLowerCase()).not.toContain("how strong is");
+    expect(analysis.cleanedTopic.toLowerCase()).not.toContain("strong is");
+    expect(joinedQueries).toContain("deepseek v3");
+    expect(joinedQueries).not.toContain("strong is");
+    expect(joinedQueries).not.toContain("how strong");
+  });
+
   test("judges evidence role separately from source score", () => {
     const coreQuality = scoreEvidence({
       title: "Enterprise adoption and revenue analysis",
