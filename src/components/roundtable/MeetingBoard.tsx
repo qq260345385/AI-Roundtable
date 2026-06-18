@@ -2,6 +2,7 @@ import type { MeetingResult } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
 import type { ReactNode } from "react";
 import { formatFailureForDisplay } from "@/lib/meeting/failure-format";
+import { MeetingRecapPanel } from "./MeetingRecapPanel";
 import { SummaryPanel } from "./SummaryPanel";
 import { TranscriptPanel } from "./TranscriptPanel";
 
@@ -17,6 +18,8 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
       meeting.meetingStatus === "degraded" ? (
         <MeetingStatusPanel meeting={meeting} text={text} />
       ) : null}
+      <MeetingRecapPanel meeting={meeting} text={text} />
+      <SummaryPanel summary={meeting.summary} text={text} topic={meeting.topic} />
       {meeting.isTimeSensitive && meeting.factCheckNotice ? (
         <FactHygienePanel notice={meeting.factCheckNotice} text={text} />
       ) : null}
@@ -36,7 +39,6 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
         <ProviderFailurePanel failures={meeting.failures} text={text} />
       ) : null}
       <TranscriptPanel phases={meeting.phases} text={text} />
-      <SummaryPanel summary={meeting.summary} text={text} topic={meeting.topic} />
     </div>
   );
 }

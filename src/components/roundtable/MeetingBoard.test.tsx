@@ -6,6 +6,133 @@ import { MeetingBoard } from "./MeetingBoard";
 import { MeetingRoom } from "./MeetingRoom";
 
 describe("MeetingBoard", () => {
+  test("renders post-meeting recap before summary, evidence, and transcript", () => {
+    const meeting: MeetingResult = {
+      topic: "Recap topic",
+      phases: [
+        {
+          id: "independent",
+          title: "第一阶段：独立观点",
+          description: "Each model speaks independently.",
+          turns: [
+            {
+              id: "t1",
+              phaseId: "independent",
+              speakerName: "Alpha Model",
+              provider: "AlphaAI",
+              model: "alpha-large",
+              content: "Alpha independent view.",
+            },
+            {
+              id: "t2",
+              phaseId: "independent",
+              speakerName: "Beta Model",
+              provider: "BetaAI",
+              model: "beta-large",
+              content: "Beta independent view.",
+            },
+          ],
+        },
+        {
+          id: "response",
+          title: "第二阶段：自由回应",
+          description: "Models respond.",
+          turns: [
+            {
+              id: "t3",
+              phaseId: "response",
+              speakerName: "Alpha Model",
+              provider: "AlphaAI",
+              model: "alpha-large",
+              content: "Alpha response view.",
+            },
+          ],
+        },
+      ],
+      summary: {
+        consensus: ["讨论形成了一个共同判断。"],
+        differences: ["Beta 和 Alpha 仍有真实分歧。"],
+        minorityViews: [],
+        risks: ["需要核验样本覆盖。"],
+        nextSteps: ["继续检查资料。"],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingBoard meeting={meeting} text={getUiText("zh")} />,
+    );
+
+    expect(html).toContain("会议复盘总览");
+    expect(html).toContain("模型对照");
+    expect(html).toContain("第三阶段：共识整理");
+    expect(html).toContain("原始发言记录");
+    expect(html).toContain("未参与回应");
+    expect(html.indexOf("会议复盘总览")).toBeLessThan(
+      html.indexOf("模型对照"),
+    );
+    expect(html.indexOf("模型对照")).toBeLessThan(
+      html.indexOf("第三阶段：共识整理"),
+    );
+    expect(html.indexOf("第三阶段：共识整理")).toBeLessThan(
+      html.indexOf("原始发言记录"),
+    );
+  });
+
+  test("renders expanded summary sections without mixing evidence limits into differences", () => {
+    const meeting: MeetingResult = {
+      topic: "Factual topic",
+      phases: [],
+      summary: {
+        consensus: ["讨论共识。"],
+        differences: ["真实分歧。"],
+        minorityViews: ["少数派观点。"],
+        confirmableFacts: ["资料确认了发布事实。"],
+        initialHypotheses: ["可能影响竞争格局。"],
+        insufficientlyConfirmed: ["用户迁移仍不能确认。"],
+        risks: ["样本覆盖不足。"],
+        nextSteps: ["继续核验资料。"],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingBoard meeting={meeting} text={getUiText("zh")} />,
+    );
+
+    expect(html).toContain("可确认事实");
+    expect(html).toContain("低置信推测");
+    expect(html).toContain("不能确认的关键问题");
+    expect(html).toContain("风险点");
+    expect(html).toContain("用户迁移仍不能确认。");
+    expect(html.indexOf("用户迁移仍不能确认。")).toBeGreaterThan(
+      html.indexOf("不能确认的关键问题"),
+    );
+    expect(html.indexOf("用户迁移仍不能确认。")).toBeLessThan(
+      html.indexOf("风险点"),
+    );
+  });
+
+  test("renders English recap labels", () => {
+    const meeting: MeetingResult = {
+      topic: "English recap",
+      phases: [],
+      summary: {
+        consensus: [],
+        differences: [],
+        minorityViews: [],
+        risks: [],
+        nextSteps: [],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingBoard meeting={meeting} text={getUiText("en")} />,
+    );
+
+    expect(html).toContain("Meeting Recap");
+    expect(html).toContain("Model Comparison");
+    expect(html).toContain("Original Transcript");
+  });
+
   test("shows a clear failed meeting status when valid models are insufficient", () => {
     const meeting: MeetingResult = {
       topic: "Failure handling",

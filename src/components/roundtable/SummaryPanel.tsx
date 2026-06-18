@@ -1,6 +1,5 @@
 import type { MeetingSummary } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
-import { getThirdStageSummarySections } from "@/lib/meeting/summary-presentation";
 
 type SummaryPanelProps = {
   summary: MeetingSummary;
@@ -10,19 +9,38 @@ type SummaryPanelProps = {
 
 export function SummaryPanel({ summary, text, topic }: SummaryPanelProps) {
   void topic;
-  const thirdStageSections = getThirdStageSummarySections(summary);
   const sections = [
     {
       title: text.meetingBoard.consensus,
-      items: thirdStageSections.consensus,
+      items: summary.consensus,
+    },
+    {
+      title: text.meetingBoard.confirmableFacts,
+      items: summary.confirmableFacts ?? [],
+    },
+    {
+      title: text.meetingBoard.initialHypotheses,
+      items: summary.initialHypotheses ?? [],
+    },
+    {
+      title: text.meetingBoard.communityViews,
+      items: summary.communityViews ?? [],
     },
     {
       title: text.meetingBoard.differences,
-      items: thirdStageSections.differences,
+      items: [...summary.differences, ...summary.minorityViews],
+    },
+    {
+      title: text.meetingBoard.insufficientlyConfirmed,
+      items: summary.insufficientlyConfirmed ?? [],
+    },
+    {
+      title: text.meetingBoard.risks,
+      items: summary.risks,
     },
     {
       title: text.meetingBoard.nextSteps,
-      items: thirdStageSections.nextSteps,
+      items: summary.nextSteps,
     },
   ];
 
