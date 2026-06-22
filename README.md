@@ -1,14 +1,14 @@
 # AI Roundtable
 
-> 多模型圆桌会议系统。输入一个议题，让多个 AI 模型按阶段独立发言、互相回应，并整理出清晰的共识、分歧与下一步。
+> 多模型圆桌会议系统。输入一个议题，让多个 AI 模型按阶段独立发言、互相回应，并整理出可复盘的共识、分歧、证据限制与下一步。
 
-当前版本：`v0.6.6`
+当前版本：`v0.6.8`
 
-AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让它们以平等参会者的方式讨论同一个问题。系统提供会议流程、资料包、联网搜索、引用检查和 Markdown 导出，让用户更容易看见不同模型的判断路径。
+AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让它们以平等参会者的方式讨论同一个问题。系统提供三阶段会议、联网 Evidence、本地资料、引用检查、Markdown 导出、历史会议和会后复盘，帮助用户看见不同模型的判断路径。
 
 ## 适合做什么
 
-- 快速获得一个复杂问题的多角度判断。
+- 快速获得复杂问题的多角度判断。
 - 比较不同模型在同一议题下的推理方式和表达重点。
 - 围绕网页资料、本地文档或联网搜索结果组织讨论。
 - 生成可复制、可归档、可继续加工的会议纪要。
@@ -20,7 +20,7 @@ AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让
 
 1. **独立观点**：每个模型先不受其他发言影响，独立表达看法。
 2. **自由回应**：模型阅读前一阶段发言后，补充、质疑或修正观点。
-3. **共识整理**：系统汇总讨论共识、真实分歧、风险点与下一步。
+3. **共识整理**：系统汇总讨论共识、真实分歧、风险点、证据限制与下一步。
 
 ### 联网 Evidence 链路
 
@@ -29,8 +29,8 @@ AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让
 - Candidate Retrieval：广泛召回候选资料，深度搜索目标约 60 条候选。
 - Evidence Selection：从候选中筛选 8-12 条更适合会议引用的资料。
 - Evidence Judge：按直接证据、辅助证据、背景资料和被降级资料分区。
-- Low-Evidence Mode：如果资料不足以支撑强结论，会明确提示证据限制。
-- Citation Check：会议结束后检查正文引用是否有效，区分可引用资料和降级资料。
+- Low-Evidence Mode：资料不足以支撑强结论时，会明确提示证据限制。
+- Citation Check：会议结束后检查正文引用是否有效，区分可引用资料、降级资料和无效引用。
 
 ### 资料与本地文件
 
@@ -38,15 +38,9 @@ AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让
 
 文件只发送到本地解析接口提取文本，不保存原文件。
 
-### 界面与交互
+### 会后复盘
 
-- 中文优先的轻量圆桌会议界面。
-- 支持中英文界面切换。
-- 可选择参会模型、总结模型和联网搜索驱动模型。
-- 支持简要会议模式。
-- 支持圆桌席位拖拽调整。
-- 支持历史会议本地保存与重新打开。
-- 支持会议纪要 Markdown 一键复制。
+会议完成后，结果页会按“复盘总览 → 模型对照 → 第三阶段总结 → 证据/引用状态 → 原始发言记录”的顺序展示，方便先看结论，再追溯每个模型的观点变化。
 
 ## 快速开始
 
@@ -87,13 +81,6 @@ AI_ROUNDTABLE_PROVIDERS_JSON='[
     "baseUrl": "https://api.deepseek.com",
     "apiKey": "你的 API key",
     "model": "deepseek-v4-pro"
-  },
-  {
-    "id": "kimi",
-    "name": "Kimi K2.6",
-    "baseUrl": "https://api.moonshot.cn/v1",
-    "apiKey": "你的 API key",
-    "model": "kimi-k2.6"
   }
 ]'
 ```
@@ -110,99 +97,45 @@ AI Roundtable 使用 OpenAI-compatible Chat Completions 接口，因此可以接
 TAVILY_API_KEY=你的 Tavily key
 ```
 
-搜索偏好可以在界面中调整：
+界面中可以调整搜索地区、搜索强度，并选择一个已接入模型作为搜索驱动模型。若 Tavily 官网搜索正常，但应用内搜索质量异常，优先检查：
 
-- 搜索地区：自动、全球、中国、美国、欧洲、日本、韩国。
-- 搜索强度：标准搜索或深度搜索。
-- 搜索驱动模型：可选择一个已接入模型生成搜索方向。
-
-如果 Tavily 官网搜索正常，但应用内搜索质量异常，优先检查：
-
-- Evidence Debug 中实际发送的 query 是否过长、重复或含残片。
-- 搜索 pass 是否被跳过。
-- `rawCandidateCount` / `uniqueCandidateCount` 是否达到预期。
-- Evidence Pack 中是否没有可引用的 direct/supporting 资料。
-- Low-Evidence Mode 是否被触发。
+- `.env.local` 是否被当前 Next.js 进程正确加载。
+- Evidence Debug 中的实际 query、pass stats、Tavily 参数和候选数。
+- 是否命中了 Low-Evidence Mode，即“已广搜候选但直接证据不足”。
+- `npm run test:live-search` 的真实 Tavily smoke test 输出。
 
 ## 常用命令
 
 ```bash
-npm run dev
-```
-
-启动本地开发服务。
-
-```bash
 npm test
-```
-
-运行自动化测试。
-
-```bash
 npx tsc --noEmit
-```
-
-执行 TypeScript 类型检查。
-
-```bash
 npm run lint
+npm run build
+npm run verify
 ```
 
-检查代码风格。
+`npm run verify` 会串联测试、类型检查、lint 和 build，是提交或发布前的推荐验收入口。
+
+可选真实搜索 smoke test：
 
 ```bash
-npm run build
+npm run test:live-search
 ```
 
-生成生产构建。
+该命令会消耗 Tavily 额度，因此不放入默认 `verify`。
 
-如果构建在 `next/font/google` 拉取 `Geist` 或 `Geist Mono` 时失败，通常是本地网络无法访问 Google Fonts。该问题与业务代码无关，可以在网络恢复后重试，或后续改为本地字体方案。
+## v0.6.8 架构治理
 
-## 使用提醒
+本版重点是拆分首页主入口，保持用户可见行为不变：
 
-AI Roundtable 可以帮助整理思路，但它不是事实裁判。
+- `src/app/page.tsx` 保留页面状态、会议启动/停止、实时事件和历史记录编排。
+- `src/components/roundtable/MeetingSetupView.tsx` 承担会议创建页布局。
+- `src/components/roundtable/MeetingSetupPanels.tsx` 承担资料、模型选择、历史会议等展示面板，以及从原页面抽出的纯 helper。
+- `src/app/home-types.ts` 集中首页局部类型和 localStorage key。
+- `src/app/home-helpers.test.ts` 与 `src/app/page-architecture.test.ts` 保护拆分后的 payload、校验逻辑和入口体积。
 
-以下内容务必人工核验：
+本轮不改变会议三阶段流程、联网搜索核心逻辑、provider 失败处理或公开 API wire shape。
 
-- 最新新闻。
-- 价格、估值、融资额、营收。
-- 法律、政策、监管结论。
-- 医疗、金融、投资建议。
-- 公司内部信息或未经证实的传闻。
+## 项目原则
 
-如果会议出现低证据提示，说明当前资料不足以支撑强结论。此时纪要应被看作讨论草稿，而不是最终事实报告。
-
-## 隐私与安全
-
-- 不要提交 `.env.local`。
-- 不要把 API key 写进 README、Issue、PR、截图或示例文件。
-- 真实会议记录公开分享前应先脱敏。
-- 联网搜索和模型调用都发生在服务端，API key 不会返回给前端。
-- 如果发现 key 泄露，请立即撤销并重新生成。
-
-更多安全说明见 [SECURITY.md](SECURITY.md)。
-
-## 项目状态
-
-AI Roundtable 仍处于早期快速迭代阶段，核心会议流程已经可运行。
-
-当前重点：
-
-- 提升联网搜索候选召回与 Evidence Pack 精选质量。
-- 改善中文议题、本地资料和中文办公场景的识别。
-- 让低证据模式、引用纪律和资料质量提示更诚实。
-- 优化普通用户可见界面，隐藏不必要的调试复杂度。
-- 继续完善真实模型失败、超时、截断和空输出处理。
-
-## 开发者参考
-
-- [CONTRIBUTING.md](CONTRIBUTING.md)
-- [CHANGELOG.md](CHANGELOG.md)
-- [docs/design.md](docs/design.md)
-- [docs/frontend-manual-checklist.md](docs/frontend-manual-checklist.md)
-- [docs/real-model-smoke-test.md](docs/real-model-smoke-test.md)
-- [docs/evaluation-notes.md](docs/evaluation-notes.md)
-
-## License
-
-本项目使用 [MIT License](LICENSE)。
+AI Roundtable 是面向普通用户的圆桌会议产品，不是开发者调试工具。复杂搜索和证据信息可以保留在调试结构、日志或可展开区域中，但默认体验应服务于：快速输入议题、选择模型、开会、得到清晰结论。

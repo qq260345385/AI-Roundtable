@@ -1,6 +1,6 @@
 {
   "name": "ai-roundtable",
-  "version": "0.6.6",
+  "version": "0.6.8",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "verify": "npm test && npx tsc --noEmit && npm run lint && npm run build",
     "test:live-search": "node scripts/live-search-smoke.mjs"
   },
   "dependencies": {

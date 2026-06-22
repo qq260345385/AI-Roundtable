@@ -11,6 +11,7 @@ AI Roundtable 是一个多大模型圆桌会议系统。它不把模型伪装成
 当前版本已经进入真实模型和联网资料链路阶段：
 
 - 使用 Next.js App Router、TypeScript 和 Tailwind CSS。
+- 使用本地系统字体栈，不依赖 Google Fonts 网络拉取，保证离线构建稳定性。
 - 支持 MockProvider，也支持 OpenAI-compatible 真实 provider。
 - 支持 Tavily 联网搜索、本地资料导入、Evidence Pack、引用检查和 Markdown 导出。
 - 不使用数据库，会议历史默认保存在浏览器本地。
