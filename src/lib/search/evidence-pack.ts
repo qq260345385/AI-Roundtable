@@ -225,6 +225,32 @@ export type EvidenceDebugSummary = {
   selectedEvidenceByPass: { passName: string; count: number }[];
   skippedPasses: string[];
   topRawCandidates?: SearchProcessCandidatePreview[];
+  searchHealth?: SearchHealthReport;
+};
+
+export type SearchHealthDiagnosis =
+  | "healthy"
+  | "missing_api_key"
+  | "no_tavily_call"
+  | "provider_failed"
+  | "provider_zero_results"
+  | "query_quality_issue"
+  | "candidate_shortfall"
+  | "evidence_filtered";
+
+export type SearchHealthReport = {
+  hasTavilyApiKey: boolean;
+  tavilyCalled: boolean;
+  queryQualityIssueCount: number;
+  candidateShortfall: number;
+  directSupportingShortfall: boolean;
+  diagnosis: SearchHealthDiagnosis;
+  providerFailureReason?: SearchFailureReason;
+  fallbackTriggeredReason?: string;
+  rawCandidateTarget: number;
+  rawCandidateCount: number;
+  uniqueCandidateCount: number;
+  selectedEvidenceCount: number;
 };
 
 export type ExtractAttemptRecord = {
@@ -2525,22 +2551,23 @@ function createEvidenceDebugSummary(input: {
   const highMediumCount = input.results.filter(
     (result) => result.reliability === "high" || result.reliability === "medium",
   ).length;
+  const retrieval = {
+    rawCandidateTarget: input.rawCandidateTarget ?? candidateCount,
+    rawCandidateCount: input.rawCandidateCount ?? candidateCount,
+    uniqueCandidateCount: input.uniqueCandidateCount ?? candidateCount,
+    selectedEvidenceTarget:
+      input.selectedEvidenceTarget ?? (input.selectedItems?.length ?? 0),
+    selectedEvidenceCount:
+      input.selectedEvidenceCount ?? (input.selectedItems?.length ?? 0),
+    candidateShortfall: input.candidateShortfall ?? 0,
+    retrievalPassCount: input.retrievalPassCount ?? 0,
+    ...(input.fallbackTriggeredReason
+      ? { fallbackTriggeredReason: input.fallbackTriggeredReason }
+      : {}),
+  };
 
   return {
-    retrieval: {
-      rawCandidateTarget: input.rawCandidateTarget ?? candidateCount,
-      rawCandidateCount: input.rawCandidateCount ?? candidateCount,
-      uniqueCandidateCount: input.uniqueCandidateCount ?? candidateCount,
-      selectedEvidenceTarget:
-        input.selectedEvidenceTarget ?? (input.selectedItems?.length ?? 0),
-      selectedEvidenceCount:
-        input.selectedEvidenceCount ?? (input.selectedItems?.length ?? 0),
-      candidateShortfall: input.candidateShortfall ?? 0,
-      retrievalPassCount: input.retrievalPassCount ?? 0,
-      ...(input.fallbackTriggeredReason
-        ? { fallbackTriggeredReason: input.fallbackTriggeredReason }
-        : {}),
-    },
+    retrieval,
     evidenceHitRate: {
       candidateCount,
       coreEvidenceCount,
@@ -2603,10 +2630,115 @@ function createEvidenceDebugSummary(input: {
       input.selectedItems ?? [],
     ),
     skippedPasses: input.skippedPasses ?? [],
+    searchHealth: createSearchHealthReport({
+      candidateCount,
+      coreEvidenceCount,
+      evidenceMode: input.evidenceMode,
+      failureReason: input.failureReason,
+      fallbackTriggeredReason: input.fallbackTriggeredReason,
+      highMediumCount,
+      passStats: input.passStats ?? [],
+      retrieval,
+    }),
     ...(input.topRawCandidates && input.topRawCandidates.length > 0
       ? { topRawCandidates: input.topRawCandidates }
       : {}),
   };
+}
+
+function createSearchHealthReport(input: {
+  candidateCount: number;
+  coreEvidenceCount: number;
+  evidenceMode: EvidenceMode;
+  failureReason?: SearchFailureReason;
+  fallbackTriggeredReason?: string;
+  highMediumCount: number;
+  passStats: EvidenceSearchPassStats[];
+  retrieval: NonNullable<EvidenceDebugSummary["retrieval"]>;
+}): SearchHealthReport {
+  const queryQualityIssueCount = input.passStats.filter(
+    (stat) => stat.queryQuality?.ok === false,
+  ).length;
+  const hasTavilyApiKey = Boolean(process.env.TAVILY_API_KEY);
+  const tavilyCalled =
+    hasTavilyApiKey &&
+    (input.passStats.length > 0 ||
+      input.retrieval.rawCandidateCount > 0 ||
+      input.failureReason !== undefined);
+  const directSupportingShortfall =
+    input.coreEvidenceCount < 3 || input.highMediumCount < 3;
+  const diagnosis = getSearchHealthDiagnosis({
+    candidateCount: input.candidateCount,
+    candidateShortfall: input.retrieval.candidateShortfall,
+    directSupportingShortfall,
+    evidenceMode: input.evidenceMode,
+    failureReason: input.failureReason,
+    hasTavilyApiKey,
+    queryQualityIssueCount,
+    rawCandidateCount: input.retrieval.rawCandidateCount,
+    tavilyCalled,
+  });
+
+  return {
+    hasTavilyApiKey,
+    tavilyCalled,
+    queryQualityIssueCount,
+    candidateShortfall: input.retrieval.candidateShortfall,
+    directSupportingShortfall,
+    diagnosis,
+    ...(input.failureReason
+      ? { providerFailureReason: input.failureReason }
+      : {}),
+    ...(input.fallbackTriggeredReason
+      ? { fallbackTriggeredReason: input.fallbackTriggeredReason }
+      : {}),
+    rawCandidateTarget: input.retrieval.rawCandidateTarget,
+    rawCandidateCount: input.retrieval.rawCandidateCount,
+    uniqueCandidateCount: input.retrieval.uniqueCandidateCount,
+    selectedEvidenceCount: input.retrieval.selectedEvidenceCount,
+  };
+}
+
+function getSearchHealthDiagnosis(input: {
+  candidateCount: number;
+  candidateShortfall: number;
+  directSupportingShortfall: boolean;
+  evidenceMode: EvidenceMode;
+  failureReason?: SearchFailureReason;
+  hasTavilyApiKey: boolean;
+  queryQualityIssueCount: number;
+  rawCandidateCount: number;
+  tavilyCalled: boolean;
+}): SearchHealthDiagnosis {
+  if (!input.hasTavilyApiKey) {
+    return "missing_api_key";
+  }
+
+  if (input.evidenceMode === "search_failed" || input.failureReason) {
+    return "provider_failed";
+  }
+
+  if (!input.tavilyCalled) {
+    return "no_tavily_call";
+  }
+
+  if (input.rawCandidateCount === 0) {
+    return "provider_zero_results";
+  }
+
+  if (input.queryQualityIssueCount > 0) {
+    return "query_quality_issue";
+  }
+
+  if (input.candidateShortfall > 0) {
+    return "candidate_shortfall";
+  }
+
+  if (input.candidateCount > 0 && input.directSupportingShortfall) {
+    return "evidence_filtered";
+  }
+
+  return "healthy";
 }
 
 function summarizeSelectedEvidenceByPass(

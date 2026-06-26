@@ -1,46 +1,52 @@
 # AI Roundtable
 
-> 多模型圆桌会议系统。输入一个议题，让多个 AI 模型按阶段独立发言、互相回应，并整理出可复盘的共识、分歧、证据限制与下一步。
+> 多模型圆桌会议系统。输入一个议题，让多个 AI 模型独立发言、互相回应，并整理出可复盘的共识、分歧、证据限制与下一步。
 
-当前版本：`v0.6.8`
+当前版本：`v0.7.0`
 
-AI Roundtable 的目标不是把模型伪装成固定专家或部门，而是让它们以平等参会者的方式讨论同一个问题。系统提供三阶段会议、联网 Evidence、本地资料、引用检查、Markdown 导出、历史会议和会后复盘，帮助用户看见不同模型的判断路径。
+AI Roundtable 的定位不是把模型伪装成固定专家或部门，而是让不同模型作为平等参会者讨论同一个问题。它适合在产品判断、研究学习、写作准备、方案评估和复杂决策前，快速组织一次结构化的多模型讨论。
 
-## 适合做什么
+## 快速体验路径
 
-- 快速获得复杂问题的多角度判断。
-- 比较不同模型在同一议题下的推理方式和表达重点。
-- 围绕网页资料、本地文档或联网搜索结果组织讨论。
-- 生成可复制、可归档、可继续加工的会议纪要。
-- 在产品、研究、学习、写作或决策前做一次结构化头脑风暴。
+1. 输入一个你想讨论的议题。
+2. 选择 2 个或更多参会模型。
+3. 可选：导入本地资料，或开启 Tavily 联网搜索。
+4. 开始会议，等待模型完成三阶段讨论。
+5. 在会后复盘中查看阶段推进、模型对照、总结、证据状态和原始发言。
 
-## 核心体验
+默认 `mock` 模式不需要 API key，适合本地体验流程。接入真实模型后，可以切换到 `real` 模式。
+
+## 核心能力
 
 ### 三阶段圆桌会议
 
-1. **独立观点**：每个模型先不受其他发言影响，独立表达看法。
-2. **自由回应**：模型阅读前一阶段发言后，补充、质疑或修正观点。
-3. **共识整理**：系统汇总讨论共识、真实分歧、风险点、证据限制与下一步。
+- **独立观点**：每个模型先独立表达，不受其他模型影响。
+- **自由回应**：模型阅读前一阶段发言后补充、质疑或修正观点。
+- **共识整理**：系统汇总讨论共识、真实分歧、风险点、证据限制与下一步。
 
-### 联网 Evidence 链路
+### 联网 Evidence
 
 启用联网搜索后，系统会先广搜候选资料，再精选 Evidence Pack：
 
-- Candidate Retrieval：广泛召回候选资料，深度搜索目标约 60 条候选。
-- Evidence Selection：从候选中筛选 8-12 条更适合会议引用的资料。
-- Evidence Judge：按直接证据、辅助证据、背景资料和被降级资料分区。
-- Low-Evidence Mode：资料不足以支撑强结论时，会明确提示证据限制。
-- Citation Check：会议结束后检查正文引用是否有效，区分可引用资料、降级资料和无效引用。
+- 深度搜索会尽量召回更多候选资料，而不是找到少量结果就停止。
+- Evidence Pack 会区分直接证据、辅助证据、背景资料和被降级资料。
+- 资料不足以支撑强结论时，会进入 Low-Evidence Mode 并明确提示证据限制。
+- 会议结束后会检查正文引用，区分可引用资料、降级资料和无效引用。
 
-### 资料与本地文件
+### 本地资料
 
-你可以手动导入本地资料，也可以让系统联网搜索资料。资料会统一编号为 `S1`、`S2`、`S3` 等，供模型在讨论中引用。
+你可以导入本地资料作为会议上下文。资料会统一编号为 `S1`、`S2`、`S3` 等，供模型在讨论中引用。
 
-文件只发送到本地解析接口提取文本，不保存原文件。
+本地文件只发送到本机解析接口提取文本，不保存原文件。
 
 ### 会后复盘
 
-会议完成后，结果页会按“复盘总览 → 模型对照 → 第三阶段总结 → 证据/引用状态 → 原始发言记录”的顺序展示，方便先看结论，再追溯每个模型的观点变化。
+会议完成后，结果页按“复盘总览 -> 模型对照 -> 第三阶段总结 -> 证据/引用状态 -> 原始发言记录”的顺序展示。你可以先看结论，再追溯每个模型的观点变化和缺席/失败情况。
+
+### 导出与历史
+
+- 会议结果可复制为 Markdown，方便归档或继续加工。
+- 历史会议保存在浏览器本地，便于回看和复用。
 
 ## 快速开始
 
@@ -62,47 +68,75 @@ npm run dev
 http://localhost:3000
 ```
 
-### 3. 配置真实模型
+### 3. 配置环境变量
 
 复制环境变量示例：
 
-```bash
+```bat
 copy .env.example .env.local
 ```
 
-在 `.env.local` 中开启真实模式，并配置 OpenAI-compatible 服务：
+PowerShell 也可以使用：
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+`.env.local` 只保存在本地，不要提交真实 API key。
+
+## 接入真实模型
+
+默认配置为：
+
+```env
+AI_ROUNDTABLE_MODE=mock
+```
+
+要使用真实模型，请在 `.env.local` 中切换为 `real`，并配置 OpenAI-compatible provider：
 
 ```env
 AI_ROUNDTABLE_MODE=real
 AI_ROUNDTABLE_PROVIDERS_JSON='[
   {
     "id": "deepseek",
-    "name": "DeepSeek V4 Pro",
+    "name": "DeepSeek Flash",
     "baseUrl": "https://api.deepseek.com",
-    "apiKey": "你的 API key",
-    "model": "deepseek-v4-pro"
+    "apiKey": "your-api-key",
+    "model": "deepseek-v4-flash",
+    "capabilities": ["documents"]
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi K2.6",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "apiKey": "your-api-key",
+    "model": "kimi-k2.6"
   }
 ]'
 ```
 
 AI Roundtable 使用 OpenAI-compatible Chat Completions 接口，因此可以接入 OpenAI、DeepSeek、Qwen、SiliconFlow、Kimi 或其他兼容服务。
 
-真实 API key 只应写在 `.env.local`，不要提交到 GitHub。
+如果某个 provider 的 `/models` 检测失败，但基础配置完整，系统可能仍会把它标记为 `configured_unverified` 并尝试按配置调用。这个状态表示“检测失败 / 未验证”，不等于“已连接成功”。
 
 ## 启用联网搜索
 
-联网搜索使用 Tavily。配置：
+联网搜索使用 Tavily。在 `.env.local` 中配置：
 
 ```env
-TAVILY_API_KEY=你的 Tavily key
+TAVILY_API_KEY=your-tavily-key
 ```
 
-界面中可以调整搜索地区、搜索强度，并选择一个已接入模型作为搜索驱动模型。若 Tavily 官网搜索正常，但应用内搜索质量异常，优先检查：
+界面中可以调整搜索地区、搜索强度，并选择一个已接入模型作为搜索驱动模型。
 
-- `.env.local` 是否被当前 Next.js 进程正确加载。
-- Evidence Debug 中的实际 query、pass stats、Tavily 参数和候选数。
-- 是否命中了 Low-Evidence Mode，即“已广搜候选但直接证据不足”。
+如果 Tavily 官网搜索正常，但应用内搜索质量异常，优先检查：
+
+- `.env.local` 是否被当前 Next.js 进程正确加载，修改后是否重启了开发服务。
+- Evidence Debug 中的实际 query、pass stats、Tavily 参数、候选数和 `searchHealth` 诊断。
+- 是否命中了 Low-Evidence Mode，也就是“已广搜候选但直接证据不足”。
 - `npm run test:live-search` 的真实 Tavily smoke test 输出。
+
+更多搜索链路和诊断设计见 `docs/design.md`。
 
 ## 常用命令
 
@@ -122,20 +156,22 @@ npm run verify
 npm run test:live-search
 ```
 
-该命令会消耗 Tavily 额度，因此不放入默认 `verify`。
+该命令默认使用 deep 搜索模式，会消耗 Tavily 额度，因此不放入默认 `verify`。
 
-## v0.6.8 架构治理
+## 项目结构
 
-本版重点是拆分首页主入口，保持用户可见行为不变：
+- `src/app`：Next.js App Router 页面与 API 路由。
+- `src/components/roundtable`：会议创建、会议进行中和会后复盘相关组件。
+- `src/lib/meeting`：三阶段会议流程与模型调用编排。
+- `src/lib/search`：联网搜索、Evidence Pack、引用检查和搜索诊断。
+- `docs/design.md`：产品定位、架构边界和搜索链路设计说明。
 
-- `src/app/page.tsx` 保留页面状态、会议启动/停止、实时事件和历史记录编排。
-- `src/components/roundtable/MeetingSetupView.tsx` 承担会议创建页布局。
-- `src/components/roundtable/MeetingSetupPanels.tsx` 承担资料、模型选择、历史会议等展示面板，以及从原页面抽出的纯 helper。
-- `src/app/home-types.ts` 集中首页局部类型和 localStorage key。
-- `src/app/home-helpers.test.ts` 与 `src/app/page-architecture.test.ts` 保护拆分后的 payload、校验逻辑和入口体积。
+## 近期更新摘要
 
-本轮不改变会议三阶段流程、联网搜索核心逻辑、provider 失败处理或公开 API wire shape。
+- `v0.6.8`：拆分首页主入口，让页面编排、设置面板和 helper 更容易维护。
+- `v0.6.9`：拆分联网搜索编排，将 query planning、pass runner、fallback 和 debug summary 模块化。
+- `v0.7.0`：统一会议搜索和独立资料搜索入口，补充 `searchHealth` 诊断与真实 Tavily smoke test 输出。
 
 ## 项目原则
 
-AI Roundtable 是面向普通用户的圆桌会议产品，不是开发者调试工具。复杂搜索和证据信息可以保留在调试结构、日志或可展开区域中，但默认体验应服务于：快速输入议题、选择模型、开会、得到清晰结论。
+AI Roundtable 是面向普通用户的圆桌会议产品，不是默认展示复杂调试信息的开发者工具。复杂搜索和证据信息可以保留在调试结构、日志或可展开区域中，但默认体验应服务于：快速输入议题、选择模型、开会、得到清晰结论。

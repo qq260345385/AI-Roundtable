@@ -141,11 +141,21 @@ try {
         searchMode,
         evidenceMode: searchProcess.evidenceMode,
         searchProvider: searchProcess.provider ?? searchProvider,
+        searchHealth: searchProcess.debugSummary?.searchHealth ?? {},
         searchIntent: summarizeSearchIntents(searchProcess.searchIntents),
         searchQueries: searchProcess.executedQueries,
+        rawCandidateTarget:
+          searchProcess.rawCandidateTarget ??
+          searchProcess.debugSummary?.retrieval?.rawCandidateTarget ??
+          0,
         rawCandidateCount:
           searchProcess.rawCandidateCount ??
           searchProcess.dedupeStats?.originalResultCount ??
+          0,
+        uniqueCandidateCount:
+          searchProcess.uniqueCandidateCount ??
+          searchProcess.debugSummary?.retrieval?.uniqueCandidateCount ??
+          searchProcess.dedupedCandidateCount ??
           0,
         dedupedCandidateCount:
           searchProcess.dedupedCandidateCount ??
@@ -158,6 +168,7 @@ try {
         selectedEvidenceCount: searchProcess.selectedEvidenceCount ?? 0,
         candidateShortfall: searchProcess.candidateShortfall ?? 0,
         fallbackTriggeredReason: searchProcess.fallbackTriggeredReason ?? "",
+        fallbackQueries: searchProcess.fallbackQueries ?? [],
         passStats: summarizePassStats(searchProcess.passStats ?? []),
         topRawCandidates:
           searchProcess.debugSummary?.topRawCandidates ??
@@ -395,7 +406,7 @@ function getSearchModes() {
     return ["standard", "deep"];
   }
 
-  return ["standard"];
+  return ["deep"];
 }
 
 async function postMeetingScenario(baseUrl, question, searchMode) {
@@ -529,6 +540,7 @@ function summarizePassStats(passStats) {
     skippedReason: stat.skippedReason ?? "",
     errorType: stat.errorType ?? "",
     searchParameters: stat.searchParameters ?? {},
+    queryQuality: stat.queryQuality ?? {},
   }));
 }
 

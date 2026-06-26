@@ -1,4 +1,6 @@
 ﻿import { afterEach, describe, expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { POST } from "./route";
 import { clearTavilySearchCache } from "../../../../lib/search/tavily-search";
 
@@ -51,6 +53,30 @@ describe("POST /api/evidence/search", () => {
       }),
     );
     expect(body.searchSummary.userMessage).toContain("Missing API key");
+  });
+
+  test("does not mark Tavily as called when the API key is missing", async () => {
+    delete process.env.TAVILY_API_KEY;
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({ query: "AI news" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(body.debugSearchProcess.debugSummary.searchHealth).toEqual(
+      expect.objectContaining({
+        hasTavilyApiKey: false,
+        tavilyCalled: false,
+        diagnosis: "missing_api_key",
+      }),
+    );
   });
 
   test("returns normalized evidence drafts from Tavily results", async () => {
@@ -403,8 +429,9 @@ describe("POST /api/evidence/search", () => {
     );
   });
 
-  test("expands a Chinese time-sensitive model-ranking topic without provider-specific templates", async () => {
+  test("uses the shared multi-pass planner instead of legacy fixed suffix queries", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
       Response.json({
         results: [
@@ -426,21 +453,37 @@ describe("POST /api/evidence/search", () => {
       }),
     );
     const body = await response.json();
-    const queries = fetchMock.mock.calls.map((call) =>
-      JSON.parse(String(call[1]?.body)).query,
-    );
+    const queries = fetchMock.mock.calls
+      .map((call) => {
+        const rawBody = call[1]?.body;
+
+        if (!rawBody) {
+          return "";
+        }
+
+        return JSON.parse(String(rawBody)).query;
+      })
+      .filter((query): query is string => typeof query === "string");
 
     expect(response.status).toBe(200);
     expect(queries.length).toBeGreaterThan(1);
-    expect(queries).toEqual(
+    expect(queries).not.toEqual(
       expect.arrayContaining([
         "目前 DeepSeek 在全球 AI 大模型里面是什么实力 official report",
         "目前 DeepSeek 在全球 AI 大模型里面是什么实力 benchmark",
         "目前 DeepSeek 在全球 AI 大模型里面是什么实力 latest analysis",
         "目前 DeepSeek 在全球 AI 大模型里面是什么实力 comparison",
-        "目前 DeepSeek 在全球 AI 大模型里面是什么实力",
       ]),
     );
+    expect(queries.some((query) => /Reuters|Bloomberg|NYTimes|WSJ|FT/.test(query)))
+      .toBe(false);
+    expect(
+      body.debugSearchProcess.passStats.some(
+        (stat: { passName?: string; searchParameters?: { includeDomains?: string[] } }) =>
+          stat.passName === "reputable_media" &&
+          Array.isArray(stat.searchParameters?.includeDomains),
+      ),
+    ).toBe(true);
     expect(queries).not.toContain("DeepSeek V3 benchmark Artificial Analysis");
     expect(queries).not.toContain("DeepSeek R1 LMSYS Chatbot Arena ranking");
     expect(body.searchSummary).toEqual(
@@ -450,6 +493,47 @@ describe("POST /api/evidence/search", () => {
       }),
     );
     expect(body.evidencePack.searchQueries).toBeUndefined();
+  });
+
+  test("returns a compact search health report in debug mode", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.SEARCH_DEBUG_ENABLED = "true";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => 
+      Response.json({
+        results: [
+          {
+            title: "Only sparse candidate",
+            url: "https://example.com/sparse",
+            content: "Short background note",
+          },
+        ],
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/evidence/search", {
+        method: "POST",
+        body: JSON.stringify({
+          query: "Compare Kimi, GLM, GPT-4o, and Claude in Chinese office automation and coding assistance scenarios.",
+          searchMode: "deep",
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.debugSearchProcess.debugSummary.searchHealth).toEqual(
+      expect.objectContaining({
+        hasTavilyApiKey: true,
+        tavilyCalled: true,
+        queryQualityIssueCount: expect.any(Number),
+        candidateShortfall: expect.any(Number),
+        directSupportingShortfall: expect.any(Boolean),
+        diagnosis: expect.any(String),
+      }),
+    );
+    expect(body.debugSearchProcess.rawCandidateTarget).toBe(60);
+    expect(body.debugSearchProcess.candidateShortfall).toBeGreaterThan(0);
   });
 
   test("does not leak Tavily error bodies or bearer tokens", async () => {
@@ -534,14 +618,32 @@ describe("POST /api/evidence/search", () => {
       expect.objectContaining({
         evidenceMode: "search_failed",
         failureReason: "network_error",
-        executedQueries: expect.arrayContaining(["AI news official report"]),
+        executedQueries: expect.any(Array),
         qualityOverview: expect.objectContaining({
           includedCount: 0,
           filteredCount: 0,
         }),
       }),
     );
+    expect(body.debugSearchProcess.debugSummary.searchHealth).toEqual(
+      expect.objectContaining({
+        hasTavilyApiKey: true,
+        tavilyCalled: true,
+        diagnosis: "provider_failed",
+      }),
+    );
     expect(JSON.stringify(body)).not.toContain("secret-openai-key");
+  });
+
+  test("does not keep legacy warning helpers in the route module", () => {
+    const source = readFileSync(
+      join(process.cwd(), "src/app/api/evidence/search/route.ts"),
+      "utf8",
+    );
+
+    expect(source).not.toContain("eslint-disable-next-line");
+    expect(source).not.toContain("function getEvidenceWarnings");
+    expect(source).not.toContain("鏈壘");
   });
 });
 

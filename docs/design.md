@@ -42,7 +42,7 @@ AI Roundtable 是一个多大模型圆桌会议系统。它不把模型伪装成
 
 ## 联网 Evidence 链路
 
-联网搜索由 `src/lib/search/model-driven-web-search.ts` 编排，目标是先广搜候选资料，再精选 Evidence Pack。
+联网搜索由 `src/lib/search/model-driven-web-search.ts` 作为公开入口编排，目标是先广搜候选资料，再精选 Evidence Pack。v0.6.9 起，query planning、pass 执行、fallback / extract rescue 和 debug 汇总拆到独立内部模块，公开 API 和 SearchProcess wire shape 保持不变。v0.7.0 起，会议搜索和 `/api/evidence/search` 共享同一套搜索规划与 fallback 链路，避免不同入口产生不同 query 策略。
 
 1. **Topic Analyzer**：清洗讨论壳，提取目标实体、目标场景、evidenceNeeds、comparisonAxes 和短 query。
 2. **Candidate Retrieval**：执行 general、official、localized media、reputable media、industry report、social clue、targeted retry 等 pass，深度搜索目标候选数为 60。
@@ -51,7 +51,7 @@ AI Roundtable 是一个多大模型圆桌会议系统。它不把模型伪装成
 5. **Low-Evidence Mode**：如果已广搜但直接证据不足，会议仍可继续，但总结必须区分模型推理共识和资料可确认事实。
 6. **Citation Check**：会议结束后检查正文引用，区分存在资料、可引用资料、降级资料引用和无效引用。
 
-搜索调试数据保存在 `SearchProcess` 中，包括 pass stats、Tavily 参数、候选数、去重数、fallback 原因、Top raw candidates 和资料质量概览。普通用户界面默认保持简洁，调试细节放在可展开区域。
+搜索调试数据保存在 `SearchProcess` 中，包括 pass stats、Tavily 参数、候选数、去重数、fallback 原因、Top raw candidates、资料质量概览和 `searchHealth` 诊断。`searchHealth` 只回答“是否有 API key、是否调用 Tavily、query 是否异常、候选是否不足、是否被 Evidence Judge 过滤过多”等排查问题。普通用户界面默认保持简洁，调试细节放在可展开区域。
 
 ## MockProvider
 

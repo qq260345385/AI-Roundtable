@@ -23,21 +23,21 @@ describe("topic and evidence rules", () => {
         "src/lib/search/evidence-pack.ts",
         "getEntityCompetitionRelevanceReason",
       ),
-      readFunctionBody("src/lib/search/model-driven-web-search.ts", "buildSearchPasses"),
+      readFunctionBody("src/lib/search/search-query-planning.ts", "buildSearchPasses"),
       readFunctionBody(
-        "src/lib/search/model-driven-web-search.ts",
+        "src/lib/search/search-query-planning.ts",
         "buildEntityCompetitionSearchPasses",
       ),
       readFunctionBody(
-        "src/lib/search/model-driven-web-search.ts",
+        "src/lib/search/search-query-planning.ts",
         "buildLocalizedMediaPasses",
       ),
       readFunctionBody(
-        "src/lib/search/model-driven-web-search.ts",
+        "src/lib/search/search-query-planning.ts",
         "getFreshnessTerms",
       ),
       readFunctionBody(
-        "src/lib/search/model-driven-web-search.ts",
+        "src/lib/search/search-query-planning.ts",
         "buildEntityCompetitionSearchPasses",
       ),
     ].join("\n");
