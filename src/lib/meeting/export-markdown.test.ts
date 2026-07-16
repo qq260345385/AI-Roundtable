@@ -887,7 +887,8 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("## 模型调用状态");
     expect(markdown).not.toContain("## 模型调用失败记录");
     expect(markdown).toContain("OpenAI / gpt-test / 独立观点");
-    expect(markdown).toContain("OpenAI API request failed: 500");
+    expect(markdown).toContain("Provider 请求失败，错误详情已隐藏。");
+    expect(markdown).not.toContain("OpenAI API request failed: 500");
     expect(markdown).not.toContain("secret-openai-key");
     expect(markdown).not.toContain("Authorization");
     expect(markdown).not.toContain("Bearer");
@@ -913,6 +914,29 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).not.toContain("sk-live-abc123");
     expect(markdown).not.toContain("provider.ts");
     expect(markdown).not.toContain("Users");
+  });
+
+  test("hides prefixed single-line provider response bodies", () => {
+    const rawBody = 'Request failed: {"error":"bad","api_key":"AIza-live-value"}';
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        hasPartialFailures: true,
+        failures: [{
+          providerId: "openai-gpt",
+          providerName: "OpenAI",
+          model: "gpt-test",
+          stage: "independent",
+          message: rawBody,
+        }],
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("Provider 请求失败，错误详情已隐藏。");
+    expect(markdown).not.toContain("AIza-live-value");
+    expect(markdown).not.toContain("api_key");
+    expect(markdown).not.toContain(rawBody);
   });
 
   test("exports meeting status and model call status for failed meetings", () => {
@@ -995,7 +1019,7 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain(
       "Claude Mock：第一阶段失败，原因：provider_rejected",
     );
-    expect(markdown).toContain("API request failed: 400");
+    expect(markdown).toContain("Provider 请求失败，错误详情已隐藏。");
   });
 
   test("exports one compact model call status section without duplicated failure records", () => {
@@ -1071,12 +1095,12 @@ describe("exportMeetingToMarkdown", () => {
     );
 
     expect(markdown).toContain("OpenAI / gpt-test / 共识整理：失败");
-    expect(markdown).toContain("OpenAI API request failed: 401");
+    expect(markdown).toContain("Provider 身份验证失败。");
     expect(markdown).toContain("Qwen / missing-model / 自由回应：失败");
-    expect(markdown).toContain("model not found");
+    expect(markdown).toContain("Provider 模型不可用或不存在。");
     expect(markdown).toContain("DeepSeek / deepseek-chat / 独立观点：失败");
-    expect(markdown).toContain("request timeout");
-    expect(markdown).toContain("429 rate limit");
+    expect(markdown).toContain("Provider 请求超时或被中止。");
+    expect(markdown).toContain("Provider 请求受限，请稍后重试。");
   });
 
   test("does not export failure section when there are no failures", () => {

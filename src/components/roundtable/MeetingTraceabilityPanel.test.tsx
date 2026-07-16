@@ -156,4 +156,32 @@ describe("MeetingTraceabilityPanel", () => {
     expect(html).not.toContain("provider.ts");
     expect(html).not.toContain("Users");
   });
+
+  test("does not render prefixed raw provider response bodies", () => {
+    const rawBody = 'Request failed: {"error":"bad","api_key":"AIza-live-value"}';
+    const meeting: MeetingResult = {
+      topic: "Sensitive response body",
+      phases: [],
+      summary: {
+        consensus: [], differences: [], minorityViews: [], risks: [], nextSteps: [],
+      },
+      hasPartialFailures: true,
+      failures: [{
+        providerId: "alpha",
+        providerName: "AlphaAI",
+        model: "alpha-large",
+        stage: "independent",
+        message: rawBody,
+      }],
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingTraceabilityPanel meeting={meeting} text={getUiText("zh")} />,
+    );
+
+    expect(html).toContain("Provider 请求失败，错误详情已隐藏。");
+    expect(html).not.toContain("AIza-live-value");
+    expect(html).not.toContain("api_key");
+    expect(html).not.toContain(rawBody);
+  });
 });

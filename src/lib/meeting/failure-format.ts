@@ -8,7 +8,7 @@ export type FormattedMeetingFailure = {
   suggestion: string;
 };
 
-const HIDDEN_FAILURE_DETAILS = "错误详情已隐藏，请检查本地日志。";
+const HIDDEN_FAILURE_DETAILS = "Provider 请求失败，错误详情已隐藏。";
 
 export function formatFailureForDisplay(
   failure: MeetingProviderFailure,
@@ -67,27 +67,43 @@ export function getFailureSuggestion(message: string): string {
 }
 
 export function sanitizeFailureMessage(value: string): string {
-  const trimmed = value.trim();
-  const containsSensitiveMaterial =
-    /(?:^|[^A-Za-z0-9])(?:sk|tvly|ghp|xox[baprs])-[A-Za-z0-9_-]{6,}/i.test(trimmed) ||
-    /(?:api[_-]?key|access[_-]?token|password|passwd|connection[_-]?string)\s*[:=]/i.test(trimmed) ||
-    /(?:postgres|mysql|mongodb(?:\+srv)?):\/\/[^\s]+/i.test(trimmed) ||
-    /Authorization\s*:/i.test(trimmed) ||
-    /Bearer\s+[A-Za-z0-9._~+/=-]+/i.test(trimmed) ||
-    /\bsecret[-_A-Za-z0-9]*/i.test(trimmed);
-  const containsInternalDiagnostics =
-    /[\r\n]/.test(trimmed) ||
-    /\bat\s+[^\s]+\s*\([^)]*:\d+:\d+\)/i.test(trimmed) ||
-    /(?:[A-Za-z]:\\|\/(?:Users|home|var|tmp)\/)/i.test(trimmed) ||
-    /^[\[{][\s\S]*[\]}]$/.test(trimmed);
+  const normalized = value.toLowerCase();
 
-  if (containsSensitiveMaterial || containsInternalDiagnostics) {
-    return HIDDEN_FAILURE_DETAILS;
+  if (
+    normalized.includes("401") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("authentication")
+  ) {
+    return "Provider 身份验证失败。";
   }
 
-  return trimmed
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "[redacted-token]")
-    .replace(/secret[-_A-Za-z0-9]*/gi, "[redacted]")
-    .replace(/Authorization/gi, "[redacted-header]")
-    .slice(0, 240);
+  if (normalized.includes("404") || normalized.includes("model not found")) {
+    return "Provider 模型不可用或不存在。";
+  }
+
+  if (
+    normalized.includes("timeout") ||
+    normalized.includes("abort") ||
+    normalized.includes("aborted")
+  ) {
+    return "Provider 请求超时或被中止。";
+  }
+
+  if (normalized.includes("429") || normalized.includes("rate limit")) {
+    return "Provider 请求受限，请稍后重试。";
+  }
+
+  if (normalized.includes("rejected") || normalized.includes("high risk")) {
+    return "Provider 拒绝了请求。";
+  }
+
+  if (normalized.includes("empty")) {
+    return "Provider 未返回有效内容。";
+  }
+
+  if (normalized.includes("truncated") || normalized.includes("partial")) {
+    return "Provider 返回内容不完整。";
+  }
+
+  return HIDDEN_FAILURE_DETAILS;
 }
