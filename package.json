@@ -1,6 +1,6 @@
 {
   "name": "ai-roundtable",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -15,21 +15,21 @@
   },
   "dependencies": {
     "jszip": "^3.10.1",
-    "next": "16.2.6",
+    "next": "16.2.10",
     "pdf-parse": "^2.4.5",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "20.19.43",
+    "@types/react": "19.2.17",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
-    "tailwindcss": "^4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.10",
+    "tailwindcss": "4.3.3",
     "typescript": "^5",
-    "vitest": "^4.1.7"
+    "vitest": "4.1.10"
   }
 }

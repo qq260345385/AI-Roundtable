@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.0 internal alpha
+
+- Added a structured decision brief with one recommendation, status, confidence, rationale, conditions, risks, evidence gaps, reversal conditions, and one next action.
+- Centralized synchronous and streaming summary finalization so low evidence, invalid citations, severe disagreement, partial failures, and insufficient participants conservatively downgrade advice.
+- Made the completed result and Markdown export conclusion-first while keeping meeting stages, evidence, citations, provider failures, and diagnostics traceable behind deliberate disclosure.
+- Refocused the desktop setup flow around the topic composer, compact selected-model controls, and collapsed advanced settings without changing the submitted meeting request.
+- Preserved pre-v0.8 browser history through in-memory normalization and refreshed Mock output around reversible pilot decisions.
+- Added desktop Playwright journeys for the real Mock flow and deterministic low-evidence/partial-failure behavior, including full-page screenshots.
+- Updated compatible patch dependencies. `npm audit` now reports two moderate transitive PostCSS findings inside Next.js; npm offers only a breaking/invalid forced resolution, so this release does not apply `npm audit fix --force`.
+
 ## v0.6.1 internal alpha
 
 - Moved web search and meeting start controls into the chat composer.
