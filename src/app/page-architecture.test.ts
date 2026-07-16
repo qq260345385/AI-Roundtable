@@ -12,5 +12,9 @@ describe("home page architecture", () => {
     expect(source).not.toContain("function MeetingHistoryPanel");
     expect(source).not.toContain("function ModelChoiceDialog");
     expect(source).not.toContain("function ProviderModeNotice");
+    expect(source).toContain("<MeetingSetupView");
+    expect(source).toContain("onSelectedParticipantSeatSwap=");
+    expect(source).toContain("onSummaryParticipantChange=");
+    expect(source).toContain("onWebSearchToggle=");
   });
 });

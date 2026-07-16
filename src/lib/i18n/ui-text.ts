@@ -110,6 +110,10 @@ export const UI_TEXT = {
     },
     meetingForm: {
       title: "开始圆桌会议",
+      advancedSettings: "更多设置",
+      selectedModels: "已选模型",
+      editModels: "编辑模型",
+      modelSelection: "模型选择",
       placeholder: "请输入你想交给多个模型共同讨论的问题",
       defaultTopic: "请输入问题，开始一次多模型圆桌会议。",
       factNoticeTitle: "事实核验提示：",
@@ -526,6 +530,10 @@ export const UI_TEXT = {
     },
     meetingForm: {
       title: "Start Roundtable",
+      advancedSettings: "More settings",
+      selectedModels: "Selected models",
+      editModels: "Edit models",
+      modelSelection: "Model selection",
       placeholder: "Enter a question for multiple models to discuss together",
       defaultTopic: "Enter a question to start a multi-model roundtable.",
       factNoticeTitle: "Fact-check note: ",

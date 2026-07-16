@@ -31,7 +31,7 @@ export function MeetingHeader({
 }: MeetingHeaderProps) {
   return (
     <header className="relative border-b border-white/70 bg-white/55 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-6xl flex-col gap-5 px-5 py-8 md:flex-row md:items-end md:justify-between">
+      <div className="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-5 md:flex-row md:items-end md:justify-between md:py-8">
         <div>
           <p className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50/80 px-3 py-1 text-sm font-medium text-emerald-800">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
@@ -40,20 +40,20 @@ export function MeetingHeader({
           <h1 className="mt-4 max-w-3xl text-3xl font-semibold leading-tight text-zinc-950 md:text-5xl">
             {text.header.appName}
           </h1>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
+          <p className="mt-4 hidden max-w-2xl text-base leading-7 text-zinc-600 md:block">
             {text.header.topicPrefix}
             {topic}
           </p>
-          <p className="mt-2 text-sm font-medium text-zinc-700">
+          <p className="mt-2 hidden text-sm font-medium text-zinc-700 md:block">
             {text.header.currentMode}
             {getModeText(mode, text)}
           </p>
-          <p className="mt-1 text-sm leading-6 text-zinc-500">
+          <p className="mt-1 hidden text-sm leading-6 text-zinc-500 md:block">
             {getModeDescription(mode, text)}
           </p>
         </div>
 
-        <div className="space-y-3 text-sm md:w-72">
+        <div className="text-sm md:w-72 md:space-y-3">
           <SettingsDropdown
             locale={locale}
             onLocaleChange={onLocaleChange}
@@ -63,7 +63,7 @@ export function MeetingHeader({
             onSearchIntensityChange={onSearchIntensityChange}
             text={text}
           />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="hidden grid-cols-2 gap-3 md:grid">
             <div className="surface-card p-4">
               <p className="text-zinc-500">{text.header.participantCount}</p>
               <p className="mt-1 text-2xl font-semibold text-zinc-950">

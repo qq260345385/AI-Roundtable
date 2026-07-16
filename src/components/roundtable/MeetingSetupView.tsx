@@ -2,16 +2,13 @@
 
 import type { FormEvent } from "react";
 import { MeetingHeader } from "@/components/roundtable/MeetingHeader";
+import { MeetingAdvancedSettings } from "@/components/roundtable/MeetingAdvancedSettings";
 import { ParticipantList } from "@/components/roundtable/ParticipantList";
 import { RoundtableDiagram } from "@/components/roundtable/RoundtableDiagram";
 import {
-  EvidencePackEditor,
-  FactHygieneNotice,
   MeetingHistoryPanel,
   ModelChoiceDialog,
-  ModelSelectField,
   ProviderModeNotice,
-  SearchTogglePill,
   StatusMessage,
   UnavailableProviderList,
 } from "@/components/roundtable/MeetingSetupPanels";
@@ -154,134 +151,125 @@ export function MeetingSetupView({
         topic={headerTopic}
       />
 
-      <main className="relative mx-auto grid max-w-6xl gap-5 px-5 py-6 lg:grid-cols-[360px_1fr]">
-        <div className="space-y-5">
-          <ParticipantList
-            disabled={status === "loading"}
-            isLoading={modelLoadStatus === "loading"}
-            mode={mode}
-            onSelectionChange={onSelectedParticipantIdsChange}
-            participants={participants}
-            selectedParticipantIds={selectedParticipantIds}
-            text={text}
-          />
-          <ProviderModeNotice
-            modelLoadStatus={modelLoadStatus}
-            mode={mode}
-            participantCount={participants.length}
-            text={text}
-          />
-          <UnavailableProviderList providers={unavailableProviders} text={text} />
-          <RoundtableDiagram
-            onSeatSwap={
-              status === "loading" ? undefined : onSelectedParticipantSeatSwap
-            }
-            participants={selectedParticipants}
-            text={text}
-          />
-        </div>
-
-        <div className="space-y-5">
-          <section className="surface-panel p-5">
-            <h2 className="text-lg font-semibold text-zinc-950">
+      <main className="relative mx-auto max-w-[880px] space-y-5 px-5 py-6">
+        <form className="space-y-5" onSubmit={onStartMeeting}>
+          <section className="surface-panel p-5 md:p-6">
+            <h2 className="text-xl font-semibold text-zinc-950">
               {text.meetingForm.title}
             </h2>
-            <form className="mt-4 space-y-4" onSubmit={onStartMeeting}>
-              <div className="rounded-lg border border-zinc-200 bg-white/90 p-4 shadow-sm transition-[border-color,box-shadow] duration-200 ease-out focus-within:border-emerald-300 focus-within:shadow-[0_14px_36px_rgba(4,120,87,0.12)]">
-                <textarea
-                  className="min-h-32 w-full resize-y border-0 bg-transparent p-0 text-sm leading-6 text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:text-zinc-500"
-                  disabled={status === "loading"}
-                  onChange={(event) => onQuestionChange(event.target.value)}
-                  placeholder={text.meetingForm.placeholder}
-                  value={question}
-                />
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                  <SearchTogglePill
-                    active={isWebSearchEnabled}
-                    disabled={isWebSearchToggleDisabled}
-                    label={text.evidence.webSearchToggle}
-                    onClick={onWebSearchToggle}
-                    title={text.evidence.webSearchDescription}
-                  />
-                  <button
-                    className="control-button ml-auto border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:cursor-pointer hover:bg-emerald-800 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300 disabled:hover:scale-100 disabled:hover:bg-zinc-300"
-                    disabled={isStartDisabled}
-                    type="submit"
-                  >
-                    {startButtonText}
-                  </button>
-                </div>
+            <div className="mt-4 rounded-xl border border-zinc-200 bg-white/90 p-4 shadow-sm transition-[border-color,box-shadow] duration-200 focus-within:border-emerald-300 focus-within:shadow-[0_14px_36px_rgba(4,120,87,0.12)]">
+              <textarea
+                className="min-h-36 w-full resize-y border-0 bg-transparent p-0 text-base leading-7 text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:text-zinc-500"
+                disabled={status === "loading"}
+                onChange={(event) => onQuestionChange(event.target.value)}
+                placeholder={text.meetingForm.placeholder}
+                value={question}
+              />
+              <div className="mt-4 flex justify-end border-t border-zinc-100 pt-4">
+                <button
+                  className="control-button border border-emerald-700 bg-emerald-700 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:cursor-pointer hover:bg-emerald-800 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-300"
+                  disabled={isStartDisabled}
+                  type="submit"
+                >
+                  {startButtonText}
+                </button>
               </div>
-              {shouldShowFactNotice ? <FactHygieneNotice text={text} /> : null}
-              {isWebSearchEnabled ? (
-                <ModelSelectField
-                  disabled={status === "loading"}
-                  label={text.evidence.searchDriverModelLabel}
-                  onChange={onSearchDriverParticipantChange}
-                  participants={participants}
-                  placeholder={text.evidence.searchDriverModelPlaceholder}
-                  text={text}
-                  value={searchDriverParticipantId}
-                />
-              ) : null}
-              <EvidencePackEditor
-                disabled={status === "loading"}
-                drafts={evidenceDrafts}
-                enabled={isEvidencePackEnabled}
-                importMessage={evidenceImportMessage}
-                isImporting={isEvidenceImporting}
-                onEnabledChange={onEvidenceEnabledChange}
-                onImportFiles={onEvidenceFilesImport}
-                onRemoveDraft={onEvidenceRemoveDraft}
-                onStrategyChange={onDocumentInputStrategyChange}
-                participants={selectedParticipants}
-                strategy={documentInputStrategy}
-                text={text}
-              />
-              <label className="surface-card flex items-start gap-2 p-4 text-sm font-medium text-zinc-800 transition-[border-color,background-color] duration-150 ease-out hover:border-emerald-200 hover:bg-emerald-50/40">
-                <input
-                  checked={isBriefMode}
-                  className="mt-1 h-4 w-4 accent-emerald-700"
-                  disabled={status === "loading"}
-                  onChange={(event) => onBriefModeChange(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  {text.meetingForm.briefMode}
-                  <span className="mt-1 block text-xs font-normal leading-5 text-zinc-500">
-                    {text.meetingForm.briefModeDescription}
-                  </span>
-                </span>
-              </label>
-              <ModelSelectField
-                allowAuto
-                disabled={status === "loading"}
-                label={text.meetingForm.summaryModelLabel}
-                onChange={onSummaryParticipantChange}
-                participants={participants}
-                placeholder={text.meetingForm.summaryModelAuto}
-                text={text}
-                value={summaryParticipantId}
-              />
-              {isEvidencePackEnabled && hasEvidenceWarnings ? (
-                <p className="border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-                  {text.meetingForm.evidenceWarning}
-                </p>
-              ) : null}
-            </form>
-            {statusMessage ? (
-              <StatusMessage message={statusMessage} status={status} />
-            ) : null}
+            </div>
           </section>
 
-          <MeetingHistoryPanel
-            history={meetingHistory}
-            locale={locale}
-            onDelete={onDeleteHistoryMeeting}
-            onOpen={onOpenHistoryMeeting}
+          <section className="surface-panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-950">
+                  {text.meetingForm.selectedModels}
+                </h2>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selectedParticipants.map((participant) => (
+                    <span
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm text-emerald-900"
+                      key={participant.id}
+                    >
+                      {participant.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-500">
+                {selectedParticipants.length}
+              </span>
+            </div>
+            <details className="group mt-4 border-t border-zinc-200 pt-4">
+              <summary className="cursor-pointer list-none text-sm font-medium text-emerald-800 [&::-webkit-details-marker]:hidden">
+                {text.meetingForm.modelSelection} · {text.meetingForm.editModels}
+              </summary>
+              <div className="mt-4 space-y-4">
+                <ParticipantList
+                  disabled={status === "loading"}
+                  isLoading={modelLoadStatus === "loading"}
+                  mode={mode}
+                  onSelectionChange={onSelectedParticipantIdsChange}
+                  participants={participants}
+                  selectedParticipantIds={selectedParticipantIds}
+                  text={text}
+                />
+                <RoundtableDiagram
+                  onSeatSwap={status === "loading" ? undefined : onSelectedParticipantSeatSwap}
+                  participants={selectedParticipants}
+                  text={text}
+                />
+              </div>
+            </details>
+          </section>
+
+          <MeetingAdvancedSettings
+            documentInputStrategy={documentInputStrategy}
+            evidenceDrafts={evidenceDrafts}
+            evidenceImportMessage={evidenceImportMessage}
+            hasEvidenceWarnings={hasEvidenceWarnings}
+            isBriefMode={isBriefMode}
+            isEvidenceImporting={isEvidenceImporting}
+            isEvidencePackEnabled={isEvidencePackEnabled}
+            isWebSearchEnabled={isWebSearchEnabled}
+            isWebSearchToggleDisabled={isWebSearchToggleDisabled}
+            onBriefModeChange={onBriefModeChange}
+            onDocumentInputStrategyChange={onDocumentInputStrategyChange}
+            onEvidenceEnabledChange={onEvidenceEnabledChange}
+            onEvidenceFilesImport={onEvidenceFilesImport}
+            onEvidenceRemoveDraft={onEvidenceRemoveDraft}
+            onSearchDriverParticipantChange={onSearchDriverParticipantChange}
+            onSearchIntensityChange={onSearchIntensityChange}
+            onSearchRegionChange={onSearchRegionChange}
+            onSummaryParticipantChange={onSummaryParticipantChange}
+            onWebSearchToggle={onWebSearchToggle}
+            participants={participants}
+            searchDriverParticipantId={searchDriverParticipantId}
+            searchIntensity={searchIntensity}
+            searchRegion={searchRegion}
+            selectedParticipants={selectedParticipants}
+            shouldShowFactNotice={shouldShowFactNotice}
+            status={status}
+            summaryParticipantId={summaryParticipantId}
             text={text}
           />
-        </div>
+        </form>
+
+        <ProviderModeNotice
+          modelLoadStatus={modelLoadStatus}
+          mode={mode}
+          participantCount={participants.length}
+          text={text}
+        />
+        <UnavailableProviderList providers={unavailableProviders} text={text} />
+        {statusMessage ? (
+          <StatusMessage message={statusMessage} status={status} />
+        ) : null}
+        <MeetingHistoryPanel
+          history={meetingHistory}
+          locale={locale}
+          onDelete={onDeleteHistoryMeeting}
+          onOpen={onOpenHistoryMeeting}
+          text={text}
+        />
       </main>
       <ModelChoiceDialog
         isOpen={isSearchDriverDialogOpen}
