@@ -16,7 +16,11 @@ import {
 } from "@/lib/meeting/meeting-room";
 import { getThirdStageSummarySections } from "@/lib/meeting/summary-presentation";
 import { formatModelDisplayName } from "@/lib/models/model-display-name";
-import { WebSearchProcessPanel } from "./MeetingBoard";
+import { DecisionBriefPanel } from "./DecisionBriefPanel";
+import {
+  MeetingTraceabilityPanel,
+  WebSearchProcessPanel,
+} from "./MeetingTraceabilityPanel";
 
 type MeetingRoomProps = {
   activeStageId: string;
@@ -58,6 +62,7 @@ export function MeetingRoom({
   const stageViews = useMemo(() => buildMeetingStageViews(meeting), [meeting]);
   const activeStage =
     stageViews.find((stage) => stage.id === activeStageId) ?? stageViews[0];
+  const isCompletedSummary = isCompleted && activeStage.kind === "summary";
 
   const speakingStatusLabel =
     activeStage.kind === "summary"
@@ -68,7 +73,7 @@ export function MeetingRoom({
 
   return (
     <main className="app-backdrop min-h-screen animate-[meetingFadeIn_420ms_ease-out] text-zinc-950">
-      <section className="relative mx-auto flex max-w-7xl flex-col gap-6 px-5 py-6 lg:min-h-screen">
+      <section className="relative mx-auto flex max-w-7xl flex-col gap-6 px-5 pb-32 pt-6 lg:min-h-screen lg:pb-6">
         <header className="surface-panel flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50/80 px-3 py-1 text-sm font-medium text-emerald-800">
@@ -162,8 +167,13 @@ export function MeetingRoom({
           </p>
         ) : null}
 
-        <div className="grid flex-1 gap-5 lg:grid-cols-[310px_1fr]">
-          <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
+        <div
+          className={`grid flex-1 gap-5 ${
+            isCompletedSummary ? "" : "lg:grid-cols-[310px_1fr]"
+          }`}
+        >
+          {!isCompletedSummary ? (
+            <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
             <section className="surface-panel p-5">
               <h2 className="text-lg font-semibold">
                 {text.meetingRoom.councilMembers}
@@ -197,7 +207,8 @@ export function MeetingRoom({
                 ))}
               </div>
             </section>
-          </aside>
+            </aside>
+          ) : null}
 
           <section className="surface-panel relative min-h-[620px] p-5">
             <div className="mb-5 flex flex-col gap-2 border-b border-zinc-200 pb-4 md:flex-row md:items-end md:justify-between">
@@ -217,13 +228,17 @@ export function MeetingRoom({
               </span>
             </div>
 
-            {meeting.searchSummary?.enabled ? (
+            {!isCompletedSummary && meeting.searchSummary?.enabled ? (
               <div className="mb-5">
                 <WebSearchProcessPanel meeting={meeting} text={text} />
               </div>
             ) : null}
 
-          <StageContent stage={activeStage} text={text} />
+            {isCompletedSummary ? (
+              <CompletedSummaryContent meeting={meeting} text={text} />
+            ) : (
+              <StageContent stage={activeStage} text={text} />
+            )}
           </section>
         </div>
       </section>
@@ -251,6 +266,31 @@ export function MeetingRoom({
         </div>
       </nav>
     </main>
+  );
+}
+
+function CompletedSummaryContent({
+  meeting,
+  text,
+}: {
+  meeting: MeetingResult;
+  text: UiText;
+}) {
+  return (
+    <div className="space-y-5">
+      {meeting.summary.decisionBrief ? (
+        <DecisionBriefPanel brief={meeting.summary.decisionBrief} text={text} />
+      ) : null}
+      <details className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 md:p-5">
+        <summary className="cursor-pointer select-none text-base font-semibold text-zinc-800">
+          {text.decisionBrief.details}
+        </summary>
+        <div className="mt-5 space-y-5 border-t border-zinc-200 pt-5">
+          <SummaryStage summary={meeting.summary} text={text} />
+          <MeetingTraceabilityPanel meeting={meeting} text={text} />
+        </div>
+      </details>
+    </div>
   );
 }
 

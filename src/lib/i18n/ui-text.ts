@@ -373,6 +373,28 @@ export const UI_TEXT = {
         "会议已保留其他模型的成功发言，下面只列出需要检查的调用。",
       suggestion: "建议：",
     },
+    decisionBrief: {
+      title: "决策简报",
+      recommendation: "推荐结论",
+      status: {
+        firm: "明确建议",
+        tentative: "暂定建议",
+        unavailable: "暂不可用",
+      },
+      confidence: {
+        high: "高置信度",
+        medium: "中置信度",
+        low: "低置信度",
+      },
+      rationale: "核心理由",
+      conditions: "成立条件",
+      risks: "风险与主要反对意见",
+      evidenceGaps: "缺失证据",
+      reversalConditions: "推翻条件",
+      nextAction: "下一步行动",
+      noItems: "本轮未识别到额外项目。",
+      details: "详细过程与依据",
+    },
     meetingRoom: {
       title: "圆桌会议室",
       subtitle: "按阶段查看参会议员发言与共识整理。",
@@ -776,6 +798,28 @@ export const UI_TEXT = {
       failureDescription:
         "The meeting kept successful responses from other models. Calls needing attention are listed below.",
       suggestion: "Suggestion: ",
+    },
+    decisionBrief: {
+      title: "Decision Brief",
+      recommendation: "Recommendation",
+      status: {
+        firm: "Firm recommendation",
+        tentative: "Tentative recommendation",
+        unavailable: "Not available",
+      },
+      confidence: {
+        high: "High confidence",
+        medium: "Medium confidence",
+        low: "Low confidence",
+      },
+      rationale: "Core rationale",
+      conditions: "Conditions",
+      risks: "Risks and strongest objections",
+      evidenceGaps: "Evidence gaps",
+      reversalConditions: "Reversal conditions",
+      nextAction: "Next action",
+      noItems: "No additional items were identified in this round.",
+      details: "Detailed process and evidence",
     },
     meetingRoom: {
       title: "Roundtable Room",

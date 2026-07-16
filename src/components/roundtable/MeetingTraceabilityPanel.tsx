@@ -3,15 +3,16 @@ import type { UiText } from "@/lib/i18n/ui-text";
 import type { ReactNode } from "react";
 import { formatFailureForDisplay } from "@/lib/meeting/failure-format";
 import { MeetingRecapPanel } from "./MeetingRecapPanel";
-import { SummaryPanel } from "./SummaryPanel";
-import { TranscriptPanel } from "./TranscriptPanel";
 
-type MeetingBoardProps = {
+type MeetingTraceabilityPanelProps = {
   meeting: MeetingResult;
   text: UiText;
 };
 
-export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
+export function MeetingTraceabilityPanel({
+  meeting,
+  text,
+}: MeetingTraceabilityPanelProps) {
   return (
     <div className="space-y-5">
       {meeting.meetingStatus === "failed" ||
@@ -19,7 +20,6 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
         <MeetingStatusPanel meeting={meeting} text={text} />
       ) : null}
       <MeetingRecapPanel meeting={meeting} text={text} />
-      <SummaryPanel summary={meeting.summary} text={text} topic={meeting.topic} />
       {meeting.isTimeSensitive && meeting.factCheckNotice ? (
         <FactHygienePanel notice={meeting.factCheckNotice} text={text} />
       ) : null}
@@ -38,7 +38,6 @@ export function MeetingBoard({ meeting, text }: MeetingBoardProps) {
       {meeting.hasPartialFailures && meeting.failures ? (
         <ProviderFailurePanel failures={meeting.failures} text={text} />
       ) : null}
-      <TranscriptPanel phases={meeting.phases} text={text} />
     </div>
   );
 }
@@ -48,7 +47,7 @@ type WebSearchProcessPanelProps = {
   text: UiText;
 };
 
-function MeetingStatusPanel({ meeting, text }: MeetingBoardProps) {
+function MeetingStatusPanel({ meeting, text }: MeetingTraceabilityPanelProps) {
   const isFailed = meeting.meetingStatus === "failed";
   const copy = text.meetingBoard.meetingStatus;
 
