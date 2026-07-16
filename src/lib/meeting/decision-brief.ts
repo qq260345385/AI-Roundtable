@@ -215,16 +215,24 @@ function hasCompleteDecisionBrief(value: unknown): value is DecisionBrief {
   }
 
   return (
-    typeof value.recommendation === "string" &&
+    hasMeaningfulText(value.recommendation) &&
     isDecisionStatus(value.status) &&
-    Array.isArray(value.rationale) &&
-    Array.isArray(value.conditions) &&
-    Array.isArray(value.risks) &&
+    isStringList(value.rationale) &&
+    isStringList(value.conditions) &&
+    isStringList(value.risks) &&
     isDecisionConfidence(value.confidence) &&
-    Array.isArray(value.evidenceGaps) &&
-    Array.isArray(value.reversalConditions) &&
-    typeof value.nextAction === "string"
+    isStringList(value.evidenceGaps) &&
+    isStringList(value.reversalConditions) &&
+    hasMeaningfulText(value.nextAction)
   );
+}
+
+function hasMeaningfulText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(hasMeaningfulText);
 }
 
 function cleanList(

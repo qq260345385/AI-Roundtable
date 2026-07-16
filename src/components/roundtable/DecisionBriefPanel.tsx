@@ -1,12 +1,14 @@
-import type { DecisionBrief } from "@/lib/types";
+import type { MeetingSummary } from "@/lib/types";
 import type { UiText } from "@/lib/i18n/ui-text";
+import { normalizeDecisionBrief } from "@/lib/meeting/decision-brief";
 
 type DecisionBriefPanelProps = {
-  brief: DecisionBrief;
+  summary: MeetingSummary;
   text: UiText;
 };
 
-export function DecisionBriefPanel({ brief, text }: DecisionBriefPanelProps) {
+export function DecisionBriefPanel({ summary, text }: DecisionBriefPanelProps) {
+  const brief = normalizeDecisionBrief(summary);
   const copy = text.decisionBrief;
 
   return (

@@ -5,7 +5,10 @@ import type {
   ModelParticipant,
 } from "../types";
 import { checkEvidenceCitations } from "../search/evidence-citations";
-import { getFailureStageLabel } from "./failure-format";
+import {
+  getFailureStageLabel,
+  sanitizeFailureMessage,
+} from "./failure-format";
 import {
   isCoreEvidenceItem,
   isPublicOpinionEvidenceItem,
@@ -286,7 +289,7 @@ function formatFailureReason(
 }
 
 function formatFailureMessageForStatus(message: string): string {
-  const sanitized = sanitizeMarkdownText(message).replace(/\s+/g, " ").trim();
+  const sanitized = sanitizeFailureMessage(message);
 
   if (sanitized.length <= 56) {
     return sanitized;

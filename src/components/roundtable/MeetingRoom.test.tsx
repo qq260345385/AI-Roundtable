@@ -134,7 +134,7 @@ describe("MeetingRoom", () => {
     expect(html).not.toContain("详细过程与依据");
   });
 
-  test("keeps legacy completed meetings usable when a decision brief is absent", () => {
+  test("normalizes legacy completed meetings into a conservative decision brief", () => {
     const meeting: MeetingResult = {
       ...completedMeeting,
       summary: { ...completedMeeting.summary, decisionBrief: undefined },
@@ -146,7 +146,10 @@ describe("MeetingRoom", () => {
     });
 
     expect(html).toContain("详细过程与依据");
-    expect(html).not.toContain("决策简报");
+    expect(html).toContain("决策简报");
+    expect(html).toContain("暂定建议");
+    expect(html).toContain("低置信度");
+    expect(html).toContain("先试点。");
     expect(html).not.toContain("Alpha Large");
   });
 });

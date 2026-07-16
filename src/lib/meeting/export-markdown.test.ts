@@ -893,6 +893,28 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).not.toContain("Bearer");
   });
 
+  test("hides token-like values, stack traces, and local paths in failure records", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        hasPartialFailures: true,
+        failures: [{
+          providerId: "openai-gpt",
+          providerName: "OpenAI",
+          model: "gpt-test",
+          stage: "independent",
+          message: "sk-live-abc123\nError: failed\n at C:\\Users\\secret\\provider.ts:10:2",
+        }],
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("错误详情已隐藏");
+    expect(markdown).not.toContain("sk-live-abc123");
+    expect(markdown).not.toContain("provider.ts");
+    expect(markdown).not.toContain("Users");
+  });
+
   test("exports meeting status and model call status for failed meetings", () => {
     const markdown = exportMeetingToMarkdown(
       {

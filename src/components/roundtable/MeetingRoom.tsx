@@ -278,9 +278,7 @@ function CompletedSummaryContent({
 }) {
   return (
     <div className="space-y-5">
-      {meeting.summary.decisionBrief ? (
-        <DecisionBriefPanel brief={meeting.summary.decisionBrief} text={text} />
-      ) : null}
+      <DecisionBriefPanel summary={meeting.summary} text={text} />
       <details className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 md:p-5">
         <summary className="cursor-pointer select-none text-base font-semibold text-zinc-800">
           {text.decisionBrief.details}

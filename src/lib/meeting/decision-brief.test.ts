@@ -101,6 +101,31 @@ describe("normalizeDecisionBrief", () => {
     expect(result.nextAction).toHaveLength(DECISION_BRIEF_LIMITS.nextAction);
   });
 
+  test("downgrades structurally present but semantically dirty briefs", () => {
+    const dirty = {
+      recommendation: "   ",
+      status: "firm",
+      rationale: [42],
+      conditions: [],
+      risks: [],
+      confidence: "high",
+      evidenceGaps: [],
+      reversalConditions: [],
+      nextAction: "   ",
+    } as unknown as DecisionBrief;
+
+    const result = normalizeDecisionBrief(
+      createSummary({ decisionBrief: dirty }),
+    );
+
+    expect(result).toMatchObject({
+      recommendation: "先进行两周小规模试点。",
+      status: "tentative",
+      confidence: "low",
+      nextAction: "指定负责人并启动试点。",
+    });
+  });
+
   test("returns a legal unavailable view for a completely empty summary", () => {
     const result = normalizeDecisionBrief(
       createSummary({

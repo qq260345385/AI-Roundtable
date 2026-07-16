@@ -129,4 +129,31 @@ describe("MeetingTraceabilityPanel", () => {
     expect(html).toContain("引用检查");
     expect(html).toContain("S9");
   });
+
+  test("does not render tokens, stack traces, or local paths from provider failures", () => {
+    const meeting: MeetingResult = {
+      topic: "Sensitive failure",
+      phases: [],
+      summary: {
+        consensus: [], differences: [], minorityViews: [], risks: [], nextSteps: [],
+      },
+      hasPartialFailures: true,
+      failures: [{
+        providerId: "alpha",
+        providerName: "AlphaAI",
+        model: "alpha-large",
+        stage: "independent",
+        message: "sk-live-abc123\nError: failed\n at C:\\Users\\secret\\provider.ts:10:2",
+      }],
+    };
+
+    const html = renderToStaticMarkup(
+      <MeetingTraceabilityPanel meeting={meeting} text={getUiText("zh")} />,
+    );
+
+    expect(html).toContain("错误详情已隐藏");
+    expect(html).not.toContain("sk-live-abc123");
+    expect(html).not.toContain("provider.ts");
+    expect(html).not.toContain("Users");
+  });
 });

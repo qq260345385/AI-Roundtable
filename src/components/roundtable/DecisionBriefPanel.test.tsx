@@ -16,10 +16,19 @@ const brief: DecisionBrief = {
   nextAction: "今天确认试点负责人和衡量指标。",
 };
 
+const summary = {
+  consensus: [],
+  differences: [],
+  minorityViews: [],
+  risks: [],
+  nextSteps: [],
+  decisionBrief: brief,
+};
+
 describe("DecisionBriefPanel", () => {
   test("puts the recommendation and decision state first", () => {
     const html = renderToStaticMarkup(
-      <DecisionBriefPanel brief={brief} text={getUiText("zh")} />,
+      <DecisionBriefPanel summary={summary} text={getUiText("zh")} />,
     );
 
     expect(html).toContain("决策简报");
@@ -34,7 +43,7 @@ describe("DecisionBriefPanel", () => {
   test("keeps every decision field visible even when a list is empty", () => {
     const html = renderToStaticMarkup(
       <DecisionBriefPanel
-        brief={{ ...brief, conditions: [], evidenceGaps: [] }}
+        summary={{ ...summary, decisionBrief: { ...brief, conditions: [], evidenceGaps: [] } }}
         text={getUiText("zh")}
       />,
     );
@@ -49,7 +58,7 @@ describe("DecisionBriefPanel", () => {
   test("renders a firm recommendation state", () => {
     const html = renderToStaticMarkup(
       <DecisionBriefPanel
-        brief={{ ...brief, status: "firm", confidence: "high" }}
+        summary={{ ...summary, decisionBrief: { ...brief, status: "firm", confidence: "high" } }}
         text={getUiText("zh")}
       />,
     );
@@ -61,7 +70,7 @@ describe("DecisionBriefPanel", () => {
   test("renders an unavailable recommendation state without hiding the rationale", () => {
     const html = renderToStaticMarkup(
       <DecisionBriefPanel
-        brief={{ ...brief, status: "unavailable", confidence: "low" }}
+        summary={{ ...summary, decisionBrief: { ...brief, status: "unavailable", confidence: "low" } }}
         text={getUiText("zh")}
       />,
     );
@@ -73,7 +82,7 @@ describe("DecisionBriefPanel", () => {
 
   test("renders the same decision hierarchy in English", () => {
     const html = renderToStaticMarkup(
-      <DecisionBriefPanel brief={brief} text={getUiText("en")} />,
+      <DecisionBriefPanel summary={summary} text={getUiText("en")} />,
     );
 
     expect(html).toContain("Decision Brief");
