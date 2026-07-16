@@ -75,6 +75,21 @@ export type MeetingPhase = {
   turns: MeetingTurn[];
 };
 
+export type DecisionStatus = "firm" | "tentative" | "unavailable";
+export type DecisionConfidence = "high" | "medium" | "low";
+
+export type DecisionBrief = {
+  recommendation: string;
+  status: DecisionStatus;
+  rationale: string[];
+  conditions: string[];
+  risks: string[];
+  confidence: DecisionConfidence;
+  evidenceGaps: string[];
+  reversalConditions: string[];
+  nextAction: string;
+};
+
 export type MeetingSummary = {
   consensus: string[];
   differences: string[];
@@ -85,6 +100,7 @@ export type MeetingSummary = {
   insufficientlyConfirmed?: string[];
   risks: string[];
   nextSteps: string[];
+  decisionBrief?: DecisionBrief;
   summaryDebug?: SummaryDebug;
 };
 
