@@ -1,4 +1,5 @@
 import type { MeetingResult, ModelParticipant } from "@/lib/types";
+import { normalizeDecisionBrief } from "./decision-brief";
 
 export const MEETING_HISTORY_LIMIT = 10;
 export const MEETING_HISTORY_STORAGE_KEY = "ai-roundtable-meeting-history";
@@ -65,7 +66,9 @@ export function parseMeetingHistory(value: string | null): MeetingHistoryRecord[
       return [];
     }
 
-    return parsed.filter(isMeetingHistoryRecord);
+    return parsed
+      .filter(isMeetingHistoryRecord)
+      .map(normalizeMeetingHistoryRecord);
   } catch {
     return [];
   }
@@ -73,6 +76,21 @@ export function parseMeetingHistory(value: string | null): MeetingHistoryRecord[
 
 export function serializeMeetingHistory(records: MeetingHistoryRecord[]): string {
   return JSON.stringify(records.slice(0, MEETING_HISTORY_LIMIT));
+}
+
+function normalizeMeetingHistoryRecord(
+  record: MeetingHistoryRecord,
+): MeetingHistoryRecord {
+  return {
+    ...record,
+    meeting: {
+      ...record.meeting,
+      summary: {
+        ...record.meeting.summary,
+        decisionBrief: normalizeDecisionBrief(record.meeting.summary),
+      },
+    },
+  };
 }
 
 function createMeetingHistoryId(): string {

@@ -76,6 +76,81 @@ describe("exportMeetingToMarkdown", () => {
     expect(markdown).toContain("## 第三阶段：共识整理");
   });
 
+  test("exports a conclusion-first legacy-compatible decision brief", () => {
+    const markdown = exportMeetingToMarkdown(meeting, participants);
+    const orderedHeadings = [
+      "## 决策简报",
+      "### 推荐结论",
+      "### 状态与置信度",
+      "### 核心理由",
+      "### 成立条件",
+      "### 风险与主要反对意见",
+      "### 缺失证据",
+      "### 推翻条件",
+      "### 下一步行动",
+    ];
+    const positions = orderedHeadings.map((heading) => markdown.indexOf(heading));
+
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(markdown).toContain("需要同时看过程和结论。");
+    expect(markdown).toContain("暂定建议 · 低置信度");
+    expect(markdown.indexOf("## 决策简报")).toBeLessThan(
+      markdown.indexOf("## 参会模型"),
+    );
+    expect(markdown.indexOf("## 决策简报")).toBeLessThan(
+      markdown.indexOf("## 第一阶段：独立观点"),
+    );
+  });
+
+  test("exports finalized decision fields and includes their citations", () => {
+    const markdown = exportMeetingToMarkdown(
+      {
+        ...meeting,
+        summary: {
+          ...meeting.summary,
+          decisionBrief: {
+            recommendation: "依据 [S1] 先执行两周试点。",
+            status: "firm",
+            rationale: ["可以低成本验证关键假设。"],
+            conditions: ["预算封顶。"],
+            risks: ["样本有限。"],
+            confidence: "medium",
+            evidenceGaps: ["长期效果仍需观察。"],
+            reversalConditions: ["若指标低于基线则停止。"],
+            nextAction: "今天指定负责人。",
+          },
+        },
+        evidencePack: {
+          enabled: true,
+          evidenceStatus: "high",
+          items: [
+            {
+              id: "S1",
+              title: "官方试点报告",
+              snippet: "报告摘要",
+              quality: {
+                warnings: [],
+                textLength: 500,
+                wasTruncated: false,
+                sourceType: "official_docs",
+                reliability: "high",
+                score: 90,
+                citationLevel: "fact",
+              },
+            },
+          ],
+        },
+      },
+      participants,
+    );
+
+    expect(markdown).toContain("明确建议 · 中置信度");
+    expect(markdown).toContain("长期效果仍需观察。");
+    expect(markdown).toContain("若指标低于基线则停止。");
+    expect(markdown).toContain("- 已使用资料编号：S1");
+  });
+
   test("does not repeat model metadata inside each exported turn", () => {
     const markdown = exportMeetingToMarkdown(meeting, participants);
 
@@ -486,13 +561,14 @@ describe("exportMeetingToMarkdown", () => {
       },
       participants,
     );
+    const thirdStage = sectionText(markdown, "## 第三阶段：共识整理");
 
     expect(markdown).toContain("### 共识");
     expect(markdown).toContain("### 分歧");
     expect(markdown).toContain("### 下一步");
     expect(markdown).toContain("大樱桃派提出了少数派判断。");
     expect(markdown).not.toContain("### 主要立场");
-    expect(markdown).not.toContain("### 核心理由");
+    expect(thirdStage).not.toContain("### 核心理由");
     expect(markdown).not.toContain("### 主要分歧");
     expect(markdown).not.toContain("### 讨论局限");
     expect(markdown).not.toContain("### 可以继续讨论");

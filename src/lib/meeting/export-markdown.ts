@@ -1,4 +1,9 @@
-import type { MeetingResult, ModelParticipant } from "../types";
+import type {
+  DecisionConfidence,
+  DecisionStatus,
+  MeetingResult,
+  ModelParticipant,
+} from "../types";
 import { checkEvidenceCitations } from "../search/evidence-citations";
 import { getFailureStageLabel } from "./failure-format";
 import {
@@ -12,6 +17,8 @@ import {
   getThirdStageSummarySections,
   isStanceOrientedTopic,
 } from "./summary-presentation";
+import { normalizeDecisionBrief } from "./decision-brief";
+import { collectMeetingCitationText } from "./summary-finalization";
 
 type ExportMarkdownOptions = {
   includeEvidenceDebug?: boolean;
@@ -42,6 +49,7 @@ export function exportMeetingToMarkdown(
     lines.push("");
   }
 
+  appendDecisionBrief(lines, meeting);
   appendEvidenceStatus(lines, meeting);
   appendEvidencePack(lines, meeting);
   appendEvidenceDebug(lines, meeting, options);
@@ -94,6 +102,76 @@ export function exportMeetingToMarkdown(
   }
 
   return lines.join("\n").trim() + "\n";
+}
+
+function appendDecisionBrief(lines: string[], meeting: MeetingResult) {
+  const brief = normalizeDecisionBrief(meeting.summary);
+
+  lines.push("## 决策简报");
+  lines.push("");
+  appendParagraph(lines, "推荐结论", brief.recommendation);
+  appendParagraph(
+    lines,
+    "状态与置信度",
+    `${formatDecisionStatus(brief.status)} · ${formatDecisionConfidence(
+      brief.confidence,
+    )}`,
+  );
+  appendList(
+    lines,
+    "核心理由",
+    brief.rationale.length > 0 ? brief.rationale : ["无。"],
+  );
+  appendList(
+    lines,
+    "成立条件",
+    brief.conditions.length > 0 ? brief.conditions : ["无。"],
+  );
+  appendList(
+    lines,
+    "风险与主要反对意见",
+    brief.risks.length > 0 ? brief.risks : ["无。"],
+  );
+  appendList(
+    lines,
+    "缺失证据",
+    brief.evidenceGaps.length > 0 ? brief.evidenceGaps : ["无。"],
+  );
+  appendList(
+    lines,
+    "推翻条件",
+    brief.reversalConditions.length > 0
+      ? brief.reversalConditions
+      : ["无。"],
+  );
+  appendParagraph(lines, "下一步行动", brief.nextAction);
+}
+
+function appendParagraph(lines: string[], title: string, value: string) {
+  lines.push(`### ${title}`);
+  lines.push("");
+  lines.push(sanitizeMarkdownText(value));
+  lines.push("");
+}
+
+function formatDecisionStatus(status: DecisionStatus): string {
+  const labels: Record<DecisionStatus, string> = {
+    firm: "明确建议",
+    tentative: "暂定建议",
+    unavailable: "暂不可用",
+  };
+
+  return labels[status];
+}
+
+function formatDecisionConfidence(confidence: DecisionConfidence): string {
+  const labels: Record<DecisionConfidence, string> = {
+    high: "高置信度",
+    medium: "中置信度",
+    low: "低置信度",
+  };
+
+  return labels[confidence];
 }
 
 function appendMeetingStatus(lines: string[], meeting: MeetingResult) {
@@ -492,18 +570,10 @@ function appendCitationCheck(lines: string[], meeting: MeetingResult) {
 }
 
 function collectExportCitationText(meeting: MeetingResult): string {
-  return [
-    ...meeting.phases.flatMap((phase) => phase.turns.map((turn) => turn.content)),
-    ...meeting.summary.consensus,
-    ...meeting.summary.differences,
-    ...meeting.summary.minorityViews,
-    ...(meeting.summary.confirmableFacts ?? []),
-    ...(meeting.summary.initialHypotheses ?? []),
-    ...(meeting.summary.communityViews ?? []),
-    ...(meeting.summary.insufficientlyConfirmed ?? []),
-    ...meeting.summary.risks,
-    ...meeting.summary.nextSteps,
-  ].join("\n");
+  return collectMeetingCitationText(
+    meeting.phases.flatMap((phase) => phase.turns),
+    meeting.summary,
+  );
 }
 
 function appendEvidencePack(lines: string[], meeting: MeetingResult) {
@@ -838,7 +908,7 @@ function appendList(lines: string[], title: string, items: string[]) {
   lines.push("");
 
   for (const item of items) {
-    lines.push(`- ${item}`);
+    lines.push(`- ${sanitizeMarkdownText(item)}`);
   }
 
   lines.push("");
