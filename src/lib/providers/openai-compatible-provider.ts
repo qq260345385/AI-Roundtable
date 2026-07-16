@@ -1,4 +1,5 @@
 import type {
+  DecisionBrief,
   MeetingSummary,
   MeetingTurn,
   MeetingPromptOptions,
@@ -222,7 +223,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
           options?.isBriefMode
             ? "简要会议模式下，每个字段最多 3 条，每条尽量不超过 60 字。"
             : "",
-          "请严格返回 JSON，不要添加 Markdown。字段必须包含 consensus、differences、nextSteps，每个字段都是字符串数组。",
+          "除现有总结外，必须同时返回 decisionBrief。recommendation 必须是一句清晰、可执行的推荐。",
+          "推荐理由只能来自本轮有效发言和可用 Evidence；模型共识不能冒充外部事实。",
+          "证据不足时必须使用 tentative 和 low，并明确缺失证据与推翻条件。",
+          "decisionBrief 的 nextAction 只能保留一个近期、具体、可执行的动作。",
+          "decisionBrief 的九个字段都必须提供：recommendation、status、rationale、conditions、risks、confidence、evidenceGaps、reversalConditions、nextAction。",
+          "请严格返回 JSON，不要添加 Markdown。字段必须包含 consensus、differences、nextSteps 和 decisionBrief；前三个字段是字符串数组。",
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -638,7 +644,10 @@ function repairParsedData(data: Record<string, unknown>): {
 
   for (const [key, value] of Object.entries(data)) {
     const canonicalKey = FIELD_ALIASES[key] ?? key;
-    const repairedValue = repairFieldValue(value);
+    const repairedValue =
+      canonicalKey === "decisionBrief"
+        ? { value, changed: false }
+        : repairFieldValue(value);
 
     if (repairedValue.changed) {
       wasRepaired = true;
@@ -714,6 +723,8 @@ function isSummaryListField(key: string): boolean {
 }
 
 function buildSummaryFromParsed(data: Record<string, unknown>): MeetingSummary {
+  const decisionBrief = readDecisionBrief(data.decisionBrief);
+
   return {
     consensus: readStringList(data.consensus),
     differences: readStringList(data.differences),
@@ -724,7 +735,71 @@ function buildSummaryFromParsed(data: Record<string, unknown>): MeetingSummary {
     insufficientlyConfirmed: readStringList(data.insufficientlyConfirmed),
     risks: readStringList(data.risks),
     nextSteps: readStringList(data.nextSteps),
+    ...(decisionBrief ? { decisionBrief } : {}),
   };
+}
+
+function readDecisionBrief(value: unknown): DecisionBrief | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const recommendation = readDecisionText(value.recommendation);
+  const nextAction = readDecisionText(value.nextAction);
+  const status = value.status;
+  const confidence = value.confidence;
+  const rationale = readDecisionList(value.rationale);
+  const conditions = readDecisionList(value.conditions);
+  const risks = readDecisionList(value.risks);
+  const evidenceGaps = readDecisionList(value.evidenceGaps);
+  const reversalConditions = readDecisionList(value.reversalConditions);
+
+  if (
+    !recommendation ||
+    !nextAction ||
+    (status !== "firm" &&
+      status !== "tentative" &&
+      status !== "unavailable") ||
+    (confidence !== "high" && confidence !== "medium" && confidence !== "low") ||
+    !rationale ||
+    !conditions ||
+    !risks ||
+    !evidenceGaps ||
+    !reversalConditions
+  ) {
+    return undefined;
+  }
+
+  return {
+    recommendation,
+    status,
+    rationale,
+    conditions,
+    risks,
+    confidence,
+    evidenceGaps,
+    reversalConditions,
+    nextAction,
+  };
+}
+
+function readDecisionText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  return sanitizeList([value])[0];
+}
+
+function readDecisionList(value: unknown): string[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== "string")
+  ) {
+    return undefined;
+  }
+
+  return sanitizeList(value);
 }
 
 function readStringList(value: unknown): string[] {

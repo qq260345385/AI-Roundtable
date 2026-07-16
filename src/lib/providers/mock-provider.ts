@@ -56,19 +56,19 @@ export const mockProvider: ModelProvider = {
     }
 
     if (participant.id === "gpt-mock") {
-      return `${participant.name}：我会先把“${topic}”拆成三个层面：会议流程、观点记录、最终纪要。比较稳的做法是先保证每个模型都有独立发言，再允许它们互相回应，最后把共识和分歧分开整理。这样既有结构，也不会把模型硬塞进固定角色。`;
+      return `${participant.name}：我会先把“${topic}”拆成目标、可选方案和约束三个层面。结构上先明确什么结果算成功，再比较各方案的收益、代价与可逆性，最后选择一个能尽快验证关键假设的行动。`;
     }
 
     if (participant.id === "claude-mock") {
-      return `${participant.name}：我会先提醒一个边界问题：AI Roundtable 的价值不只是“多几个回答”，而是让不同模型之间的推理倾向被看见。需要避免把表达倾向误写成职责分工，否则产品又会滑回传统 multi-agent。`;
+      return `${participant.name}：我会先提醒“${topic}”的边界问题：推荐成立需要哪些前提，哪些人会承担风险，以及哪些信息一旦变化就应推翻当前判断。没有这些条件，再明确的结论也可能只是过度自信。`;
     }
 
     if (participant.id === "gemini-mock") {
-      return `${participant.name}：我更想从场景看这个产品。用户可能不是只想看最终答案，而是想观察不同模型如何互相启发。界面可以突出会议感，比如席位、阶段、发言流和小结，让讨论过程本身变得可读。`;
+      return `${participant.name}：我更想从使用场景看“${topic}”。不同用户、时间窗口和资源条件可能得到不同答案，因此应先找出最常见场景，再检查推荐是否足够清楚、是否容易执行，以及失败后能否恢复。`;
     }
 
     if (participant.id === "deepseek-mock") {
-      return `${participant.name}：我会先看落地路径。第一版应该保持简单：MockProvider 先写死差异化文本，会议引擎只处理阶段顺序，UI 只展示结果。等流程稳定后，再接真实 Provider、错误状态和调用耗时。`;
+      return `${participant.name}：我会先看“${topic}”的落地路径。优先选择成本可控、两周内能看到信号、失败时可以回滚的方案，并提前约定负责人、成功指标和停止条件，避免讨论结束后无人执行。`;
     }
 
     return `${participant.name}：我会以平等参会者身份讨论“${topic}”，提出自己的观察，并等待其他模型补充或质疑。`;
@@ -95,19 +95,19 @@ export const mockProvider: ModelProvider = {
     }
 
     if (participant.id === "gpt-mock") {
-      return `${participant.name}：我部分同意 ${seatsText} 的观点。可以把“${topic}”继续整理成一个折中方案：既保留自由讨论的开放性，也用固定阶段保证结果可读。我的补充是，小结最好明确区分共识、分歧和下一步。`;
+      return `${participant.name}：我部分同意 ${seatsText || "其他席位"} 的观点。围绕“${topic}”，可以把分歧转成一个可验证方案：先写清共同目标，再用同一组指标比较不同选择，避免只在措辞上争论。`;
     }
 
     if (participant.id === "claude-mock") {
-      return `${participant.name}：我同意要有阶段，但也想补充一个潜在问题：如果 Mock 文案过度模板化，用户会误以为模型差异只是 UI 装饰。关于“${topic}”，更重要的是让差异来自表达方式和推理侧重点，而不是来自人为指定的任务。`;
+      return `${participant.name}：我同意 ${seatsText || "其他席位"} 提出的行动方向，但“${topic}”仍需补充成立条件和受影响人群。若关键前提无法验证，就应把结论标为暂定，而不是用多数意见掩盖不确定性。`;
     }
 
     if (participant.id === "gemini-mock") {
-      return `${participant.name}：我赞成前面的结构化处理，也想延展到使用体验。用户阅读 ${seatsText} 的发言时，应该能快速看出谁在补充、谁在保留意见、谁提出新的场景。这样圆桌会议才不只是答案列表。`;
+      return `${participant.name}：我赞成 ${seatsText || "其他席位"} 的结构化处理，也想补充“${topic}”在不同场景下的体验差异。推荐最好让执行者一眼知道先做什么，并能在结果不佳时迅速调整。`;
     }
 
     if (participant.id === "deepseek-mock") {
-      return `${participant.name}：我基本同意这个方向，但会提醒实现复杂度。自由回应阶段先用上一阶段发言作为输入就够了，不需要马上做复杂记忆或状态管理。围绕“${topic}”，先把数据结构和测试稳定下来更重要。`;
+      return `${participant.name}：我基本同意 ${seatsText || "其他席位"} 的方向，但会把“${topic}”进一步压缩成最小落地动作。先做一个时间和预算都封顶的试点，用预先约定的指标决定继续、调整还是停止。`;
     }
 
     return `${participant.name}：我阅读了 ${seatsText} 的观点后，补充一个平等参会者视角：讨论可以有分歧，但不需要被固定角色驱动。`;
@@ -125,33 +125,63 @@ export const mockProvider: ModelProvider = {
         differences: ["仍需区分不同模型的判断依据和侧重点。"],
         minorityViews: ["少数观点可保留，但不展开长篇论证。"],
         risks: [`${turns.length} 条发言可验证流程，不能代表真实模型能力。`],
-        nextSteps: ["继续用简短议题测试多人讨论质量。"],
+        nextSteps: ["今天确认一个试点负责人和成功指标。"],
+        decisionBrief: {
+          recommendation: `围绕“${topic}”先执行一个范围明确、可回滚的小规模方案。`,
+          status: "firm",
+          rationale: ["先验证关键假设可以降低一次性投入风险。"],
+          conditions: ["提前定义成功指标、负责人和停止条件。"],
+          risks: ["Mock 模式不包含外部事实核验。"],
+          confidence: "medium",
+          evidenceGaps: ["如议题依赖实时事实，需要启用联网资料后复核。"],
+          reversalConditions: ["若试点指标明显低于基线，则停止并重新评估。"],
+          nextAction: "今天确认一个试点负责人和成功指标。",
+        },
       };
     }
 
     return {
       consensus: [
-        `AI Roundtable 讨论“${topic}”时，应让不同模型作为平等参会者发言，而不是让它们扮演固定角色。`,
-        "会议流程需要保留独立观点、自由回应和共识整理三个阶段，方便用户看到观点如何形成。",
+        `围绕“${topic}”，应先验证关键假设，再决定是否扩大投入。`,
+        "可回滚的小规模试点能同时控制风险并提供真实反馈。",
       ],
       differences: [
-        "模型差异应该更多来自表达倾向和推理侧重点，而不是来自人为分配的职责。",
-        "产品可以强调会议感，但需要控制第一版复杂度，避免过早引入真实 API、数据库或复杂状态管理。",
+        "不同观点对成功指标、预算上限和可接受风险的定义仍不完全一致。",
+        "有人倾向尽快行动，也有人主张先补充更多资料。",
       ],
       minorityViews: [
-        "少数派观点认为，Mock 阶段也要谨慎设计文本，否则用户可能误判真实模型差异。",
-        "另一个有价值的提醒是：自由回应不必总是反驳，同意、部分同意和补充同样能体现圆桌讨论。",
+        "少数观点认为，如果关键前提无法在试点前确认，应暂缓行动。",
       ],
       risks: [
-        "当前发言由 MockProvider 生成，仍然只是模拟差异，不能代表真实模型能力。",
-        "如果后续接入真实模型时没有记录 provider、model、状态和错误信息，排查会变困难。",
-        `${turns.length} 条 Mock 发言可以验证展示结构，但还不能验证真实模型之间的互动质量。`,
+        "Mock 模式不包含外部事实核验，涉及实时信息时仍需补充可靠资料。",
+        `${turns.length} 条 Mock 发言只能演示决策结构，不能代表真实模型能力。`,
       ],
       nextSteps: [
-        "继续保留 MockProvider，先完善页面交互和会议数据结构。",
-        "增加用户输入议题的表单，让会议主题不再写死。",
-        "接入真实 Provider 时，从一个模型开始，小步验证调用、错误处理和展示效果。",
+        "今天确认一个试点负责人和成功指标。",
       ],
+      decisionBrief: {
+        recommendation: `围绕“${topic}”先执行一个范围明确、可回滚的两周试点，再决定是否扩大投入。`,
+        status: "firm",
+        rationale: [
+          "先验证关键假设可以降低一次性投入风险。",
+          "明确的试点指标能把当前分歧转成可观察结果。",
+        ],
+        conditions: [
+          "提前定义成功指标、负责人、预算上限和停止条件。",
+        ],
+        risks: [
+          "Mock 模式不包含外部事实核验。",
+          "试点样本可能不足以代表长期效果。",
+        ],
+        confidence: "medium",
+        evidenceGaps: [
+          "如议题依赖实时事实，需要启用联网资料后复核。",
+        ],
+        reversalConditions: [
+          "若试点核心指标明显低于基线，则停止并重新评估。",
+        ],
+        nextAction: "今天确认一个试点负责人和成功指标。",
+      },
     };
   },
 };

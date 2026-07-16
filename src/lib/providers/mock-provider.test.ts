@@ -68,5 +68,37 @@ describe("mockProvider", () => {
     expect(summary.minorityViews.length).toBeGreaterThan(0);
     expect(summary.risks.length).toBeGreaterThan(0);
     expect(summary.nextSteps.length).toBeGreaterThan(0);
+    expect(summary.decisionBrief).toMatchObject({
+      recommendation: expect.stringContaining(demoMeetingRequest.topic),
+      status: "firm",
+      confidence: "medium",
+      nextAction: expect.any(String),
+    });
+    expect(summary.decisionBrief?.reversalConditions.length).toBeGreaterThan(0);
+
+    const allSummaryText = JSON.stringify(summary);
+    expect(allSummaryText).not.toContain("增加用户输入议题");
+    expect(allSummaryText).not.toContain("接入真实 Provider");
+    expect(allSummaryText).not.toContain("继续保留 MockProvider");
+  });
+
+  test("keeps all mock stages topic-related without stale roadmap copy", async () => {
+    const participant = demoMeetingRequest.participants[3];
+    const topic = "是否应该先进行两周试点";
+    const independent = await mockProvider.generateIndependentView(
+      participant,
+      topic,
+    );
+    const response = await mockProvider.generateResponse(
+      participant,
+      topic,
+      [],
+    );
+
+    expect(independent).toContain(topic);
+    expect(response).toContain(topic);
+    expect(`${independent}\n${response}`).not.toMatch(
+      /等流程稳定后|再接真实 Provider|复杂状态管理/,
+    );
   });
 });

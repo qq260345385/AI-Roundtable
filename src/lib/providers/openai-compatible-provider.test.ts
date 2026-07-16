@@ -627,6 +627,45 @@ describe("OpenAICompatibleProvider", () => {
     expect(promptText).toContain("不足以确认");
   });
 
+  test("requires a complete decision brief in summary prompts", async () => {
+    let requestBody = "";
+    const provider = new OpenAICompatibleProvider({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "secret-openai-key",
+      modelName: "deepseek-v4-flash",
+      fetcher: async (_url, init) => {
+        requestBody = String(init?.body);
+
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  '{"consensus":[],"differences":[],"nextSteps":[]}',
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    await provider.generateSummary("是否先进行小规模试点？", []);
+
+    const body = JSON.parse(requestBody) as {
+      messages: { content: string }[];
+    };
+    const promptText = body.messages.map((message) => message.content).join("\n");
+
+    expect(promptText).toContain("decisionBrief");
+    expect(promptText).toContain("一句清晰、可执行的推荐");
+    expect(promptText).toContain("模型共识不能冒充外部事实");
+    expect(promptText).toContain("reversalConditions");
+    expect(promptText).toContain("nextAction");
+    expect(promptText).toContain("只能保留一个近期、具体、可执行的动作");
+    expect(promptText).toContain("九个字段都必须提供");
+  });
+
   test("uses stricter stance-oriented synthesis rules without legacy field compatibility in prompt", async () => {
     let requestBody = "";
     const provider = new OpenAICompatibleProvider({
@@ -740,6 +779,72 @@ describe("OpenAICompatibleProvider", () => {
     expect(prompts[2]).toContain("每个字段最多 3 条");
   });
   describe("parseSummary", () => {
+    test("parses a complete nested decision brief", () => {
+      const result = parseSummary(
+        JSON.stringify({
+          consensus: ["试点风险可控。"],
+          differences: ["预算边界未定。"],
+          risks: ["供应商锁定。"],
+          nextSteps: ["启动两周试点。"],
+          decisionBrief: {
+            recommendation: "先启动两周试点，再决定全面采购。",
+            status: "firm",
+            rationale: ["可用较低成本验证核心假设。"],
+            conditions: ["试点预算不超过既定上限。"],
+            risks: ["供应商锁定。"],
+            confidence: "medium",
+            evidenceGaps: [],
+            reversalConditions: ["若核心指标低于基线则停止采购。"],
+            nextAction: "今天指定试点负责人。",
+          },
+        }),
+      );
+
+      expect(result.decisionBrief).toEqual({
+        recommendation: "先启动两周试点，再决定全面采购。",
+        status: "firm",
+        rationale: ["可用较低成本验证核心假设。"],
+        conditions: ["试点预算不超过既定上限。"],
+        risks: ["供应商锁定。"],
+        confidence: "medium",
+        evidenceGaps: [],
+        reversalConditions: ["若核心指标低于基线则停止采购。"],
+        nextAction: "今天指定试点负责人。",
+      });
+    });
+
+    test("keeps legacy JSON valid without inventing a parsed decision brief", () => {
+      const result = parseSummary(
+        JSON.stringify({
+          consensus: ["保留旧共识。"],
+          differences: [],
+          risks: [],
+          nextSteps: ["执行旧下一步。"],
+        }),
+      );
+
+      expect(result.consensus[0]).toBe("保留旧共识。");
+      expect(result.decisionBrief).toBeUndefined();
+    });
+
+    test("omits malformed decision briefs for central normalization", () => {
+      const result = parseSummary(
+        JSON.stringify({
+          consensus: ["保留可用的旧总结。"],
+          differences: [],
+          risks: [],
+          nextSteps: ["稍后补齐。"],
+          decisionBrief: {
+            recommendation: "不完整建议",
+            status: "certain",
+            rationale: ["理由"],
+          },
+        }),
+      );
+
+      expect(result.decisionBrief).toBeUndefined();
+    });
+
     test("parses pure JSON summary", () => {
       const input = JSON.stringify({
         confirmableFacts: ["GPT-4o 已发布。"],
