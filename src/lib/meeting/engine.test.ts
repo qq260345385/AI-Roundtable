@@ -82,6 +82,11 @@ describe("runMeeting", () => {
     expect(independentPhase.turns).toHaveLength(2);
     expect(responsePhase.turns).toHaveLength(2);
     expect(result.summary.consensus[0]).toContain("基础共识");
+    expect(result.summary.decisionBrief).toMatchObject({
+      recommendation: expect.stringContaining("基础共识"),
+      status: "tentative",
+      confidence: "low",
+    });
     expect(result.hasPartialFailures).toBe(false);
     expect(result.failures).toEqual([]);
     expect(result.isTimeSensitive).toBe(false);
@@ -587,6 +592,11 @@ describe("runMeeting", () => {
     expect(result.summary.consensus.join("\n")).toContain(
       "有效发言模型少于 2 个",
     );
+    expect(result.summary.decisionBrief).toMatchObject({
+      recommendation: "有效发言模型不足，无法形成可靠推荐。",
+      status: "unavailable",
+      confidence: "low",
+    });
     expect(result.summary.consensus.join("\n")).not.toContain(
       "normal consensus",
     );
@@ -1017,6 +1027,7 @@ describe("runLiveMeeting", () => {
 
   test("emits meeting progress events as each participant turn completes", async () => {
     const events: string[] = [];
+    let emittedSummary: MeetingSummary | undefined;
     const provider: ModelProvider = {
       name: "LiveProvider",
       async generateIndependentView(participant) {
@@ -1045,6 +1056,9 @@ describe("runLiveMeeting", () => {
       (event) => {
         if (event.type === "turn") {
           events.push(`turn:${event.turn.phaseId}:${event.turn.speakerName}`);
+        } else if (event.type === "summary") {
+          emittedSummary = event.summary;
+          events.push(event.type);
         } else {
           events.push(event.type);
         }
@@ -1070,6 +1084,12 @@ describe("runLiveMeeting", () => {
     ]);
     expect(result.phases[0].turns).toHaveLength(2);
     expect(result.summary.consensus).toEqual(["live consensus"]);
+    expect(result.summary.decisionBrief).toMatchObject({
+      recommendation: "live consensus",
+      status: "tentative",
+      confidence: "low",
+    });
+    expect(emittedSummary).toEqual(result.summary);
   });
 
   test("passes abort signal through live provider calls", async () => {
@@ -1151,7 +1171,18 @@ describe("runLiveMeeting", () => {
     const result = await runLiveMeeting(
       {
         topic: "实时容错",
-        participants: [gptParticipant, claudeParticipant],
+        participants: [
+          gptParticipant,
+          claudeParticipant,
+          {
+            id: "gemini",
+            name: "Gemini Mock",
+            provider: "Google",
+            model: "gemini-mock",
+            status: "mock",
+            statusLabel: "Mock / 无需 API",
+          },
+        ],
       },
       provider,
       (event) => {
@@ -1167,5 +1198,9 @@ describe("runLiveMeeting", () => {
     expect(failures[0]).not.toContain("Authorization");
     expect(failures[0]).not.toContain("Bearer");
     expect(result.phases[0].turns[0].speakerName).toBe("Claude Mock");
+    expect(result.summary.decisionBrief).toMatchObject({
+      status: "tentative",
+      confidence: "low",
+    });
   });
 });

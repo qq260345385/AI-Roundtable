@@ -25,6 +25,9 @@ describe("POST /api/meeting/live", () => {
 
     const response = await POST(request);
     const events = await readNdjsonEvents(response);
+    const summaryIndex = events.findIndex((event) => event.type === "summary");
+    const summaryEvent = events[summaryIndex];
+    const completedEvent = events.at(-1);
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain(
@@ -34,6 +37,12 @@ describe("POST /api/meeting/live", () => {
     expect(events.map((event) => event.type)).toContain("turn");
     expect(events.map((event) => event.type)).toContain("summary");
     expect(events.at(-1)?.type).toBe("meeting_completed");
+    expect(summaryEvent.summary.decisionBrief).toEqual(
+      completedEvent.meeting.summary.decisionBrief,
+    );
+    expect(JSON.stringify(events.slice(0, summaryIndex))).not.toContain(
+      '"decisionBrief"',
+    );
   });
 
   test("streams participant events in selected seat order", async () => {

@@ -4,6 +4,7 @@ import type {
   MeetingResult,
   ModelParticipant,
 } from "../types";
+import { createEmptyDecisionBrief } from "./decision-brief";
 
 const EMPTY_SUMMARY = {
   consensus: [],
@@ -33,7 +34,10 @@ export function createInitialLiveMeeting(
         turns: [],
       },
     ],
-    summary: { ...EMPTY_SUMMARY },
+    summary: {
+      ...EMPTY_SUMMARY,
+      decisionBrief: createEmptyDecisionBrief(),
+    },
     failures: [],
     hasPartialFailures: false,
     isBriefMode,

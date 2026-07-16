@@ -27,6 +27,17 @@ describe("live-state", () => {
     expect(meeting.phases[0].turns).toEqual([]);
     expect(meeting.phases[1].turns).toEqual([]);
     expect(meeting.isBriefMode).toBe(true);
+    expect(meeting.summary.decisionBrief).toEqual({
+      recommendation: "会议总结尚未生成。",
+      status: "unavailable",
+      rationale: [],
+      conditions: [],
+      risks: [],
+      confidence: "low",
+      evidenceGaps: [],
+      reversalConditions: [],
+      nextAction: "等待会议总结完成。",
+    });
   });
 
   test("applies turn and summary events incrementally", () => {

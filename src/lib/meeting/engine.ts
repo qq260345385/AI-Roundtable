@@ -13,11 +13,10 @@ import {
   detectTimeSensitiveTopic,
 } from "./fact-hygiene";
 import { classifyEvidenceTopic } from "../search/evidence-pack";
-import { checkEvidenceCitations } from "../search/evidence-citations";
 import { resolveEvidencePackDelivery } from "../search/evidence-pack";
-import { applyEvidenceQualityGateToSummary } from "./summary-quality-gate";
 import { sanitizeRoleLeak } from "./role-leak";
 import { generateFallbackSummaryFromTurns } from "../providers/openai-compatible-provider";
+import { finalizeMeetingSummary } from "./summary-finalization";
 import {
   classifyFailureFromMessage,
   validateModelTurnContent,
@@ -61,22 +60,22 @@ export async function runMeeting(
   }
 
   const successfulParticipants = getSuccessfulParticipants(request, allTurns);
-  const summary = shouldFailDueToInsufficientTurns
+  const generatedSummary = shouldFailDueToInsufficientTurns
     ? createInsufficientParticipantsSummary(independentTurns)
-    : applyEvidenceQualityGateToSummary(
-        await generateSummaryWithFallback(
-          meetingRequest,
-          provider,
-          allTurns,
-          successfulParticipants,
-          failures,
-        ),
-        meetingRequest.evidencePack,
+    : await generateSummaryWithFallback(
+        meetingRequest,
+        provider,
+        allTurns,
+        successfulParticipants,
+        failures,
       );
-  const citationCheck = checkEvidenceCitations(
-    collectMeetingText(allTurns, summary),
-    meetingRequest.evidencePack,
-  );
+  const { summary, citationCheck } = finalizeMeetingSummary({
+    summary: generatedSummary,
+    turns: allTurns,
+    evidencePack: meetingRequest.evidencePack,
+    failures,
+    insufficientParticipants: shouldFailDueToInsufficientTurns,
+  });
 
   return {
     topic: meetingRequest.topic,
@@ -110,24 +109,6 @@ export async function runMeeting(
         : FACT_HYGIENE_NOTICE
       : undefined,
   };
-}
-
-function collectMeetingText(
-  turns: MeetingTurn[],
-  summary: MeetingSummary,
-): string {
-  return [
-    ...turns.map((turn) => turn.content),
-    ...summary.consensus,
-    ...summary.differences,
-    ...summary.minorityViews,
-    ...(summary.confirmableFacts ?? []),
-    ...(summary.initialHypotheses ?? []),
-    ...(summary.communityViews ?? []),
-    ...(summary.insufficientlyConfirmed ?? []),
-    ...summary.risks,
-    ...summary.nextSteps,
-  ].join("\n");
 }
 
 async function runIndependentPhase(

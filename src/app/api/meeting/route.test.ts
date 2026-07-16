@@ -147,6 +147,11 @@ describe("POST /api/meeting", () => {
         (turn: { speakerName: string }) => turn.speakerName,
       ),
     ).toEqual(["GPT Mock", "Claude Mock"]);
+    expect(body.meeting.summary.decisionBrief).toMatchObject({
+      recommendation: expect.any(String),
+      status: expect.stringMatching(/^(firm|tentative|unavailable)$/),
+      confidence: expect.stringMatching(/^(high|medium|low)$/),
+    });
   });
 
   test("preserves selected participant order as the meeting seat order", async () => {
